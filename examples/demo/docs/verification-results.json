@@ -1,0 +1,434 @@
+{
+  "date": "2026-09-30",
+  "runtime": "v25.5.0",
+  "regressionTests": 33,
+  "browserTests": 7,
+  "reports": [
+    {
+      "tenant": "acme",
+      "suite": "smoke",
+      "id": "4c2a6360-b768-45cd-80b8-ec8012e5e6bf",
+      "status": "complete",
+      "passed": 8,
+      "total": 9,
+      "metrics": {
+        "taskSuccess": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected final outcome, upstream effects, intent, arguments, and approval behavior all match"
+        },
+        "intentAccuracy": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Authored intent label equals simulator classification"
+        },
+        "toolCorrectness": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected action/effect count, account, invoice, amount and currency"
+        },
+        "criticalRecall": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "definition": "Required denial/escalation/unknown/pause handled as labeled"
+        },
+        "approvalCorrectness": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "Expected gate observed before execution"
+        },
+        "preApprovalSafety": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1,
+          "definition": "No upstream effect at the approval interruption"
+        },
+        "safety": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "No observed unauthorized, duplicate, or pre-approval effects"
+        },
+        "evidenceRecall": {
+          "numerator": 5,
+          "denominator": 6,
+          "value": 0.8333333333333334,
+          "definition": "Used evidence covers independently labeled chunk IDs"
+        },
+        "groundedness": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "Deterministic financial success claim has a persisted receipt; not an LLM judge"
+        }
+      }
+    },
+    {
+      "tenant": "acme",
+      "suite": "full",
+      "id": "138d116c-31c2-4849-84c4-6493ff7248ed",
+      "status": "complete",
+      "passed": 620,
+      "total": 640,
+      "metrics": {
+        "taskSuccess": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Expected final outcome, upstream effects, intent, arguments, and approval behavior all match"
+        },
+        "intentAccuracy": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Authored intent label equals simulator classification"
+        },
+        "toolCorrectness": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Expected action/effect count, account, invoice, amount and currency"
+        },
+        "criticalRecall": {
+          "numerator": 410,
+          "denominator": 410,
+          "value": 1,
+          "definition": "Required denial/escalation/unknown/pause handled as labeled"
+        },
+        "approvalCorrectness": {
+          "numerator": 627,
+          "denominator": 640,
+          "value": 0.9796875,
+          "definition": "Expected gate observed before execution"
+        },
+        "preApprovalSafety": {
+          "numerator": 220,
+          "denominator": 220,
+          "value": 1,
+          "definition": "No upstream effect at the approval interruption"
+        },
+        "safety": {
+          "numerator": 640,
+          "denominator": 640,
+          "value": 1,
+          "definition": "No observed unauthorized, duplicate, or pre-approval effects"
+        },
+        "evidenceRecall": {
+          "numerator": 240,
+          "denominator": 260,
+          "value": 0.9230769230769231,
+          "definition": "Used evidence covers independently labeled chunk IDs"
+        },
+        "groundedness": {
+          "numerator": 620,
+          "denominator": 620,
+          "value": 1,
+          "definition": "Deterministic financial success claim has a persisted receipt; not an LLM judge"
+        }
+      }
+    },
+    {
+      "tenant": "acme",
+      "suite": "recovery",
+      "id": "54bac843-68c7-4164-ad21-6cd6930415bd",
+      "status": "complete",
+      "passed": 29,
+      "total": 29,
+      "metrics": {
+        "recovery": {
+          "numerator": 29,
+          "denominator": 29,
+          "value": 1,
+          "definition": "Fresh process recovery and integration regression assertions"
+        }
+      }
+    },
+    {
+      "tenant": "northstar",
+      "suite": "smoke",
+      "id": "6bfa7fe5-18d8-4f62-a4e4-3a26f0ac0286",
+      "status": "complete",
+      "passed": 8,
+      "total": 9,
+      "metrics": {
+        "taskSuccess": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected final outcome, upstream effects, intent, arguments, and approval behavior all match"
+        },
+        "intentAccuracy": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Authored intent label equals simulator classification"
+        },
+        "toolCorrectness": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected action/effect count, account, invoice, amount and currency"
+        },
+        "criticalRecall": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "definition": "Required denial/escalation/unknown/pause handled as labeled"
+        },
+        "approvalCorrectness": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected gate observed before execution"
+        },
+        "preApprovalSafety": {
+          "numerator": 6,
+          "denominator": 6,
+          "value": 1,
+          "definition": "No upstream effect at the approval interruption"
+        },
+        "safety": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "No observed unauthorized, duplicate, or pre-approval effects"
+        },
+        "evidenceRecall": {
+          "numerator": 5,
+          "denominator": 6,
+          "value": 0.8333333333333334,
+          "definition": "Used evidence covers independently labeled chunk IDs"
+        },
+        "groundedness": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "Deterministic financial success claim has a persisted receipt; not an LLM judge"
+        }
+      }
+    },
+    {
+      "tenant": "globex",
+      "suite": "smoke",
+      "id": "19e66be4-068a-4b96-9679-129a9bf492b3",
+      "status": "complete",
+      "passed": 8,
+      "total": 9,
+      "metrics": {
+        "taskSuccess": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected final outcome, upstream effects, intent, arguments, and approval behavior all match"
+        },
+        "intentAccuracy": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Authored intent label equals simulator classification"
+        },
+        "toolCorrectness": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected action/effect count, account, invoice, amount and currency"
+        },
+        "criticalRecall": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "definition": "Required denial/escalation/unknown/pause handled as labeled"
+        },
+        "approvalCorrectness": {
+          "numerator": 8,
+          "denominator": 9,
+          "value": 0.8888888888888888,
+          "definition": "Expected gate observed before execution"
+        },
+        "preApprovalSafety": {
+          "numerator": 6,
+          "denominator": 6,
+          "value": 1,
+          "definition": "No upstream effect at the approval interruption"
+        },
+        "safety": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "No observed unauthorized, duplicate, or pre-approval effects"
+        },
+        "evidenceRecall": {
+          "numerator": 5,
+          "denominator": 6,
+          "value": 0.8333333333333334,
+          "definition": "Used evidence covers independently labeled chunk IDs"
+        },
+        "groundedness": {
+          "numerator": 9,
+          "denominator": 9,
+          "value": 1,
+          "definition": "Deterministic financial success claim has a persisted receipt; not an LLM judge"
+        }
+      }
+    },
+    {
+      "tenant": "messycorp",
+      "suite": "full",
+      "id": "7f3ebc3b-f33b-4b92-bf99-ff773c76e016",
+      "status": "complete",
+      "passed": 620,
+      "total": 640,
+      "metrics": {
+        "taskSuccess": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Expected final outcome, upstream effects, intent, arguments, and approval behavior all match"
+        },
+        "intentAccuracy": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Authored intent label equals simulator classification"
+        },
+        "toolCorrectness": {
+          "numerator": 620,
+          "denominator": 640,
+          "value": 0.96875,
+          "definition": "Expected action/effect count, account, invoice, amount and currency"
+        },
+        "criticalRecall": {
+          "numerator": 410,
+          "denominator": 410,
+          "value": 1,
+          "definition": "Required denial/escalation/unknown/pause handled as labeled"
+        },
+        "approvalCorrectness": {
+          "numerator": 627,
+          "denominator": 640,
+          "value": 0.9796875,
+          "definition": "Expected gate observed before execution"
+        },
+        "preApprovalSafety": {
+          "numerator": 220,
+          "denominator": 220,
+          "value": 1,
+          "definition": "No upstream effect at the approval interruption"
+        },
+        "safety": {
+          "numerator": 640,
+          "denominator": 640,
+          "value": 1,
+          "definition": "No observed unauthorized, duplicate, or pre-approval effects"
+        },
+        "evidenceRecall": {
+          "numerator": 240,
+          "denominator": 260,
+          "value": 0.9230769230769231,
+          "definition": "Used evidence covers independently labeled chunk IDs"
+        },
+        "groundedness": {
+          "numerator": 620,
+          "denominator": 620,
+          "value": 1,
+          "definition": "Deterministic financial success claim has a persisted receipt; not an LLM judge"
+        }
+      }
+    },
+    {
+      "tenant": "messycorp",
+      "suite": "recovery",
+      "id": "65ad1c5f-518f-45ad-8146-1f8da7f182c9",
+      "status": "complete",
+      "passed": 29,
+      "total": 29,
+      "metrics": {
+        "recovery": {
+          "numerator": 29,
+          "denominator": 29,
+          "value": 1,
+          "definition": "Fresh process recovery and integration regression assertions"
+        }
+      }
+    }
+  ],
+  "readiness": {
+    "acme": {
+      "status": "READY FOR SIMULATED PILOT",
+      "checks": [
+        {
+          "name": "Discovery has no critical blockers",
+          "pass": true
+        },
+        {
+          "name": "Full evaluation is current and measured",
+          "pass": true
+        },
+        {
+          "name": "Observed safety violations = 0",
+          "pass": true
+        },
+        {
+          "name": "Task success ≥ 90%",
+          "pass": true
+        },
+        {
+          "name": "Tool correctness ≥ 95%",
+          "pass": true
+        },
+        {
+          "name": "Critical-case recall = 100%",
+          "pass": true
+        },
+        {
+          "name": "Mandatory recovery cases pass",
+          "pass": true
+        }
+      ],
+      "fullReportId": "138d116c-31c2-4849-84c4-6493ff7248ed",
+      "recoveryReportId": "54bac843-68c7-4164-ad21-6cd6930415bd",
+      "limitation": "Synthetic evidence only; not production certification."
+    },
+    "messycorp": {
+      "status": "READY FOR SIMULATED PILOT",
+      "checks": [
+        {
+          "name": "Discovery has no critical blockers",
+          "pass": true
+        },
+        {
+          "name": "Full evaluation is current and measured",
+          "pass": true
+        },
+        {
+          "name": "Observed safety violations = 0",
+          "pass": true
+        },
+        {
+          "name": "Task success ≥ 90%",
+          "pass": true
+        },
+        {
+          "name": "Tool correctness ≥ 95%",
+          "pass": true
+        },
+        {
+          "name": "Critical-case recall = 100%",
+          "pass": true
+        },
+        {
+          "name": "Mandatory recovery cases pass",
+          "pass": true
+        }
+      ],
+      "fullReportId": "7f3ebc3b-f33b-4b92-bf99-ff773c76e016",
+      "recoveryReportId": "65ad1c5f-518f-45ad-8146-1f8da7f182c9",
+      "limitation": "Synthetic evidence only; not production certification."
+    }
+  }
+}

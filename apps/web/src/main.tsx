@@ -1,102 +1,2788 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { createRoot } from 'react-dom/client';
-import type { Config, Run, Approval, Invoice, Actor, Tenant, TraceEvent } from '../../../packages/core/src/types';
-import { SCENARIOS } from '../../../packages/core/src/types';
-import type { Discovery } from '../../../packages/core/src/discovery';
-import type { Report, Result } from '../../../packages/evals/src/harness';
-import type { Delivery } from '../../../packages/integrations/src/webhooks';
-import type { Provider } from '../../../packages/integrations/src/contracts';
-import './style.css';
+import "@fontsource/dm-sans/latin-400.css";
+import "@fontsource/dm-sans/latin-500.css";
+import "@fontsource/dm-sans/latin-600.css";
+import "@fontsource/dm-sans/latin-700.css";
+import "@fontsource/manrope/latin-500.css";
+import "@fontsource/manrope/latin-600.css";
+import "@fontsource/manrope/latin-700.css";
+import "@fontsource/manrope/latin-800.css";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type ReactNode,
+} from "react";
+import { createRoot } from "react-dom/client";
+import { createAuthClient } from "better-auth/react";
+import "./style.css";
 
-type Page='Overview'|'Support workspace'|'Approvals'|'Existing support stack'|'Customer discovery'|'Evaluations'|'Traces';
-type Trace={run:Run;events:TraceEvent[];approval?:Approval;ticket?:{status:string};workflow:{nodes:string[];edges:Array<{source:string;target:string}>;next:string[];checkpointId?:string;history:Array<{id:string;next:string[];step:number;createdAt:string}>}};
-type Summary=Omit<Report,'results'> & {failures:number};
-type Bootstrap={actor:Actor;tenants:Array<{id:Tenant;name:string;business:string}>;config:Config;runs:Run[];approvals:Approval[];invoices:Invoice[];discovery:Discovery;readiness:{status:string;checks:Array<{name:string;pass:boolean}>;limitation:string};reports:Summary[];deliveries:Delivery[];integrations:{profile:{provider:Provider;capabilities:Record<string,unknown>};tickets:Array<{provider:Provider;id:string;version:number;data:string}>};metrics:{runs:number;resolved:number;pending:number;receipts:number}};
-const pages:Page[]=['Overview','Support workspace','Approvals','Existing support stack','Customer discovery','Evaluations','Traces'];
-const slugs=['overview','support','approvals','integrations','discovery','evaluations','traces'];
-const money=(minor=0,currency='USD')=>new Intl.NumberFormat('en-US',{style:'currency',currency,maximumFractionDigits:2}).format(minor/100);
-const short=(s:string)=>s.slice(0,8);
-const human=(s:string)=>s.toLowerCase().replaceAll('_',' ');
-const pretty=(s:string)=>s.split('_').join(' ');
-const providerName=(s:string)=>s==='mock_jira_service_management'?'Jira Service Management':s==='mock_zendesk'?'Zendesk':s==='generic_chatbot'?'Existing chatbot':'FieldKit workspace';
-function Icon({name,size=20}:{name:string;size?:number}) {
-  const paths:Record<string,React.ReactNode>={Overview:<><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,'Support workspace':<><path d="M4 4h16v12H9l-5 4z"/><path d="M8 8h8M8 12h5"/></>,Approvals:<><path d="M12 3l8 3v6c0 5-8 9-8 9s-8-4-8-9V6z"/><path d="m8 12 3 3 5-6"/></>,'Existing support stack':<><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-6 6v4M4 8h16"/></>,'Customer discovery':<><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6M10 7v6M7 10h6"/></>,Evaluations:<><path d="M7 3h10M9 3v7l-5 9c-.6 1 .2 2 1 2h14c1 0 1.6-1 1-2l-5-9V3M8 14h8"/></>,Traces:<><circle cx="5" cy="5" r="2"/><circle cx="19" cy="12" r="2"/><circle cx="5" cy="19" r="2"/><path d="M7 5h4v7h6M11 12v7H7"/></>,arrow:<path d="M4 12h15m-6-6 6 6-6 6"/>,check:<path d="m5 12 4 4L19 6"/>,refresh:<><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></>,bolt:<path d="m13 2-9 12h7l-1 8 10-13h-8z"/>,chevron:<path d="m8 4 8 8-8 8"/>};
-  return <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[name]??paths.Overview}</svg>;
+const auth = createAuthClient();
+type Row = Record<string, any>;
+async function request(
+  path: string,
+  data?: unknown,
+  method?: string,
+  bearer?: string,
+) {
+  const res = await fetch(path, {
+    method: method ?? (data === undefined ? "GET" : "POST"),
+    headers: {
+      ...(data instanceof FormData
+        ? {}
+        : { "Content-Type": "application/json" }),
+      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
+    },
+    body:
+      data === undefined
+        ? undefined
+        : data instanceof FormData
+          ? data
+          : JSON.stringify(data),
+  });
+  const result = await res.json();
+  if (!res.ok)
+    throw new Error(result.error ?? "The request could not be completed");
+  return result;
 }
-function Badge({value}:{value:string}){const v=value.toLowerCase(),kind=/completed|confirmed|approved|resolved|delivered|ready for/.test(v)?'good':/waiting|pending|partial|unknown|not ready/.test(v)?'warn':/failed|rejected|blocked|stale|expired/.test(v)?'bad':'';return <span className={`badge ${kind}`}><span className="dot"/>{human(value)}</span>;}
-async function api<T>(path:string,data?:unknown):Promise<T>{const res=await fetch('/api'+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:data===undefined?undefined:JSON.stringify(data)});const value=await res.json();if(!res.ok)throw new Error(value.error??'Request failed');return value;}
-function download(name:string,data:unknown){const blob=new Blob([typeof data==='string'?data:JSON.stringify(data,null,2)],{type:'text/plain'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=name;a.click();URL.revokeObjectURL(url);}
-
-function App(){
-  const [data,setData]=useState<Bootstrap>(),[page,setPage]=useState<Page>('Overview'),[tenant,setTenant]=useState<Tenant>((localStorage.getItem('fieldkit-tenant') as Tenant)||'acme'),[persona,setPersona]=useState<'requester'|'support_manager'>('support_manager'),[error,setError]=useState(''),[busy,setBusy]=useState(false),[selected,setSelected]=useState(''),[trace,setTrace]=useState<Trace>(),[text,setText]=useState<string>(SCENARIOS[0].text),[scenario,setScenario]=useState<string>('duplicate'),[channel,setChannel]=useState('web_chat'),[report,setReport]=useState<Report>(),[search,setSearch]=useState(''),[guide,setGuide]=useState<number|null>(null),[diff,setDiff]=useState<{original:string;rerun:string}>(),[initialized,setInitialized]=useState(false);
-  const navigate=(p:Page,runId='')=>{setPage(p);if(runId)setSelected(runId);location.hash=`/${slugs[pages.indexOf(p)]}${runId?'/'+runId:''}`;};
-  useEffect(()=>{const read=()=>{const [slug,key]=location.hash.replace(/^#\//,'').split('/'),i=slugs.indexOf(slug);if(i>=0)setPage(pages[i]);if(key)setSelected(key);};read();addEventListener('hashchange',read);return()=>removeEventListener('hashchange',read);},[]);
-  const refresh=useCallback(async()=>{const value=await api<Bootstrap>('/bootstrap');setData(value);},[]);
-  useEffect(()=>{let active=true;setInitialized(false);setData(undefined);setTrace(undefined);setReport(undefined);setSelected(location.hash.replace(/^#\//,'').split('/')[1]??'');api('/session',{tenant,persona}).then(()=>refresh()).then(()=>{if(active)setInitialized(true);}).catch(e=>setError(String(e)));localStorage.setItem('fieldkit-tenant',tenant);return()=>{active=false;};},[tenant,persona,refresh]);
-  useEffect(()=>{if(!initialized)return;const timer=setInterval(()=>refresh().catch(e=>setError(String(e))),1500);return()=>clearInterval(timer);},[initialized,refresh]);
-  useEffect(()=>{if(!selected||!initialized){setTrace(undefined);return;}let live=true;const read=()=>api<Trace>(`/traces/${selected}`).then(v=>{if(live)setTrace(v);}).catch(e=>setError(String(e)));void read();const timer=setInterval(read,1100);return()=>{live=false;clearInterval(timer);};},[selected,initialized]);
-  useEffect(()=>{if(!report||report.status!=='running')return;const timer=setInterval(()=>api<Report>(`/evaluations/${report.id}`).then(setReport).catch(e=>setError(String(e))),1200);return()=>clearInterval(timer);},[report?.id,report?.status]);
-  const act=async(fn:()=>Promise<void>)=>{setBusy(true);setError('');try{await fn();await refresh();}catch(e){setError(e instanceof Error?e.message:String(e));}finally{setBusy(false);}};
-  const launch=()=>act(async()=>{const res=await api<{run:Run}>('/runs',{text,requestKey:crypto.randomUUID(),channel,scenario:scenario||undefined});navigate('Support workspace',res.run.id);});
-  const choose=(key:string)=>{const s=SCENARIOS.find(s=>s.id===key)!;setScenario(key);setText(s.text);};
-  const openTrace=(key:string)=>{setDiff(undefined);navigate('Traces',key);};
-  const evaluation=(suite:string)=>act(async()=>{const r=await api<Report>('/evaluations',{suite,seed:42});setReport(r);navigate('Evaluations');});
-  const decision=(a:Approval,d:string)=>act(async()=>{await api(`/approvals/${a.id}/decision`,{revision:a.revision,decision:d});setSelected(a.runId);});
-  const runRerun=(key:string)=>act(async()=>{const r=await api<{trace:Trace;diff:{original:string;rerun:string}}>(`/traces/${key}/rerun`,{});setDiff(r.diff);navigate('Traces',r.trace.run.id);setTrace(r.trace);});
-  const reset=()=>{if(confirm(`Reset synthetic ${tenant} records, approvals, traces, and checkpoints? Other customers are preserved.`))void act(async()=>{await api('/reset',{confirm:tenant});setSelected('');setTrace(undefined);setReport(undefined);setDiff(undefined);});};
-  const advanceGuide=()=>{const next=(guide??-1)+1;setGuide(next);if(next===0){choose('duplicate');navigate('Support workspace');}else if(next===1){choose('large');navigate('Support workspace');}else if(next===2){choose('unknown');navigate('Support workspace');}else if(next===3){setTenant('messycorp');navigate('Customer discovery');}else{navigate('Evaluations');}};
-  const current=data?.tenants.find(t=>t.id===tenant),pending=data?.approvals.filter(a=>a.status==='pending')??[];
-  return <div className="app">
-    <aside className="sidebar"><a className="brand" href="#/overview"><span className="brand-mark">F<span>↗</span></span>FieldKit<span className="brand-period">.</span></a><div className="workspace-label">CUSTOMER DEPLOYMENT</div><label className="tenant-select"><span className="tenant-avatar">{tenant[0].toUpperCase()}</span><select aria-label="Customer deployment" value={tenant} onChange={e=>{location.hash='/'+slugs[pages.indexOf(page)];setTenant(e.target.value as Tenant);}}>{['acme','northstar','globex','messycorp'].map(t=><option key={t} value={t}>{t==='messycorp'?'MessyCorp':t[0].toUpperCase()+t.slice(1)}</option>)}</select><span className="online-dot"/></label><div className="sidebar-rule"/><nav aria-label="Main navigation">{pages.map(p=><button key={p} aria-label={p} title={p} className={page===p?'nav-item active':'nav-item'} onClick={()=>navigate(p)}><Icon name={p}/><span>{p}</span>{p==='Approvals'&&pending.length>0&&<b className="nav-count">{pending.length}</b>}</button>)}</nav><div className="sidebar-bottom"><div className="local-label"><span className="online-dot"/> Local environment</div><p>Fictional customers.<br/>Real workflow execution.</p><button className="sidebar-reset" onClick={reset} disabled={busy||persona!=='support_manager'}><Icon name="refresh" size={14}/>Reset synthetic demo data</button><div className="sidebar-version">FIELDKIT 1.0 <span>LANGGRAPH</span></div></div></aside>
-    <div className="main-shell"><header className="topbar"><div className="breadcrumb">Deployments <span>/</span> <b>{current?.name??tenant}</b><span>/</span>{page}</div><div className="topbar-right"><span className="mode"><span className="dot"/>Deterministic demo</span><label className="actor-select"><span className="actor-avatar">{persona==='support_manager'?'SM':'RQ'}</span><select aria-label="Demo actor" value={persona} onChange={e=>setPersona(e.target.value as typeof persona)}><option value="support_manager">Support manager</option><option value="requester">Requester</option></select></label></div></header>
-    <div className="simulation-banner"><span className="simulation-icon">i</span> All connectors are simulated. No real accounts, payments, messages, or model calls.<span className="banner-detail">Live model unavailable</span></div>
-    <main>
-      {error&&<div className="error" role="alert"><strong>Something needs attention.</strong> {error}<button aria-label="Dismiss error" onClick={()=>setError('')}>×</button></div>}
-      {guide!==null&&<div className="guide"><div><small>GUIDED DEMO · {Math.min(guide+1,5)} / 5</small><strong>{['Run the $49 duplicate charge','Run $8,000, then review its approval','Run an uncertain write and inspect the outcome','Scan MessyCorp, then apply a reviewed remediation','Run a smoke evaluation and inspect its failure'][Math.min(guide,4)]}</strong></div><button className="button small" onClick={advanceGuide}>Next step <Icon name="arrow" size={15}/></button><button className="icon-button" aria-label="Close guided demo" onClick={()=>setGuide(null)}>×</button></div>}
-      {!data?<div className="loading"><span className="spinner"/>Loading the local deployment…</div>:<>
-      <div className="page-heading"><div className="eyebrow">{page==='Overview'?'DEPLOYMENT CONTROL':page==='Existing support stack'?'INTEGRATE, DON’T REPLACE':'CUSTOMER OPERATIONS'}</div><div className="heading-row"><div><h1>{page==='Overview'?'Your deployment, at a glance.':page}</h1><p>{({Overview:`${current?.name} · ${current?.business}. Everything you need to move from discovery to a safe pilot.`,'Support workspace':'Resolve a request. Follow the evidence. Verify the outcome.',Approvals:'Human authority, bound to an exact action and the evidence behind it.','Existing support stack':'Your support experience stays. FieldKit adds governed execution.','Customer discovery':'Find the constraints in the actual customer files before a workflow meets a customer.',Evaluations:'Executed cases, independent labels, and failures you can inspect.',Traces:'A durable record of what happened, why it was allowed, and what changed.'} as Record<Page,string>)[page]}</p></div>{page==='Overview'?<button className="button primary" onClick={()=>{setGuide(0);choose('duplicate');navigate('Support workspace');}}><Icon name="bolt" size={17}/>Start demo<Icon name="arrow" size={16}/></button>:page==='Customer discovery'?<button className="button primary" disabled={busy} onClick={()=>act(async()=>{await api('/discovery/scan',{});})}><Icon name="refresh" size={16}/>Scan customer files</button>:null}</div></div>
-      {page==='Overview'&&<>
-        <div className="overview-grid"><section className="deployment-card"><div className="card-top"><span className="eyebrow">DEPLOYMENT READINESS</span><Badge value={data.readiness.status}/></div><h2>Ready is a result.<br/>Not a switch.</h2><p>{data.readiness.checks.filter(c=>c.pass).length} of {data.readiness.checks.length} pilot gates have measured supporting evidence.</p><div className="gate-bars">{data.readiness.checks.map(c=><span className={c.pass?'filled':''} key={c.name} title={c.name}/>)}</div><button className="text-link" onClick={()=>navigate('Customer discovery')}>Review deployment gates <Icon name="arrow" size={16}/></button><span className="card-watermark">F↗</span></section><section className="panel quick-start"><div className="eyebrow">THE THREE-MINUTE TOUR</div><h3>From request to verified receipt.</h3><p>See a small refund execute, a high-value action pause, and a difficult case escalate.</p><div className="tour-flow"><span>01 <b>Verify</b></span><i>→</i><span>02 <b>Authorize</b></span><i>→</i><span>03 <b>Execute</b></span></div><button className="button" onClick={()=>{choose('duplicate');navigate('Support workspace');}}>Open support workspace <Icon name="arrow" size={16}/></button></section></div>
-        <div className="metric-grid">{[['Workflow runs',data.metrics.runs,'From stored run records'],['Confirmed actions',data.metrics.receipts,'Durable execution receipts'],['Awaiting approval',data.metrics.pending,'No action before authorization'],['Model usage','N/A','No model calls in demo mode']].map(([label,value,note])=><div className="metric-card" key={label}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>)}</div>
-        <div className="two-columns"><section className="panel"><div className="section-heading"><h3>Connected infrastructure</h3><span className="subtle-label">SIMULATED</span></div>{[['Support',providerName(data.integrations.profile.provider),'Ticket mapping + durable replies'],['CRM',tenant==='northstar'?'Custom customer schema':tenant==='globex'?'Enterprise CRM schema':'Salesforce-style CRM','Account-scoped reads'],['Billing','Stripe-style billing',data.config.connectors.reliable_lookup?'Receipt lookup + operation identity':'Unsafe outcome lookup'],['Knowledge',tenant==='northstar'?'Confluence-style local KB':'Versioned local knowledge','Lexical retrieval + policy authority']].map(([label,name,detail])=><div className="connector-row" key={label}><div className="connector-icon"><Icon name={label==='Support'?'Support workspace':label==='Billing'?'Approvals':'Existing support stack'}/></div><div><strong>{name}</strong><small>{label} · {detail}</small></div><span className="connected">Mock</span></div>)}<button className="text-link" onClick={()=>navigate('Existing support stack')}>Inspect support adapters <Icon name="arrow" size={16}/></button></section><section className="panel"><div className="section-heading"><h3>Operating boundaries</h3><span className="subtle-label">{data.config.policies.version}</span></div><div className="policy-highlight"><span>Automatic refund authority</span><strong>{data.config.policies.refunds.all_require_approval?'Approval only':money(data.config.policies.refunds.max_auto_refund_minor)}<small>{!data.config.policies.refunds.all_require_approval?' USD / eligible action':''}</small></strong></div><ul className="check-list"><li><Icon name="check" size={17}/>Verified ownership and captured payment</li><li><Icon name="check" size={17}/>Current evidence, policy, and refundable balance</li><li><Icon name="check" size={17}/>Manager approval for destructive actions</li><li><Icon name="check" size={17}/>Unknown write outcomes stop for reconciliation</li></ul><p className="fine-print">A proposal is not permission. An approval is not a receipt.</p></section></div>
-        <section className="panel"><div className="section-heading"><h3>Recent activity</h3><button className="text-link" onClick={()=>navigate('Traces')}>All traces <Icon name="arrow" size={15}/></button></div><RunTable runs={data.runs.slice(0,4)} onSelect={openTrace}/></section>
-      </>}
-      {page==='Support workspace'&&<>
-        <section className="panel intake-panel"><div className="section-heading"><h3>New support request</h3><span className="subtle-label">{data.actor.accountId} · verified demo scope</span></div><div className="scenario-row">{SCENARIOS.map(s=><button key={s.id} className={scenario===s.id?'scenario selected':'scenario'} title={s.tag} onClick={()=>choose(s.id)}>{s.name}</button>)}</div><label className="sr-only" htmlFor="ticket-input">Support request</label><textarea id="ticket-input" value={text} onChange={e=>{setText(e.target.value);setScenario('');}} rows={3} placeholder="Describe a supported billing or account request…"/><div className="intake-footer"><label>Intake channel <select aria-label="Intake channel" value={channel} onChange={e=>setChannel(e.target.value)}><option value="web_chat">Web chat</option><option value="mock_email">Mock email</option><option value="mock_webhook">Mock webhook</option><option value="api">API</option></select></label><button className="button primary" disabled={busy||text.trim().length<3} onClick={launch}>{busy?<span className="spinner"/>:<Icon name="bolt" size={16}/>}Run workflow</button></div></section>
-        <div className="support-grid"><aside className="panel ticket-list"><div className="section-heading"><h3>Requests</h3><span className="count">{data.runs.length}</span></div>{!data.runs.length?<Empty title="Your first request starts here" text="Launch a scenario or write a request above."/>:data.runs.map(r=><button className={selected===r.id?'ticket-item selected':'ticket-item'} key={r.id} onClick={()=>setSelected(r.id)}><small>#{short(r.id)} · {human(r.channel)}</small><strong>{r.input}</strong><Badge value={r.stage}/></button>)}</aside><div>{trace?<><div className="detail-top"><span>REQUEST #{short(trace.run.id)}</span><button className="text-link" onClick={()=>openTrace(trace.run.id)}>Open trace <Icon name="arrow" size={15}/></button></div><div className="ticket-detail"><section className="panel conversation"><div className="section-heading"><h3>Conversation</h3><Badge value={trace.run.stage}/></div><div className="message user"><div className="message-label">MAYA CHEN <span>Fictional requester</span></div><p>{trace.run.input}</p></div><div className="message assistant"><div className="message-label"><span className="mini-mark">F</span>FIELDKIT <span>Deterministic simulator</span></div><p>{trace.run.response??(trace.run.stage==='WAITING_FOR_APPROVAL'?'I have prepared the proposed action and sent it for manager approval. No action has executed.':'The workflow is checking the request against account records and policy.')}</p></div>{trace.run.proposal&&<ProposalCard run={trace.run}/>} {trace.run.approvalId&&<button className="button" onClick={()=>navigate('Approvals')}>Review approval <Icon name="arrow" size={16}/></button>}{trace.run.stage==='PARTIAL_COMPLETION'&&<button className="button" disabled={busy||persona!=='support_manager'} onClick={()=>act(async()=>{await api(`/runs/${trace.run.id}/retry-ticket`,{});})}>Retry ticket update only</button>}<div className="conversation-footer"><span>{Math.round(trace.run.activeMs)} ms active · local simulator</span><span>Model calls: 0</span></div></section><section className="panel evidence-panel"><h3>Evidence & execution</h3><EvidenceList trace={trace}/><Timeline trace={trace} compact/></section></div></>:<section className="panel empty-detail"><Icon name="Support workspace" size={36}/><h3>Every action has a paper trail.</h3><p>Select a request to see its conversation, evidence, proposal, and execution history.</p></section>}</div></div>
-      </>}
-      {page==='Approvals'&&<><div className="approval-notice"><Icon name="Approvals"/><div><strong>{pending.length} action{pending.length!==1?'s':''} waiting for a decision</strong><p>Approving resumes the original LangGraph thread. Current policy and evidence are checked again before any write.</p></div></div>{persona==='requester'&&<div className="notice">Requester sessions cannot record decisions. Use the labeled demo actor selector to switch to Support manager.</div>}{data.approvals.length===0?<section className="panel"><Empty title="Nothing is waiting on a decision" text="Run the $8,000 scenario to create a real durable approval."/></section>:data.approvals.map(a=><section className="panel approval-card" key={a.id}><div className="section-heading"><div><span className="eyebrow">{a.proposal.action==='refund'?'REFUND REQUEST':'ACCOUNT DELETION'} · #{short(a.runId)}</span><h2>{a.proposal.action==='refund'?money(a.proposal.amountMinor,a.proposal.currency):'Delete account profile'}</h2></div><Badge value={a.status}/></div><div className="approval-facts"><div><small>AUTHORIZED ACCOUNT</small><strong>{a.proposal.accountId}</strong></div><div><small>AFFECTED RESOURCE</small><strong>{a.proposal.invoiceId??a.proposal.accountId}</strong></div><div><small>POLICY VERSION</small><strong>{a.proposal.policyVersion}</strong></div><div><small>EXPIRES</small><strong>{new Date(a.expiresAt).toLocaleString()}</strong></div></div><p>{a.proposal.reason}</p><div className="approval-hash">Proposal {short(a.proposal.hash)} · revision {a.revision} · {a.actor?`Decision by ${a.actor}`:'No decision recorded'} · mock connector</div><div className="approval-actions"><button className="text-link" onClick={()=>openTrace(a.runId)}>Review evidence & exact proposal <Icon name="arrow" size={15}/></button>{a.status==='pending'?<div className="button-row"><button className="button danger" disabled={busy||persona!=='support_manager'} onClick={()=>decision(a,'reject')}>Reject</button><button className="button" disabled={busy||persona!=='support_manager'} onClick={()=>decision(a,'escalate')}>Escalate</button><button className="button primary" disabled={busy||persona!=='support_manager'} onClick={()=>{if(confirm(`Approve this exact ${a.proposal.action} for ${a.proposal.amountMinor?money(a.proposal.amountMinor,a.proposal.currency):a.proposal.accountId}? Execution remains subject to fresh validation.`))void decision(a,'approve');}}>Approve exact action</button></div>:<span className="fine-print">{data.runs.find(r=>r.id===a.runId)?.receipt?'Execution confirmed with receipt':`Run: ${human(data.runs.find(r=>r.id===a.runId)?.stage??'stored')}`}</span>}</div></section>)}</>}
-      {page==='Existing support stack'&&<>
-        <section className="integration-flow"><div><span className="flow-icon"><Icon name="Support workspace" size={26}/></span><strong>Your support system</strong><small>Existing tickets & conversations</small></div><span>→</span><div><span className="flow-icon accent"><b>F↗</b></span><strong>FieldKit</strong><small>Evidence · policy · approval</small></div><span>→</span><div><span className="flow-icon"><Icon name="Approvals" size={26}/></span><strong>Verified action</strong><small>Receipt + original-ticket update</small></div></section>
-        <div className="two-columns"><section className="panel"><div className="section-heading"><h3>{providerName(data.integrations.profile.provider)}</h3><span className="badge">Simulated adapter</span></div><p className="muted">Realistic provider fixtures, normalized into the same workflow. No vendor account is connected.</p><div className="capability-grid">{['read','internalNote','reply','updateStatus','webhooks','idempotency','reconciliation','assign'].map(c=><div key={c}><span>{pretty(c.replace(/([A-Z])/g,'_$1'))}</span><b className={data.integrations.profile.capabilities[c]?'yes':'no'}>{data.integrations.profile.capabilities[c]?'Supported':'Unavailable'}</b></div>)}</div></section><section className="panel chatbot-card"><div className="eyebrow">AN EXISTING CHATBOT</div><h3>Keep the conversation.<br/>Add the ability to act safely.</h3><div className="before-after"><div><small>WITHOUT FIELDKIT</small><p>“I can explain the refund policy or hand this to support.”</p></div><div><small>WITH FIELDKIT</small><p>A structured request returns a run ID, an approval state, and a confirmed result.</p></div></div><button className="button" disabled={busy} onClick={()=>act(async()=>{const req={schemaVersion:1,deploymentId:tenant,idempotencyKey:crypto.randomUUID(),external:{conversationId:crypto.randomUUID(),channel:'existing_chatbot'},message:'Please refund my duplicate charge for both plans',trustedContext:{tenantId:tenant,authenticatedCustomerId:'acct-1',actorId:data.actor.id}};const r=await fetch('/v1/requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(req)});const result=await r.json();if(!r.ok)throw new Error(result.error);openTrace(result.runId);})}>Send governed chatbot request <Icon name="arrow" size={15}/></button></section></div>
-        <section className="panel"><div className="section-heading"><h3>External support records</h3><span className="subtle-label">ORIGINAL PROVIDER IDS PRESERVED</span></div>{data.integrations.tickets.filter(x=>x.provider!=='fieldkit_native').map(ticket=>{const raw=JSON.parse(ticket.data),title=raw.fields?.summary??raw.subject??'Chatbot conversation',status=raw.fields?.status?.name??raw.status??raw.state;return <div className="external-ticket" key={ticket.provider+ticket.id}><div className="external-title"><span className="provider-logo">{ticket.provider==='mock_jira_service_management'?'J':ticket.provider==='mock_zendesk'?'Z':'C'}</span><div><strong>{ticket.id} · {title}</strong><small>{providerName(ticket.provider)} · version {ticket.version} · {status}</small></div><button className="button small" disabled={busy} onClick={()=>act(async()=>{const r=await api<{run:Run}>('/integrations/intake',{provider:ticket.provider,ticketId:ticket.id,eventId:`demo-${ticket.id}`,sequence:1});navigate('Support workspace',r.run.id);})}>Process ticket <Icon name="arrow" size={14}/></button></div><details><summary>Native fields, comments & status</summary><pre>{JSON.stringify(raw,null,2)}</pre></details></div>;})}</section>
-        <section className="panel"><div className="section-heading"><h3>Signed outbound events</h3><span className="subtle-label">LOCAL SIMULATED RECEIVER</span></div><p className="muted">HMAC-signed, versioned events. Each attempt has its own ID; the receiver deduplicates the stable event ID. No network webhook is sent.</p>{data.deliveries.length===0?<Empty title="No deliveries yet" text="Process a request to produce a signed state-change event."/>:<table><thead><tr><th>Event</th><th>Run</th><th>Attempts</th><th>Delivery</th></tr></thead><tbody>{data.deliveries.slice(0,12).map(d=><tr key={d.id}><td>{d.event.type}</td><td><button className="text-link" onClick={()=>openTrace(d.event.runId)}>#{short(d.event.runId)}</button></td><td>{d.attempts.length} / {d.maxAttempts}</td><td><Badge value={d.status}/></td></tr>)}</tbody></table>}</section>
-      </>}
-      {page==='Customer discovery'&&<>
-        <div className="discovery-summary"><div><span className="eyebrow">OBSERVED READINESS</span><h2>{data.readiness.status}</h2><p>{data.discovery.findings.filter(f=>f.blocking).length} critical blockers across {data.discovery.coverage.files} inspected files.</p></div><div className="coverage">{Object.entries(data.discovery.coverage).filter(([k])=>k!=='files').map(([key,value])=><div key={key}><strong>{value}</strong><span>{key}</span></div>)}</div></div>
-        <div className="two-columns discovery-columns"><section><div className="section-heading"><h3>Findings from the customer files</h3><span className="subtle-label">{short(data.discovery.sourceHash)}</span></div>{data.discovery.findings.length===0?<section className="panel"><Empty title="No discovery blockers remain" text="Readiness still requires current full evaluation and recovery evidence."/></section>:data.discovery.findings.map(f=><article className="panel finding" key={f.id}><div className="section-heading"><Badge value={f.blocking?'BLOCKED':'review'}/><code>{f.id}</code></div><h3>{f.observed}</h3><div className="source-ref">{tenant}/{f.source}</div><p><strong>Remediation:</strong> {f.remediation}</p></article>)}{tenant==='messycorp'&&<section className="panel remediation"><h3>Make a real fixture change</h3><p>Changes are written to a versioned working copy and audited. Rescanning reads the changed files.</p><button className="button" disabled={busy||persona!=='support_manager'} onClick={()=>act(async()=>{await api('/discovery/remediate',{fix:'mapping'});})}>Apply verified account mapping</button><details><summary>Review the remaining proposed fixture changes</summary><p>Select refund-policy §2 as authoritative; retain the finance draft as history. Review billing guide v3, supply the missing action label, and enable the implemented mock outcome lookup and support permissions.</p><button className="button primary" disabled={busy||persona!=='support_manager'} onClick={()=>{if(confirm('As the fictional business owner, select refund-policy §2 and apply the listed reviewed fixture corrections? This changes the discovery working copy.'))void act(async()=>{await api('/discovery/remediate',{fix:'reviewed-fixtures'});});}}>Apply reviewed fixture remediation</button></details></section>}</section><section className="panel gates-panel"><h3>Simulated pilot gates</h3><p className="muted">An empty metric cannot pass. Critical failures cannot be averaged away.</p>{data.readiness.checks.map(c=><div className="gate" key={c.name}><span className={c.pass?'gate-check pass':'gate-check'}>{c.pass?'✓':'–'}</span><span>{c.name}</span></div>)}<button className="button" onClick={()=>navigate('Evaluations')}>Open evaluations <Icon name="arrow" size={15}/></button><p className="fine-print">{data.readiness.limitation}</p><details><summary>Inspected configuration</summary><pre>{JSON.stringify(data.discovery.config,null,2)}</pre></details></section></div>
-      </>}
-      {page==='Evaluations'&&<>
-        <section className="eval-toolbar panel"><div><h3>Deterministic regression suites</h3><p>64 independent base families · 640 seeded full-suite variants · seed 42</p></div><div className="button-row">{['smoke','full','recovery'].map(s=><button className={`button ${s==='smoke'?'primary':''}`} key={s} disabled={busy||data.reports.some(r=>r.status==='running')} onClick={()=>evaluation(s)}>Run {s}</button>)}</div></section>
-        {report?.status==='running'&&<div className="notice"><span className="spinner"/> Running {report.suite}: {report.completed} / {report.total||'recovery checks'} complete. Every case has isolated state.</div>}
-        {report&&<><div className="report-heading"><div><span className="eyebrow">{report.suite.toUpperCase()} · {report.datasetVersion} · SEED {report.seed}</span><h2>{report.status==='running'?'Evaluation in progress':`${report.results.filter(r=>r.passed).length || report.recovery?.passed || 0} / ${report.total} cases passed`}</h2><p className="muted">{report.baseFamilies} base families · {report.variants} generated variants · {report.configVersion} / {report.policyVersion}</p></div><button className="button" onClick={()=>download(`fieldkit-${report.id}.json`,report)}>Export report</button></div>{report.error&&<div className="error">{report.error}</div>}<div className="metric-grid eval-metrics">{Object.entries(report.metrics).map(([key,m])=><div className="metric-card" key={key} title={m.definition}><span>{key.replace(/([A-Z])/g,' $1')}</span><strong>{m.denominator?`${Math.round((m.value??0)*100)}%`:'—'}</strong><small>{m.numerator} / {m.denominator} · {m.definition}</small></div>)}</div><section className="panel"><div className="section-heading"><h3>Case results</h3><span className="subtle-label">FAILURES FIRST</span></div><div className="table-scroll"><table><thead><tr><th>Case / family</th><th>Expected</th><th>Observed</th><th>Result</th><th>Trace</th></tr></thead><tbody>{[...report.results].sort((a,b)=>Number(a.passed)-Number(b.passed)).slice(0,80).map(r=><tr key={r.id}><td><strong>{r.id}</strong><small>{r.split} · {Math.round(r.elapsedMs)} ms</small>{r.errors.length>0&&<small className="failure-reason">{r.errors.join(' · ')}</small>}</td><td>{human(r.expected)}</td><td>{human(r.actual)}</td><td><Badge value={r.passed?'completed':'failed'}/></td><td><button className="text-link" onClick={()=>openTrace(r.runId)}>Inspect <Icon name="arrow" size={14}/></button></td></tr>)}{report.recovery?.cases.map(c=><tr key={c.name}><td colSpan={3}>{c.name}</td><td><Badge value={c.passed?'completed':'failed'}/></td><td>Fresh-process test</td></tr>)}</tbody></table></div>{report.results.length>80&&<p className="fine-print">Showing the first 80, with every failure first. Export includes all {report.total} cases.</p>}</section><div className="notice">Model usage and cost: N/A — no model calls. LLM quality, production latency, and hallucination rate: Not measured.</div></>}
-        <section className="panel"><div className="section-heading"><h3>Evaluation history</h3><span className="subtle-label">STORED REPORTS</span></div>{!data.reports.length?<Empty title="Measure before you roll out" text="Start with nine smoke cases, including a real held-out wording failure."/>:<table><thead><tr><th>Suite</th><th>Dataset / seed</th><th>Progress</th><th>Status</th><th/></tr></thead><tbody>{data.reports.map(r=><tr key={r.id}><td><strong>{r.suite}</strong><small>{new Date(r.startedAt).toLocaleString()}</small></td><td>{r.datasetVersion} / {r.seed}</td><td>{r.completed}/{r.total} · {r.failures} failures</td><td><Badge value={r.status}/></td><td><button className="text-link" onClick={()=>act(async()=>setReport(await api<Report>(`/evaluations/${r.id}`)))}>Open report</button></td></tr>)}</tbody></table>}<CompatibleComparison reports={data.reports}/></section>
-      </>}
-      {page==='Traces'&&<>
-        <section className="panel"><div className="section-heading"><h3>Workflow runs</h3><input aria-label="Search traces" placeholder="Search input, run ID, or status…" value={search} onChange={e=>setSearch(e.target.value)}/></div><RunTable runs={data.runs.filter(r=>(r.input+r.id+r.stage).toLowerCase().includes(search.toLowerCase()))} onSelect={key=>{setSelected(key);setDiff(undefined);}}/></section>
-        {trace&&<><div className="trace-heading"><div><span className="eyebrow">TRACE #{short(trace.run.id)}</span><h2>{trace.run.provenance.originalRunId?'Isolated simulation':'Execution record'}</h2></div><div className="button-row"><button className="button" onClick={()=>download(`fieldkit-trace-${trace.run.id}.json`,trace)}>Export redacted trace</button><button className="button primary" disabled={busy} onClick={()=>runRerun(trace.run.id)}>Rerun in isolated sandbox <Icon name="arrow" size={15}/></button></div></div>{diff&&<div className="notice">Original: <b>{human(diff.original)}</b> → new sandbox: <b>{human(diff.rerun)}</b>. Original ledger preserved. Approval decisions are not inherited.</div>}{trace.run.provenance.originalRunId&&trace.approval?.status==='pending'&&<div className="notice"><span>A fresh sandbox approval is required. The original approval is not inherited.</span><button className="button primary" disabled={busy||persona!=='support_manager'} onClick={()=>{if(confirm('Approve the exact proposed action in this isolated sandbox only?'))void act(async()=>{const result=await api<{trace:Trace}>(`/sandbox/${trace.run.id}/decision`,{decision:'approve'});setTrace(result.trace);});}}>Approve sandbox action</button><button className="button" disabled={busy||persona!=='support_manager'} onClick={()=>act(async()=>{const result=await api<{trace:Trace}>(`/sandbox/${trace.run.id}/decision`,{decision:'reject'});setTrace(result.trace);})}>Reject sandbox action</button></div>}<div className="trace-meta"><Badge value={trace.run.stage}/><span>Thread {short(trace.run.threadId)}</span><span>{trace.run.graphVersion}</span><span>{trace.run.invocations} invocation(s)</span><span>{Math.round(trace.run.activeMs)} ms active</span><span>{Math.round(trace.run.overheadMs??0)} ms graph + persistence overhead</span><span>{Math.round(trace.run.approvalWaitMs/1000)} s approval wait</span></div><section className="panel"><div className="section-heading"><h3>Actual LangGraph path</h3><span className="subtle-label">DERIVED FROM COMPILED GRAPH</span></div><div className="graph-nodes">{trace.workflow.nodes.filter(n=>!n.startsWith('__')).map(n=>{const visited=trace.events.some(e=>e.node===n),current=trace.workflow.next.includes(n);return <div key={n} className={`graph-node ${visited?'visited':''} ${current?'current':''}`}><span>{visited?'✓':current?'Ⅱ':'·'}</span>{pretty(n)}</div>;})}</div><details><summary>Implemented edges & durable checkpoints ({trace.workflow.history.length})</summary><div className="edge-list">{trace.workflow.edges.map((e,i)=><span key={i}>{pretty(e.source)} → {pretty(e.target)}</span>)}</div><table><thead><tr><th>Checkpoint</th><th>Step</th><th>Next</th></tr></thead><tbody>{trace.workflow.history.map(c=><tr key={c.id}><td><code>{short(c.id)}</code></td><td>{c.step}</td><td>{c.next.join(', ')||'END'}</td></tr>)}</tbody></table></details></section><div className="two-columns"><section className="panel"><h3>Decision & evidence</h3><p className="muted">{trace.run.input}</p>{trace.run.proposal&&<ProposalCard run={trace.run}/>}<EvidenceList trace={trace}/>{trace.run.response&&<blockquote>{trace.run.response}</blockquote>}</section><section className="panel"><h3>Recorded timeline</h3><p className="fine-print">Inspection reads stored records only. It never invokes the graph.</p><Timeline trace={trace}/></section></div></>}
-      </>}
-      <footer className="page-footer"><span><span className="online-dot"/>SQLite checkpoints · synchronous durability</span><span>All results are synthetic. Production outcomes are unmeasured.</span></footer>
-      </>}
-    </main></div>
-  </div>;
+const api = (
+  ws: string,
+  path: string,
+  data?: unknown,
+  method?: string,
+  bearer?: string,
+) => request(`/v2/workspaces/${ws}${path}`, data, method, bearer);
+function useLoad(fn: () => Promise<any>, keys: unknown[]) {
+  const [data, setData] = useState<any>(null),
+    [error, setError] = useState(""),
+    [version, setVersion] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setError("");
+    fn()
+      .then((v) => {
+        if (live) setData(v);
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [...keys, version]);
+  return { data, error, reload: () => setVersion((v) => v + 1) };
 }
-function Empty({title,text}:{title:string;text:string}){return <div className="empty"><strong>{title}</strong><p>{text}</p></div>;}
-function RunTable({runs,onSelect}:{runs:Run[];onSelect:(key:string)=>void}){return runs.length?<div className="table-scroll"><table><thead><tr><th>Request</th><th>Outcome</th><th>Action</th><th>Trace</th></tr></thead><tbody>{runs.slice(0,30).map(r=><tr key={r.id}><td><strong className="truncate">{r.input}</strong><small>#{short(r.id)} · {human(r.channel)}</small></td><td><Badge value={r.stage}/></td><td>{r.receipt?money(r.receipt.amountMinor,r.receipt.currency):r.proposal?.amountMinor?`${money(r.proposal.amountMinor,r.proposal.currency)} proposed`:'—'}</td><td><button className="text-link" onClick={()=>onSelect(r.id)}>Inspect <Icon name="arrow" size={14}/></button></td></tr>)}</tbody></table></div>:<Empty title="No workflow runs yet" text="Start the demo to create your first real execution record."/>;}
-function ProposalCard({run:r}:{run:Run}){const p=r.proposal!;return <div className={`proposal ${r.receipt?'confirmed':''}`}><div className="section-heading"><span className="eyebrow">{r.receipt?'EXECUTION CONFIRMED':'PROPOSED ACTION'}</span><Icon name={r.receipt?'check':'Approvals'} size={19}/></div><strong>{p.action==='refund'?`${money(p.amountMinor,p.currency)} refund`:human(p.action)}</strong><p>{r.policy?.reasons.join('; ')??p.reason}</p><div className="signals">{r.policy?.signals.map(s=><span key={s}>✓ {human(s)}</span>)}</div>{r.receipt?<code>Receipt {short(r.receipt.id)} · {r.receipt.resourceId}</code>:<small>No execution receipt recorded.</small>}</div>;}
-function EvidenceList({trace}:{trace:Trace}){return <div className="evidence-list">{trace.run.evidence.length?trace.run.evidence.map(e=><details key={e.kind+e.id}><summary><span className="evidence-glyph">{e.kind==='knowledge'?'§':'◇'}</span><span>{e.id}<small>v{e.version} · {e.section??human(e.kind)}</small></span><span className={`evidence-used ${e.used?'used':''}`}>{e.used?'Used':'Retrieved'}</span></summary><p className="evidence-text">{e.text}</p>{e.authority&&<small>Authority: {e.authority}</small>}</details>):<p className="muted">No protected evidence retrieved.</p>}</div>;}
-function Timeline({trace,compact=false}:{trace:Trace;compact?:boolean}){const events=trace.events.filter(e=>!['node_started','checkpoint','graph_update'].includes(e.kind));return <div className="timeline">{(compact?events.slice(-7):events).map(e=><div className="timeline-event" key={e.id}><span className="timeline-dot"/><div><strong>{human(e.kind)}</strong><small>{new Date(e.at).toLocaleTimeString()} · event {e.id}</small>{!compact&&<details><summary>Recorded details</summary><pre>{JSON.stringify(e.detail,null,2)}</pre></details>}</div></div>)}</div>;}
-function CompatibleComparison({reports}:{reports:Summary[]}){const latest=reports.find(r=>r.status==='complete'&&r.suite!=='recovery'),prior=latest&&reports.find(r=>r.id!==latest.id&&r.suite===latest.suite&&r.sourceHash===latest.sourceHash&&r.datasetVersion===latest.datasetVersion&&r.seed===latest.seed&&r.mode===latest.mode&&r.status==='complete');if(!latest||!prior)return <p className="fine-print">Comparison appears when two completed reports share suite, dataset, configuration, operating mode, and seed.</p>;const delta=(latest.metrics.taskSuccess?.value??0)-(prior.metrics.taskSuccess?.value??0);return <div className="notice">Compatible regression comparison: task success {delta>=0?'+':''}{(delta*100).toFixed(1)} percentage points versus {short(prior.id)}. Deterministic synthetic sample; no production uncertainty estimate.</div>;}
-const root=import.meta.hot?.data.root??createRoot(document.getElementById('root')!);
-if(import.meta.hot){import.meta.hot.data.root=root;import.meta.hot.accept();}
-root.render(<App/>);
+function Logo() {
+  return (
+    <span className="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="10" fill="currentColor" />
+        <path d="M10 9h13v4h-9v4h7v4h-7v5h-4z" fill="white" />
+      </svg>
+      FieldKit<span className="edition">OPEN SOURCE</span>
+    </span>
+  );
+}
+function Icon({ name }: { name: string }) {
+  const paths: Record<string, string> = {
+    Setup: "M4 12l5 5L20 6",
+    Inbox: "M3 4h18v16H3z M3 13h5l2 3h4l2-3h5",
+    Knowledge:
+      "M4 3h6c2 0 2 2 2 2s0-2 2-2h6v17h-6c-2 0-2 1-2 1s0-1-2-1H4z M12 5v16",
+    Connections:
+      "M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-2 2 M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l2-2",
+    Actions: "M13 2L4 14h7l-1 8 10-13h-8z",
+    Publish: "M12 3v12 M7 8l5-5 5 5 M4 14v7h16v-7",
+    Team: "M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2 M9 11a4 4 0 100-8 4 4 0 000 8 M18 3a4 4 0 010 8 M22 21v-2a4 4 0 00-3-4",
+    Settings:
+      "M12 8a4 4 0 100 8 4 4 0 000-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2",
+    Activity: "M2 12h5l3-8 4 16 3-8h5",
+  };
+  return (
+    <svg className="icon" viewBox="0 0 24 24" aria-hidden="true">
+      <path d={paths[name] ?? paths.Activity} />
+    </svg>
+  );
+}
+function Badge({ value }: { value: string }) {
+  return (
+    <span
+      className={`badge ${["ready", "connected", "completed", "approved", "resolved", "delivered"].includes(value) ? "good" : ["failed", "unknown", "disconnected"].includes(value) ? "bad" : "neutral"}`}
+    >
+      {value.replaceAll("_", " ")}
+    </span>
+  );
+}
+function Alert({ children }: { children?: ReactNode }) {
+  return children ? (
+    <div className="alert" role="alert">
+      {children}
+    </div>
+  ) : null;
+}
+function Empty({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="empty">
+      <span className="empty-symbol">↗</span>
+      <h3>{title}</h3>
+      <p>{children}</p>
+    </div>
+  );
+}
+function Field({
+  label,
+  children,
+  hint,
+}: {
+  label: string;
+  children: ReactNode;
+  hint?: string;
+}) {
+  return (
+    <div className="field">
+      <label>
+        <span>{label}</span>
+        {children}
+      </label>
+      {hint && <small>{hint}</small>}
+    </div>
+  );
+}
+function useAction() {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState(""),
+    [success, setSuccess] = useState("");
+  return {
+    busy,
+    error,
+    success,
+    run: async (fn: () => Promise<void>, message = "") => {
+      setBusy(true);
+      setError("");
+      setSuccess("");
+      try {
+        await fn();
+        setSuccess(message);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Something went wrong");
+      } finally {
+        setBusy(false);
+      }
+    },
+  };
+}
+function AuthScreen({
+  done,
+  compact = false,
+}: {
+  done: () => void;
+  compact?: boolean;
+}) {
+  const [mode, setMode] = useState(
+      new URLSearchParams(location.search).has("token") ? "reset" : "login",
+    ),
+    a = useAction();
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const d = new FormData(e.currentTarget);
+    await a.run(
+      async () => {
+        let result: any;
+        if (mode === "signup")
+          result = await auth.signUp.email({
+            email: String(d.get("email")),
+            password: String(d.get("password")),
+            name: String(d.get("name")),
+            callbackURL: location.origin + location.pathname,
+          });
+        else if (mode === "forgot")
+          result = await auth.requestPasswordReset({
+            email: String(d.get("email")),
+            redirectTo: location.origin + "/reset-password",
+          });
+        else if (mode === "reset")
+          result = await auth.resetPassword({
+            newPassword: String(d.get("password")),
+            token: new URLSearchParams(location.search).get("token") ?? "",
+          });
+        else
+          result = await auth.signIn.email({
+            email: String(d.get("email")),
+            password: String(d.get("password")),
+          });
+        if (result.error) throw new Error(result.error.message);
+        if (mode === "login") done();
+      },
+      mode === "signup"
+        ? "Check your email to verify your account."
+        : mode === "forgot"
+          ? "If an account exists, a reset link has been sent."
+          : mode === "reset"
+            ? "Password updated. You can sign in."
+            : "",
+    );
+  }
+  return (
+    <div className={compact ? "auth-inline" : "auth-page"}>
+      {!compact && (
+        <div className="auth-story">
+          <Logo />
+          <div>
+            <span className="eyebrow">SUPPORT THAT KNOWS YOUR BUSINESS</span>
+            <h1>
+              Good answers.
+              <br />
+              Thoughtful actions.
+              <br />
+              <em>Your control.</em>
+            </h1>
+            <p>
+              Bring your knowledge and your support tools together. Give your
+              team an agent they can trust, on infrastructure you own.
+            </p>
+          </div>
+          <span className="subtle">
+            Self-hosted · Apache 2.0 · Built for real conversations
+          </span>
+        </div>
+      )}
+      <div className="auth-panel">
+        <span className="eyebrow">WELCOME TO FIELDKIT</span>
+        <h2>
+          {mode === "signup"
+            ? "Create your account"
+            : mode === "forgot"
+              ? "Reset your password"
+              : mode === "reset"
+                ? "Choose a new password"
+                : "Welcome back"}
+        </h2>
+        <p className="muted">
+          {mode === "signup"
+            ? "Verify your email to get started."
+            : "Sign in to continue the conversation."}
+        </p>
+        <form onSubmit={submit}>
+          {mode === "signup" && (
+            <Field label="Name">
+              <input name="name" autoComplete="name" required />
+            </Field>
+          )}
+          {mode !== "reset" && (
+            <Field label="Email">
+              <input name="email" type="email" autoComplete="email" required />
+            </Field>
+          )}
+          {mode !== "forgot" && (
+            <Field
+              label="Password"
+              hint={mode === "signup" ? "At least 12 characters." : undefined}
+            >
+              <input
+                name="password"
+                type="password"
+                minLength={mode === "login" ? 1 : 12}
+                autoComplete={
+                  mode === "login" ? "current-password" : "new-password"
+                }
+                required
+              />
+            </Field>
+          )}
+          <Alert>{a.error}</Alert>
+          {a.success && (
+            <p className="success" role="status">
+              {a.success}
+            </p>
+          )}
+          <button className="primary full" disabled={a.busy}>
+            {a.busy
+              ? "Working…"
+              : mode === "signup"
+                ? "Create account"
+                : mode === "forgot"
+                  ? "Send reset link"
+                  : mode === "reset"
+                    ? "Update password"
+                    : "Sign in"}
+          </button>
+        </form>
+        <div className="auth-links">
+          <button
+            onClick={() => setMode(mode === "signup" ? "login" : "signup")}
+          >
+            {mode === "signup"
+              ? "Already have an account? Sign in"
+              : "Create an account"}
+          </button>
+          <button
+            onClick={() => setMode(mode === "forgot" ? "login" : "forgot")}
+          >
+            {mode === "forgot" ? "Back to sign in" : "Forgot password?"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function WorkspaceSetup({ done }: { done: () => void }) {
+  const a = useAction(),
+    info = useLoad(() => request("/v2/installation"), []);
+  return (
+    <div className="setup-page">
+      <Logo />
+      <div className="panel setup-card">
+        <span className="eyebrow">YOUR FIRST WORKSPACE</span>
+        <h1>A home for your support.</h1>
+        <p className="muted">
+          Name your business and choose the address for its support portal.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const d = new FormData(e.currentTarget);
+            void a.run(async () => {
+              await request("/v2/workspaces", {
+                name: d.get("name"),
+                slug: d.get("slug"),
+                setupToken: d.get("setupToken") || undefined,
+              });
+              done();
+            });
+          }}
+        >
+          <Field label="Business name">
+            <input name="name" required placeholder="Your business" />
+          </Field>
+          <Field
+            label="Portal address"
+            hint="Lowercase letters, numbers, and hyphens."
+          >
+            <div className="input-prefix">
+              <span>/support/</span>
+              <input
+                name="slug"
+                pattern="[a-z0-9][a-z0-9-]{2,47}"
+                required
+                placeholder="your-business"
+              />
+            </div>
+          </Field>
+          {!info.data?.initialized && (
+            <Field
+              label="Installation setup token"
+              hint="Find FIELDKIT_SETUP_TOKEN in your server’s .env file."
+            >
+              <input name="setupToken" type="password" required />
+            </Field>
+          )}
+          <Alert>{a.error}</Alert>
+          <button className="primary" disabled={a.busy}>
+            Create workspace →
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+const sections = [
+  "Setup",
+  "Inbox",
+  "Knowledge",
+  "Connections",
+  "Actions",
+  "Publish",
+  "Team",
+  "Settings",
+  "Activity",
+];
+function App() {
+  const [session, setSession] = useState<any>(undefined),
+    [ws, setWs] = useState(
+      new URLSearchParams(location.search).get("workspace") ?? "",
+    ),
+    [view, setView] = useState(() => {
+      const v = new URLSearchParams(location.search).get("view");
+      return sections.find((s) => s.toLowerCase() === v) ?? "Setup";
+    }),
+    [menu, setMenu] = useState(false);
+  const refresh = () =>
+    request("/v2/me")
+      .then((v) => {
+        setSession(v);
+        setWs((old) =>
+          v.workspaces.some((w: Row) => w.id === old)
+            ? old
+            : (v.workspaces[0]?.id ?? ""),
+        );
+      })
+      .catch(() => setSession(null));
+  useEffect(() => {
+    void refresh();
+  }, []);
+  const invite = new URLSearchParams(location.search).get("invite");
+  const invitation = useAction();
+  useEffect(() => {
+    if (session && invite)
+      void invitation.run(async () => {
+        await request("/v2/invitations/accept", { token: invite });
+        history.replaceState({}, "", "/");
+        await refresh();
+      });
+  }, [session?.user?.id, invite]);
+  if (session === undefined)
+    return (
+      <div className="loading">
+        <Logo />
+        <p>Opening your workspace…</p>
+      </div>
+    );
+  if (!session) return <AuthScreen done={() => void refresh()} />;
+  if (invite)
+    return (
+      <div className="loading">
+        <Logo />
+        <Alert>{invitation.error}</Alert>
+        <p>Accepting your invitation…</p>
+      </div>
+    );
+  if (!ws) return <WorkspaceSetup done={() => void refresh()} />;
+  const workspace = session.workspaces.find((w: Row) => w.id === ws),
+    role = workspace?.role;
+  const go = (v: string) => {
+    setView(v);
+    setMenu(false);
+    history.replaceState({}, "", `/?workspace=${ws}&view=${v.toLowerCase()}`);
+  };
+  return (
+    <div className="shell">
+      <aside className={menu ? "sidebar mobile-open" : "sidebar"}>
+        <Logo />
+        <label className="workspace-switch">
+          <span>WORKSPACE</span>
+          <select
+            aria-label="Workspace"
+            value={ws}
+            onChange={(e) => setWs(e.target.value)}
+          >
+            {session.workspaces.map((w: Row) => (
+              <option value={w.id} key={w.id}>
+                {w.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <nav aria-label="Main navigation">
+          {sections
+            .filter(
+              (s) =>
+                role !== "agent" ||
+                ["Inbox", "Knowledge", "Actions", "Activity"].includes(s),
+            )
+            .map((s) => (
+              <button
+                className={view === s ? "nav-item selected" : "nav-item"}
+                onClick={() => go(s)}
+                key={s}
+              >
+                <Icon name={s} />
+                {s}
+                {s === "Setup" && <span className="nav-dot" />}
+              </button>
+            ))}
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="own-it">
+            <span className="status-dot" /> Your infrastructure. Your data.
+          </div>
+          <div className="profile">
+            <span className="avatar">
+              {session.user.name.slice(0, 1).toUpperCase()}
+            </span>
+            <div>
+              <strong>{session.user.name}</strong>
+              <small>{role}</small>
+            </div>
+            <button
+              title="Sign out"
+              aria-label="Sign out"
+              onClick={() => void auth.signOut().then(() => refresh())}
+            >
+              ↗
+            </button>
+          </div>
+        </div>
+      </aside>
+      <main className="workspace">
+        <header className="topbar">
+          <button
+            className="mobile-toggle"
+            onClick={() => setMenu(!menu)}
+            aria-label="Toggle navigation"
+          >
+            ☰
+          </button>
+          <div>
+            <span className="breadcrumb">{workspace?.name}</span>
+            <span className="separator">/</span>
+            <strong>{view}</strong>
+          </div>
+          <a
+            className="quiet-link"
+            href={`/support/${workspace?.slug}`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            View support portal ↗
+          </a>
+        </header>
+        <div className="workspace-body" key={ws + view}>
+          {view === "Setup" ? (
+            <Setup ws={ws} go={go} />
+          ) : view === "Inbox" ? (
+            <Inbox ws={ws} role={role} />
+          ) : view === "Knowledge" ? (
+            <KnowledgePage ws={ws} admin={role !== "agent"} />
+          ) : view === "Connections" ? (
+            <ConnectionsPage ws={ws} owner={role === "owner"} />
+          ) : view === "Actions" ? (
+            <ActionsPage ws={ws} owner={role === "owner"} />
+          ) : view === "Publish" ? (
+            <PublishPage
+              ws={ws}
+              slug={workspace.slug}
+              owner={role === "owner"}
+            />
+          ) : view === "Team" ? (
+            <TeamPage ws={ws} />
+          ) : view === "Settings" ? (
+            <SettingsPage ws={ws} />
+          ) : (
+            <ActivityPage ws={ws} admin={role !== "agent"} />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+function Heading({
+  eyebrow,
+  title,
+  children,
+  action,
+}: {
+  eyebrow: string;
+  title: string;
+  children?: ReactNode;
+  action?: ReactNode;
+}) {
+  return (
+    <div className="page-heading">
+      <div>
+        <span className="eyebrow">{eyebrow}</span>
+        <h1>{title}</h1>
+        {children && <p>{children}</p>}
+      </div>
+      {action}
+    </div>
+  );
+}
+function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
+  const l = useLoad(async () => {
+    const [base, connections, knowledge, inbox] = await Promise.all([
+      api(ws, ""),
+      api(ws, "/connections"),
+      api(ws, "/sources"),
+      api(ws, "/conversations"),
+    ]);
+    return { base, connections, knowledge, inbox };
+  }, [ws]);
+  const d = l.data;
+  const preview = useAction(),
+    [previewResult, setPreviewResult] = useState<Row | null>(null);
+  const tasks = [
+    {
+      title: "Connect your AI model",
+      text: "Use your own OpenAI account and set a usage budget.",
+      view: "Connections",
+      done: d?.connections.connections.some(
+        (c: Row) => c.provider === "openai" && c.status === "connected",
+      ),
+    },
+    {
+      title: "Give your agent the right knowledge",
+      text: "Upload documents or connect the sources your team uses.",
+      view: "Knowledge",
+      done: d?.knowledge.sources.some((s: Row) => s.status === "ready"),
+    },
+    {
+      title: "Decide what your agent can do",
+      text: "Configure account actions and the rules for human approval.",
+      view: "Actions",
+      done: false,
+    },
+    {
+      title: "Open your support channels",
+      text: "Publish your portal and widget, or connect Zendesk.",
+      view: "Publish",
+      done: d?.base.channels.some((c: Row) => c.published),
+    },
+  ];
+  return (
+    <>
+      <Heading
+        eyebrow="MAKE IT YOURS"
+        title="A thoughtful start to better support."
+      >
+        Connect what your business knows. Choose what your agent can do. Stay in
+        control.
+      </Heading>
+      <Alert>{l.error}</Alert>
+      <div className="setup-hero">
+        <div>
+          <span className="eyebrow">ONE AGENT. YOUR SUPPORT, CONNECTED.</span>
+          <h2>
+            Meet customers
+            <br />
+            where they need you.
+          </h2>
+          <p>
+            Keep your existing helpdesk or create a support experience of your
+            own. FieldKit brings the knowledge and actions together.
+          </p>
+          <button
+            className="primary"
+            onClick={() => go(tasks.find((t) => !t.done)?.view ?? "Inbox")}
+          >
+            Continue setup →
+          </button>
+        </div>
+        <div className="orbit">
+          <div className="orbit-source top">Your documents</div>
+          <div className="orbit-source left">Zendesk</div>
+          <div className="orbit-core">
+            <Logo />
+          </div>
+          <div className="orbit-source right">Your tools</div>
+          <div className="orbit-source bottom">Your customers</div>
+        </div>
+      </div>
+      <div className="metric-row">
+        <div>
+          <small>CONVERSATIONS</small>
+          <strong>{d?.inbox.conversations.length ?? "—"}</strong>
+          <span>In your workspace</span>
+        </div>
+        <div>
+          <small>KNOWLEDGE SOURCES</small>
+          <strong>
+            {d?.knowledge.sources.filter((s: Row) => s.status === "ready")
+              .length ?? "—"}
+          </strong>
+          <span>Ready for your team</span>
+        </div>
+        <div>
+          <small>MODEL TOKENS THIS MONTH</small>
+          <strong>
+            {d
+              ? Number(d.base.usage.input_tokens) +
+                Number(d.base.usage.output_tokens)
+              : "—"}
+          </strong>
+          <span>Actual recorded usage</span>
+        </div>
+      </div>
+      <section className="panel agent-preview">
+        <h2>Try a customer question</h2>
+        <p className="muted">
+          Preview answers from customer-approved knowledge before publishing.
+          This uses your model account and cannot perform account actions.
+        </p>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            const question = new FormData(e.currentTarget).get("question");
+            void preview.run(async () =>
+              setPreviewResult(await api(ws, "/agent/test", { question })),
+            );
+          }}
+        >
+          <Field label="Test question">
+            <input
+              name="question"
+              required
+              placeholder="How do returns work?"
+            />
+          </Field>
+          <button className="primary" disabled={preview.busy}>
+            {preview.busy ? "Thinking…" : "Test answer"}
+          </button>
+        </form>
+        <Alert>{preview.error}</Alert>
+        {previewResult && (
+          <div className="preview-result">
+            <Badge value={previewResult.intent} />
+            <p>{previewResult.answer}</p>
+            {previewResult.citations.map((c: Row) => (
+              <blockquote key={c.id}>
+                {c.title} · v{c.version}
+                <p>{c.excerpt}</p>
+              </blockquote>
+            ))}
+          </div>
+        )}
+      </section>
+      <h2 className="section-title">Your launch checklist</h2>
+      <div className="checklist">
+        {tasks.map((t, i) => (
+          <button key={t.title} onClick={() => go(t.view)}>
+            <span className={t.done ? "step done" : "step"}>
+              {t.done ? "✓" : `0${i + 1}`}
+            </span>
+            <div>
+              <strong>{t.title}</strong>
+              <p>{t.text}</p>
+            </div>
+            <span>↗</span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+function useConversationEvents(
+  ws: string,
+  id: string | undefined,
+  reload: () => void,
+  bearer?: string,
+) {
+  const callback = useRef(reload);
+  callback.current = reload;
+  useEffect(() => {
+    if (!id) return;
+    const controller = new AbortController();
+    let retry: ReturnType<typeof setTimeout>;
+    const connect = async () => {
+      try {
+        const res = await fetch(
+          `/v2/workspaces/${ws}/conversations/${id}/events`,
+          {
+            signal: controller.signal,
+            headers: bearer ? { Authorization: `Bearer ${bearer}` } : {},
+          },
+        );
+        if (!res.ok) return;
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let index;
+          while ((index = buffer.indexOf("\n\n")) >= 0) {
+            const event = buffer.slice(0, index);
+            buffer = buffer.slice(index + 2);
+            if (event.includes("data:")) callback.current();
+          }
+        }
+      } catch {}
+      if (!controller.signal.aborted) retry = setTimeout(connect, 2000);
+    };
+    void connect();
+    return () => {
+      controller.abort();
+      clearTimeout(retry);
+    };
+  }, [ws, id, bearer]);
+}
+function Inbox({ ws, role }: { ws: string; role: string }) {
+  const l = useLoad(() => api(ws, "/conversations"), [ws]),
+    [selected, setSelected] = useState("");
+  const detail = useLoad(
+    () =>
+      selected ? api(ws, `/conversations/${selected}`) : Promise.resolve(null),
+    [ws, selected],
+  );
+  const a = useAction(),
+    members = useLoad(() => api(ws, "/members"), [ws]);
+  const [note, setNote] = useState(false);
+  useConversationEvents(ws, selected, () => {
+    detail.reload();
+    l.reload();
+  });
+  useEffect(() => {
+    if (!selected && l.data?.conversations.length)
+      setSelected(l.data.conversations[0].id);
+  }, [l.data]);
+  const control = (d: Row) =>
+    a.run(async () => {
+      await api(ws, `/conversations/${selected}/control`, d);
+      detail.reload();
+      l.reload();
+    });
+  return (
+    <>
+      <Heading
+        eyebrow="YOUR SUPPORT DESK"
+        title="Every conversation, in good hands."
+      >
+        Your agent and your team, working from the same context.
+      </Heading>
+      <Alert>{l.error || detail.error || a.error}</Alert>
+      <div className="inbox">
+        <section className="conversation-list">
+          <div className="list-title">
+            <strong>All conversations</strong>
+            <span>{l.data?.conversations.length ?? 0}</span>
+          </div>
+          {l.data?.conversations.length ? (
+            l.data.conversations.map((c: Row) => (
+              <button
+                key={c.id}
+                onClick={() => setSelected(c.id)}
+                className={
+                  selected === c.id
+                    ? "conversation-card active"
+                    : "conversation-card"
+                }
+              >
+                <div>
+                  <span className="avatar small">
+                    {(c.customer_name || "V")[0]}
+                  </span>
+                  <strong>{c.customer_name || "Visitor"}</strong>
+                  <small>{new Date(c.updated_at).toLocaleDateString()}</small>
+                </div>
+                <h3>{c.subject}</h3>
+                <Badge value={c.status} />
+              </button>
+            ))
+          ) : (
+            <Empty title="Ready for your first conversation">
+              Messages from your portal, widget, and Zendesk appear here.
+            </Empty>
+          )}
+        </section>
+        {detail.data ? (
+          <section className="conversation-detail">
+            <header>
+              <div>
+                <span className="eyebrow">
+                  {detail.data.conversation.external_id
+                    ? "ZENDESK #" + detail.data.conversation.external_id
+                    : "CUSTOMER CONVERSATION"}
+                </span>
+                <h2>{detail.data.conversation.subject}</h2>
+              </div>
+              <Badge
+                value={
+                  detail.data.conversation.mode === "human"
+                    ? "human takeover"
+                    : "agent active"
+                }
+              />
+            </header>
+            <div className="conversation-controls">
+              <select
+                aria-label="Assign conversation"
+                value={detail.data.conversation.assigned_to ?? ""}
+                onChange={(e) =>
+                  void control({ assignedTo: e.target.value || null })
+                }
+              >
+                <option value="">Unassigned</option>
+                {members.data?.members.map((m: Row) => (
+                  <option key={m.user_id} value={m.user_id}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={() =>
+                  void control({
+                    mode:
+                      detail.data.conversation.mode === "agent"
+                        ? "human"
+                        : "agent",
+                  })
+                }
+              >
+                {detail.data.conversation.mode === "agent"
+                  ? "Take over"
+                  : "Resume agent"}
+              </button>
+              <button
+                onClick={() =>
+                  void control({
+                    status:
+                      detail.data.conversation.status === "resolved"
+                        ? "open"
+                        : "resolved",
+                  })
+                }
+              >
+                {detail.data.conversation.status === "resolved"
+                  ? "Reopen"
+                  : "Resolve"}
+              </button>
+            </div>
+            <div className="messages">
+              <MessageList messages={detail.data.messages} />
+              {detail.data.approvals
+                .filter((p: Row) => p.status === "pending")
+                .map((p: Row) => (
+                  <div className="approval-box" key={p.id}>
+                    <span className="eyebrow">APPROVAL REQUIRED</span>
+                    <h3>{p.proposal.reason}</h3>
+                    <pre>{JSON.stringify(p.proposal.parameters, null, 2)}</pre>
+                    <p>
+                      Bound to this customer, action revision, and policy.
+                      Expires {new Date(p.expires_at).toLocaleString()}.
+                    </p>
+                    {role !== "agent" && (
+                      <div className="button-row">
+                        <button
+                          disabled={a.busy}
+                          onClick={() =>
+                            void a.run(async () => {
+                              await api(ws, `/approvals/${p.id}/decision`, {
+                                hash: p.hash,
+                                decision: "reject",
+                              });
+                              detail.reload();
+                            })
+                          }
+                        >
+                          Reject
+                        </button>
+                        <button
+                          className="primary"
+                          disabled={a.busy}
+                          onClick={() => {
+                            if (
+                              confirm(
+                                "Approve this exact account action? It will execute against the connected provider.",
+                              )
+                            )
+                              void a.run(async () => {
+                                await api(ws, `/approvals/${p.id}/decision`, {
+                                  hash: p.hash,
+                                  decision: "approve",
+                                });
+                                detail.reload();
+                              });
+                          }}
+                        >
+                          Approve action
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
+            <form
+              className="reply-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                const body = new FormData(form).get("body");
+                void a.run(async () => {
+                  await api(
+                    ws,
+                    `/conversations/${selected}/${note ? "notes" : "messages"}`,
+                    { body, requestKey: crypto.randomUUID() },
+                  );
+                  form.reset();
+                  detail.reload();
+                  l.reload();
+                });
+              }}
+            >
+              <textarea
+                aria-label="Reply"
+                name="body"
+                required
+                placeholder={
+                  note
+                    ? "Write a private note for your team…"
+                    : "Write a reply to the customer…"
+                }
+              />
+              <div>
+                <label className="checkbox">
+                  <input
+                    type="checkbox"
+                    checked={note}
+                    onChange={(e) => setNote(e.target.checked)}
+                  />
+                  Internal note
+                </label>
+                <button className="primary" disabled={a.busy}>
+                  {note ? "Add note" : "Send reply"} →
+                </button>
+              </div>
+            </form>
+            <details className="run-details">
+              <summary>Agent activity & evidence</summary>
+              {detail.data.runs.map((r: Row) => (
+                <article key={r.id}>
+                  <Badge value={r.status} />
+                  <p>
+                    {r.state.error ??
+                      r.state.draft?.reason ??
+                      "Processing request"}
+                  </p>
+                  <pre>
+                    {JSON.stringify(
+                      {
+                        proposal: r.state.proposal,
+                        receipt: r.state.receipt,
+                        evidence: r.state.evidence,
+                      },
+                      null,
+                      2,
+                    )}
+                  </pre>
+                </article>
+              ))}
+            </details>
+          </section>
+        ) : (
+          <section className="conversation-detail">
+            <Empty title="A little context goes a long way">
+              Choose a conversation to read its history, review evidence, and
+              help your customer.
+            </Empty>
+          </section>
+        )}
+      </div>
+    </>
+  );
+}
+function MessageList({ messages }: { messages: Row[] }) {
+  return (
+    <>
+      {messages.map((m) => (
+        <article className={`message ${m.role}`} key={m.id}>
+          <div>
+            <strong>
+              {m.role === "assistant"
+                ? "FieldKit"
+                : m.role === "note"
+                  ? "Internal note"
+                  : m.role === "staff"
+                    ? "Support team"
+                    : "Customer"}
+            </strong>
+            <time>
+              {new Date(m.created_at).toLocaleTimeString([], {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+            </time>
+          </div>
+          <p>{m.body}</p>
+          {m.citations?.length > 0 && (
+            <details className="citations">
+              <summary>
+                {m.citations.length} source{m.citations.length === 1 ? "" : "s"}
+              </summary>
+              {m.citations.map((c: Row) => (
+                <blockquote key={c.id}>
+                  <strong>
+                    {c.title} · v{c.version}
+                  </strong>
+                  <p>{c.excerpt}</p>
+                </blockquote>
+              ))}
+            </details>
+          )}
+        </article>
+      ))}
+    </>
+  );
+}
+async function googlePicker(
+  ws: string,
+  onPick: (files: any[]) => Promise<void>,
+) {
+  const config = await api(ws, "/connections/google/picker"),
+    w = window as any;
+  if (!w.gapi)
+    await new Promise<void>((resolve, reject) => {
+      const s = document.createElement("script");
+      s.src = "https://apis.google.com/js/api.js";
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error("Google Picker could not load"));
+      document.head.append(s);
+    });
+  await new Promise<void>((resolve) => w.gapi.load("picker", resolve));
+  return new Promise<void>((resolve, reject) => {
+    const picker = new w.google.picker.PickerBuilder()
+      .setDeveloperKey(config.developerKey)
+      .setAppId(config.appId)
+      .setOAuthToken(config.accessToken)
+      .setOrigin(location.origin)
+      .addView(new w.google.picker.DocsView().setIncludeFolders(false))
+      .enableFeature(w.google.picker.Feature.MULTISELECT_ENABLED)
+      .setCallback((data: any) => {
+        if (data.action === w.google.picker.Action.PICKED)
+          onPick(data.docs).then(resolve, reject);
+        else if (data.action === w.google.picker.Action.CANCEL) resolve();
+      })
+      .build();
+    picker.setVisible(true);
+  });
+}
+function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
+  const l = useLoad(() => api(ws, "/sources"), [ws]),
+    a = useAction(),
+    [preview, setPreview] = useState<Row | null>(null),
+    [kind, setKind] = useState("website");
+  const upload = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <Heading
+        eyebrow="A SHARED SOURCE OF TRUTH"
+        title="What your business knows."
+        action={
+          admin && (
+            <button className="primary" onClick={() => upload.current?.click()}>
+              ＋ Upload documents
+            </button>
+          )
+        }
+      >
+        Bring in your documents and connected knowledge. Review what customers
+        can see before you publish.
+      </Heading>
+      <input
+        ref={upload}
+        hidden
+        type="file"
+        accept=".pdf,.docx,.md,.txt"
+        multiple
+        onChange={(e) => {
+          const files = Array.from(e.target.files ?? []);
+          void a.run(async () => {
+            for (const file of files) {
+              const data = new FormData();
+              data.append("file", file);
+              await api(ws, "/sources/upload", data);
+            }
+            l.reload();
+          }, "Files queued for ingestion.");
+        }}
+      />
+      <Alert>{l.error || a.error}</Alert>
+      {a.success && <p className="success">{a.success}</p>}
+      <div className="knowledge-banner">
+        <Icon name="Knowledge" />
+        <p>
+          <strong>Private until you say otherwise.</strong> Imported documents
+          start as staff-only knowledge. Approving customer answers and
+          publishing an article are separate choices.
+        </p>
+      </div>
+      {admin && (
+        <section className="panel">
+          <h2>Connect a knowledge source</h2>
+          <form
+            className="source-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                await api(ws, "/sources", {
+                  kind,
+                  title: d.get("title"),
+                  locator: d.get("locator"),
+                });
+                l.reload();
+              });
+            }}
+          >
+            <Field label="Source">
+              <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                <option value="website">Website page</option>
+                <option value="notion">Notion page</option>
+                <option value="zendesk">Zendesk article</option>
+              </select>
+            </Field>
+            <Field label="Title">
+              <input name="title" required placeholder="Getting started" />
+            </Field>
+            <Field
+              label={
+                kind === "website"
+                  ? "Page URL"
+                  : kind === "notion"
+                    ? "Shared page ID"
+                    : "Article ID"
+              }
+            >
+              <input
+                name="locator"
+                required
+                placeholder={
+                  kind === "website"
+                    ? "https://example.com/help"
+                    : kind === "notion"
+                      ? "Page ID shared with your connection"
+                      : "123456789"
+                }
+              />
+            </Field>
+            <button disabled={a.busy}>Add source →</button>
+          </form>
+          <div className="inline-note">
+            Notion and Zendesk need a connection first.{" "}
+            <button
+              className="link"
+              disabled={a.busy}
+              onClick={() =>
+                void a.run(async () => {
+                  await googlePicker(ws, async (files) => {
+                    for (const f of files)
+                      await api(ws, "/sources", {
+                        kind: "google",
+                        title: f.name,
+                        locator: f.id,
+                      });
+                  });
+                  l.reload();
+                })
+              }
+            >
+              Choose files from Google Drive ↗
+            </button>
+          </div>
+        </section>
+      )}
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Your knowledge library</h2>
+          <button onClick={l.reload}>Refresh status</button>
+        </div>
+        {l.data?.sources.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Source</th>
+                  <th>Index status</th>
+                  <th>Audience</th>
+                  <th>Article</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {l.data.sources.map((s: Row) => {
+                  const doc = l.data.documents.find(
+                    (d: Row) => d.source_id === s.id && d.active,
+                  );
+                  return (
+                    <tr key={s.id}>
+                      <td>
+                        <strong>{s.title}</strong>
+                        <small>
+                          {s.kind} ·{" "}
+                          {s.last_synced
+                            ? new Date(s.last_synced).toLocaleString()
+                            : "Not indexed yet"}
+                        </small>
+                        {s.error && (
+                          <small className="error-text">{s.error}</small>
+                        )}
+                      </td>
+                      <td>
+                        <Badge value={s.status} />
+                      </td>
+                      <td>
+                        {admin ? (
+                          <select
+                            aria-label={`Audience for ${s.title}`}
+                            value={s.visibility}
+                            onChange={(e) =>
+                              void a.run(async () => {
+                                await api(
+                                  ws,
+                                  `/sources/${s.id}/visibility`,
+                                  { visibility: e.target.value },
+                                  "PUT",
+                                );
+                                l.reload();
+                              })
+                            }
+                          >
+                            <option value="staff">Staff only</option>
+                            <option value="customer">Customer answers</option>
+                          </select>
+                        ) : (
+                          s.visibility
+                        )}
+                      </td>
+                      <td>
+                        {doc ? (
+                          <>
+                            <button
+                              className="link"
+                              onClick={() =>
+                                void a.run(async () =>
+                                  setPreview(
+                                    await api(ws, `/documents/${doc.id}`),
+                                  ),
+                                )
+                              }
+                            >
+                              Preview v{doc.version}
+                            </button>
+                            {admin && (
+                              <button
+                                className="link"
+                                disabled={s.visibility !== "customer" || a.busy}
+                                onClick={() =>
+                                  void a.run(async () => {
+                                    await api(
+                                      ws,
+                                      `/documents/${doc.id}/publish`,
+                                      { published: !doc.published },
+                                    );
+                                    l.reload();
+                                  })
+                                }
+                              >
+                                {doc.published
+                                  ? "Unpublish article"
+                                  : "Publish article"}
+                              </button>
+                            )}
+                          </>
+                        ) : (
+                          <span className="muted">—</span>
+                        )}
+                      </td>
+                      <td>
+                        {admin && (
+                          <div className="row-actions">
+                            <button
+                              title="Reindex"
+                              onClick={() =>
+                                void a.run(async () => {
+                                  await api(ws, `/sources/${s.id}/refresh`, {});
+                                  l.reload();
+                                })
+                              }
+                            >
+                              ↻
+                            </button>
+                            <button
+                              title="Delete source"
+                              onClick={() => {
+                                if (
+                                  confirm(
+                                    "Remove this source and all its indexed content?",
+                                  )
+                                )
+                                  void a.run(async () => {
+                                    await api(
+                                      ws,
+                                      `/sources/${s.id}`,
+                                      {},
+                                      "DELETE",
+                                    );
+                                    l.reload();
+                                  });
+                              }}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <Empty title="Give your agent something to work with">
+            Start with your help articles, policies, or product documentation.
+          </Empty>
+        )}
+      </section>
+      {preview && (
+        <dialog open className="preview-dialog">
+          <header>
+            <h2>{preview.title}</h2>
+            <button onClick={() => setPreview(null)} aria-label="Close preview">
+              ×
+            </button>
+          </header>
+          <div className="article-body">{preview.body}</div>
+        </dialog>
+      )}
+    </>
+  );
+}
+function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
+  const l = useLoad(() => api(ws, "/connections"), [ws]),
+    a = useAction(),
+    [selected, setSelected] = useState("openai");
+  return (
+    <>
+      <Heading
+        eyebrow="WORKS WITH YOUR BUSINESS"
+        title="Connect the tools you rely on."
+      >
+        Credentials stay encrypted on your server. Each connection belongs to
+        this workspace.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      {a.success && <p className="success">{a.success}</p>}
+      <div className="connection-grid">
+        {[
+          {
+            id: "openai",
+            letter: "O",
+            name: "OpenAI",
+            description:
+              "Use your own model account for answers and knowledge retrieval.",
+          },
+          {
+            id: "zendesk",
+            letter: "Z",
+            name: "Zendesk",
+            description:
+              "Bring AI capabilities to your existing helpdesk and conversations.",
+          },
+          {
+            id: "stripe_test",
+            letter: "S",
+            name: "Stripe test",
+            description:
+              "Read verified billing records and perform approved account actions.",
+          },
+          {
+            id: "stripe_live",
+            letter: "S",
+            name: "Stripe live",
+            description:
+              "A separate live connection. Actions must explicitly select live mode.",
+          },
+          {
+            id: "notion",
+            letter: "N",
+            name: "Notion",
+            description:
+              "Keep the pages you choose connected to your knowledge library.",
+          },
+          {
+            id: "google",
+            letter: "G",
+            name: "Google Drive",
+            description:
+              "Import selected files without opening your entire Drive.",
+          },
+        ].map((provider) => {
+          const row = l.data?.connections.find(
+            (r: Row) => r.provider === provider.id,
+          );
+          return (
+            <button
+              className={`connection-card ${selected === provider.id ? "chosen" : ""}`}
+              key={provider.id}
+              onClick={() => setSelected(provider.id)}
+            >
+              <span className={`provider-logo ${provider.id}`}>
+                {provider.letter}
+              </span>
+              <h3>{provider.name}</h3>
+              <p>{provider.description}</p>
+              <Badge value={row?.status ?? "not connected"} />
+              {row?.metadata.mode && <small>{row.metadata.mode} mode</small>}
+            </button>
+          );
+        })}
+      </div>
+      {owner && (
+        <section className="panel">
+          <h2>Connect a custom API</h2>
+          <p className="muted">
+            Save a bearer token for your business API, then use this connection
+            name in an action.
+          </p>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const form = e.currentTarget,
+                d = new FormData(form);
+              void a.run(async () => {
+                await api(ws, "/connections/key", {
+                  provider: `custom:${d.get("name")}`,
+                  apiKey: d.get("key"),
+                });
+                form.reset();
+                l.reload();
+              }, "Custom API credentials saved.");
+            }}
+          >
+            <div className="form-grid">
+              <Field label="Custom connection name">
+                <input
+                  name="name"
+                  pattern="[a-z][a-z0-9-]{1,49}"
+                  required
+                  placeholder="orders"
+                />
+              </Field>
+              <Field label="Custom API bearer token">
+                <input name="key" type="password" autoComplete="off" required />
+              </Field>
+            </div>
+            <button disabled={a.busy}>Save custom connection</button>
+          </form>
+        </section>
+      )}
+      <section className="panel connection-settings">
+        <h2>Configure {selected === "google" ? "Google Drive" : selected}</h2>
+        {["openai", "stripe_test", "stripe_live", "notion"].includes(
+          selected,
+        ) && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                await api(ws, "/connections/key", {
+                  provider: selected,
+                  apiKey: d.get("key"),
+                });
+                l.reload();
+                e.currentTarget?.reset();
+              }, "Connection verified and saved.");
+            }}
+          >
+            <Field
+              label={
+                selected.startsWith("stripe_")
+                  ? "Restricted Stripe App key"
+                  : selected === "notion"
+                    ? "Internal connection token"
+                    : "API key"
+              }
+              hint={
+                selected.startsWith("stripe_")
+                  ? "Install your Stripe App and provide its rk_test_ or rk_live_ key. This does not execute a payment."
+                  : selected === "notion"
+                    ? "Share the selected pages with this connection in Notion."
+                    : undefined
+              }
+            >
+              <input name="key" type="password" autoComplete="off" required />
+            </Field>
+            <button className="primary" disabled={a.busy}>
+              Verify & connect
+            </button>
+          </form>
+        )}
+        {["zendesk", "google", "notion"].includes(selected) && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                const result = await api(
+                  ws,
+                  `/connections/${selected}/oauth`,
+                  selected === "zendesk"
+                    ? { subdomain: d.get("subdomain") }
+                    : {},
+                );
+                location.assign(result.url);
+              });
+            }}
+          >
+            {selected === "zendesk" && (
+              <Field label="Zendesk subdomain">
+                <div className="input-prefix">
+                  <input
+                    name="subdomain"
+                    required
+                    pattern="[a-z0-9-]+"
+                    placeholder="your-company"
+                  />
+                  <span>.zendesk.com</span>
+                </div>
+              </Field>
+            )}
+            <p className="muted">
+              {l.data?.oauth[selected]
+                ? "Authorize only the account and content you want to connect."
+                : "Your server administrator must configure this provider’s OAuth app before connecting."}
+            </p>
+            <button disabled={!l.data?.oauth[selected] || a.busy}>
+              Connect with {selected === "google" ? "Google" : selected} ↗
+            </button>
+          </form>
+        )}
+        {selected === "zendesk" && (
+          <form
+            className="webhook-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                await api(
+                  ws,
+                  "/connections/zendesk/webhook-secret",
+                  { secret: d.get("secret") },
+                  "PUT",
+                );
+              }, "Webhook signing secret saved.");
+            }}
+          >
+            <h3>Receive ticket updates</h3>
+            <p className="muted">
+              Configure a signed Zendesk webhook with your ticket trigger. Send
+              a JSON body containing <code>ticket_id</code> to:
+            </p>
+            <code className="copyable">{l.data?.webhookUrl}</code>
+            <Field label="Webhook signing secret">
+              <input name="secret" type="password" required />
+            </Field>
+            <button disabled={a.busy}>Save signing secret</button>
+          </form>
+        )}
+        <button
+          className="danger-link"
+          onClick={() => {
+            if (
+              confirm(
+                "Disconnect this provider? Its imported knowledge will stop being used.",
+              )
+            )
+              void a.run(async () => {
+                await api(ws, `/connections/${selected}`, {}, "DELETE");
+                l.reload();
+              });
+          }}
+        >
+          Disconnect {selected}
+        </button>
+      </section>
+    </>
+  );
+}
+const actionDefaults = {
+  name: "refund_payment",
+  description:
+    "Refund a verified captured payment when the customer requests a refund.",
+  kind: "stripe_refund",
+  enabled: false,
+  config: { idempotent: false, mappingKey: "customer_id" },
+  policy: {
+    mode: "approval",
+    maxAmountMinor: 0,
+    currency: "usd",
+    dailyLimit: 10,
+  },
+};
+function ActionsPage({ ws, owner }: { ws: string; owner: boolean }) {
+  const l = useLoad(() => api(ws, "/actions"), [ws]),
+    a = useAction(),
+    [edit, setEdit] = useState<Row | null>(null),
+    [configText, setConfigText] = useState("{}");
+  function select(row: Row) {
+    setEdit({ ...row });
+    setConfigText(JSON.stringify(row.config, null, 2));
+  }
+  return (
+    <>
+      <Heading
+        eyebrow="USEFUL ACTIONS. EXPLICIT PERMISSION."
+        title="Give your agent the right tools."
+        action={
+          owner && (
+            <button
+              className="primary"
+              onClick={() => select({ ...actionDefaults })}
+            >
+              ＋ Create action
+            </button>
+          )
+        }
+      >
+        Every account change starts with human approval. Enable automatic
+        actions only within rules you choose.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      <div className="action-list">
+        {l.data?.actions.length ? (
+          l.data.actions.map((action: Row) => (
+            <section className="panel action-card" key={action.id}>
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">
+                    {action.kind.replaceAll("_", " ")}
+                  </span>
+                  <h2>{action.name}</h2>
+                </div>
+                <Badge value={action.enabled ? "enabled" : "disabled"} />
+              </div>
+              <p>{action.description}</p>
+              <div className="policy-strip">
+                <span>
+                  {action.policy.mode === "approval"
+                    ? "Human approval required"
+                    : "Automatic within policy"}
+                </span>
+                <span>{action.policy.dailyLimit} automatic actions / day</span>
+              </div>
+              {owner && (
+                <button onClick={() => select(action)}>
+                  Configure action →
+                </button>
+              )}
+            </section>
+          ))
+        ) : (
+          <section className="panel">
+            <Empty title="Useful tools, added deliberately">
+              Add Stripe refunds, period-end cancellation, or a schema-validated
+              connection to your own API.
+            </Empty>
+          </section>
+        )}
+      </div>
+      {edit && (
+        <section className="panel">
+          <div className="section-heading">
+            <h2>{edit.id ? "Edit action" : "Create an action"}</h2>
+            <button onClick={() => setEdit(null)}>Close</button>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                const config = edit.kind.startsWith("custom")
+                  ? JSON.parse(configText)
+                  : {
+                      idempotent: false,
+                      mappingKey: "customer_id",
+                      stripeMode: d.get("stripeMode"),
+                    };
+                await api(
+                  ws,
+                  `/actions${edit.id ? "/" + edit.id : ""}`,
+                  {
+                    name: d.get("name"),
+                    description: d.get("description"),
+                    kind: edit.kind,
+                    enabled: d.get("enabled") === "on",
+                    config,
+                    policy: {
+                      mode: d.get("mode"),
+                      maxAmountMinor: Number(d.get("maxAmountMinor")),
+                      currency: d.get("currency"),
+                      dailyLimit: Number(d.get("dailyLimit")),
+                    },
+                  },
+                  edit.id ? "PUT" : "POST",
+                );
+                setEdit(null);
+                l.reload();
+              });
+            }}
+          >
+            <div className="form-grid">
+              <Field label="Action name">
+                <input
+                  name="name"
+                  defaultValue={edit.name}
+                  pattern="[a-z][a-z0-9_]{2,49}"
+                  required
+                />
+              </Field>
+              <Field label="Tool">
+                <select
+                  value={edit.kind}
+                  onChange={(e) => setEdit({ ...edit, kind: e.target.value })}
+                >
+                  <option value="stripe_refund">
+                    Stripe: refund a payment
+                  </option>
+                  <option value="stripe_cancel">
+                    Stripe: cancel at period end
+                  </option>
+                  <option value="custom_read">Custom API: read data</option>
+                  <option value="custom_write">Custom API: change data</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="What should the agent use this for?">
+              <textarea
+                name="description"
+                defaultValue={edit.description}
+                minLength={8}
+                required
+              />
+            </Field>
+            {edit.kind.startsWith("stripe") && (
+              <Field label="Stripe environment">
+                <select
+                  name="stripeMode"
+                  defaultValue={edit.config.stripeMode ?? "test"}
+                >
+                  <option value="test">Test mode</option>
+                  <option value="live">Live mode — real account changes</option>
+                </select>
+              </Field>
+            )}
+            {edit.kind.startsWith("custom") && (
+              <Field
+                label="Custom API configuration"
+                hint="Provide endpoint, inputSchema, outputSchema, mappingKey, optional credentialId, and (for automatic writes) idempotent and lookupEndpoint. See the integration guide."
+              >
+                <textarea
+                  className="code-editor"
+                  value={configText}
+                  onChange={(e) => setConfigText(e.target.value)}
+                  rows={12}
+                />
+              </Field>
+            )}
+            <div className="form-grid">
+              <Field label="Approval policy">
+                <select name="mode" defaultValue={edit.policy.mode}>
+                  <option value="approval">Always require approval</option>
+                  <option value="automatic">Automatic within limits</option>
+                </select>
+              </Field>
+              <Field label="Automatic refund limit (minor units)">
+                <input
+                  name="maxAmountMinor"
+                  type="number"
+                  min="0"
+                  defaultValue={edit.policy.maxAmountMinor}
+                />
+              </Field>
+              <Field label="Currency">
+                <input
+                  name="currency"
+                  pattern="[a-z]{3}"
+                  defaultValue={edit.policy.currency}
+                />
+              </Field>
+              <Field label="Daily automatic action limit">
+                <input
+                  name="dailyLimit"
+                  type="number"
+                  min="1"
+                  defaultValue={edit.policy.dailyLimit}
+                />
+              </Field>
+            </div>
+            <label className="checkbox">
+              <input
+                name="enabled"
+                type="checkbox"
+                defaultChecked={edit.enabled}
+              />
+              Enable this action
+            </label>
+            <button className="primary" disabled={a.busy}>
+              Save action
+            </button>
+          </form>
+        </section>
+      )}
+    </>
+  );
+}
+function PublishPage({
+  ws,
+  slug,
+  owner,
+}: {
+  ws: string;
+  slug: string;
+  owner: boolean;
+}) {
+  const l = useLoad(() => api(ws, ""), [ws]),
+    a = useAction(),
+    [secret, setSecret] = useState("");
+  return (
+    <>
+      <Heading
+        eyebrow="MEET YOUR CUSTOMERS"
+        title="Your support, on your terms."
+      >
+        Publish the full portal, embed a bot on your website, or work inside
+        Zendesk.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      {l.data?.channels.map((channel: Row) => (
+        <section className="panel" key={channel.id}>
+          <div className="section-heading">
+            <div>
+              <span className="eyebrow">
+                {channel.kind === "portal"
+                  ? "HELP CENTER + CUSTOMER ACCOUNTS"
+                  : channel.kind === "widget"
+                    ? "A CONVERSATION ON YOUR WEBSITE"
+                    : "YOUR EXISTING HELPDESK"}
+              </span>
+              <h2>
+                {channel.kind === "portal"
+                  ? "Support portal"
+                  : channel.kind === "widget"
+                    ? "Embedded chatbot"
+                    : "Zendesk agent"}
+              </h2>
+            </div>
+            <Badge value={channel.published ? "published" : "unpublished"} />
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                await api(
+                  ws,
+                  `/channels/${channel.id}`,
+                  {
+                    published: d.get("published") === "on",
+                    settings: {
+                      origins: String(d.get("origins") ?? "")
+                        .split("\n")
+                        .map((s) => s.trim())
+                        .filter(Boolean),
+                      handoff: d.get("handoff") ?? "native",
+                    },
+                  },
+                  "PUT",
+                );
+                l.reload();
+              });
+            }}
+          >
+            {channel.kind === "widget" && (
+              <Field
+                label="Allowed website origins"
+                hint="One exact origin per line, for example https://www.yourcompany.com"
+              >
+                <textarea
+                  name="origins"
+                  defaultValue={(channel.settings.origins ?? []).join("\n")}
+                />
+              </Field>
+            )}
+            {channel.kind !== "zendesk" && (
+              <Field label="When a person needs to help">
+                <select
+                  name="handoff"
+                  defaultValue={channel.settings.handoff ?? "native"}
+                >
+                  <option value="native">Hand off to FieldKit inbox</option>
+                  <option value="zendesk">Create a Zendesk ticket</option>
+                </select>
+              </Field>
+            )}
+            <label className="checkbox">
+              <input
+                name="published"
+                type="checkbox"
+                defaultChecked={channel.published}
+              />
+              Publish this channel
+            </label>
+            <button className="primary" disabled={a.busy}>
+              Save channel
+            </button>
+          </form>
+          {channel.kind === "portal" && (
+            <a
+              className="portal-link"
+              href={`/support/${slug}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {location.origin}/support/{slug} ↗
+            </a>
+          )}
+          {channel.kind === "widget" && (
+            <>
+              <p className="muted">
+                Add this snippet to your website after publishing:
+              </p>
+              <code className="copyable">{`<script src="${location.origin}/widget.js" data-workspace="${slug}" defer></script>`}</code>
+            </>
+          )}
+        </section>
+      ))}
+      {owner && <ServiceCredentials ws={ws} />}
+      <section className="panel">
+        <h2>Identify customers from your website</h2>
+        <p className="muted">
+          Sign short-lived customer identities on your own server. The signing
+          secret must never be included in browser code.
+        </p>
+        <button
+          onClick={() =>
+            void a.run(async () =>
+              setSecret((await api(ws, "/identity-key", {})).secret),
+            )
+          }
+        >
+          Generate / rotate identity signing key
+        </button>
+        {secret && (
+          <Field label="Copy this key now; it is shown only once">
+            <input
+              type="password"
+              value={secret}
+              readOnly
+              onFocus={(e) => e.target.select()}
+            />
+          </Field>
+        )}
+      </section>
+    </>
+  );
+}
+function ServiceCredentials({ ws }: { ws: string }) {
+  const l = useLoad(() => api(ws, "/credentials"), [ws]),
+    a = useAction(),
+    [secret, setSecret] = useState("");
+  return (
+    <section className="panel">
+      <h2>Connect your server or assistant</h2>
+      <p className="muted">
+        Create a limited key for your server, the command-line client, or MCP.
+        Keep it out of browser code.
+      </p>
+      <Alert>{l.error || a.error}</Alert>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const d = new FormData(e.currentTarget);
+          void a.run(async () => {
+            setSecret(
+              (
+                await api(ws, "/credentials", {
+                  label: d.get("label"),
+                  days: Number(d.get("days")),
+                })
+              ).token,
+            );
+            l.reload();
+          });
+        }}
+      >
+        <div className="form-grid">
+          <Field label="Key name">
+            <input name="label" required placeholder="Website backend" />
+          </Field>
+          <Field label="Expires in days">
+            <input
+              name="days"
+              type="number"
+              min="1"
+              max="90"
+              defaultValue="30"
+              required
+            />
+          </Field>
+        </div>
+        <button disabled={a.busy}>Create service key</button>
+      </form>
+      {secret && (
+        <Field label="Copy this service key now">
+          <input
+            type="password"
+            value={secret}
+            readOnly
+            onFocus={(e) => e.target.select()}
+          />
+        </Field>
+      )}
+      {l.data?.credentials.map((key: Row) => (
+        <div className="section-heading" key={key.id}>
+          <div>
+            <strong>{key.label}</strong>
+            <p className="muted">
+              Expires {new Date(key.expires_at).toLocaleDateString()}
+            </p>
+          </div>
+          <button
+            onClick={() =>
+              void a.run(async () => {
+                await api(ws, `/credentials/${key.id}`, undefined, "DELETE");
+                l.reload();
+              })
+            }
+          >
+            Revoke
+          </button>
+        </div>
+      ))}
+    </section>
+  );
+}
+function TeamPage({ ws }: { ws: string }) {
+  const l = useLoad(
+      async () => ({
+        ...(await api(ws, "/members")),
+        ...(await api(ws, "/contacts")),
+      }),
+      [ws],
+    ),
+    a = useAction();
+  return (
+    <>
+      <Heading eyebrow="PEOPLE & PERMISSIONS" title="Keep your team connected.">
+        Invite teammates and review which customer identities can access
+        connected accounts.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      {a.success && <p className="success">{a.success}</p>}
+      <section className="panel">
+        <h2>Invite a teammate</h2>
+        <form
+          className="source-form"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const d = new FormData(e.currentTarget);
+            void a.run(async () => {
+              await api(ws, "/invitations", {
+                email: d.get("email"),
+                role: d.get("role"),
+              });
+              l.reload();
+            }, "Invitation sent.");
+          }}
+        >
+          <Field label="Email">
+            <input name="email" type="email" required />
+          </Field>
+          <Field label="Role">
+            <select name="role">
+              <option value="agent">Agent — conversations and notes</option>
+              <option value="admin">Admin — settings and approvals</option>
+            </select>
+          </Field>
+          <button className="primary" disabled={a.busy}>
+            Send invitation
+          </button>
+        </form>
+        <div className="member-list">
+          {l.data?.members.map((m: Row) => (
+            <div key={m.user_id}>
+              <span className="avatar">{m.name[0]}</span>
+              <div>
+                <strong>{m.name}</strong>
+                <small>{m.email}</small>
+              </div>
+              <Badge value={m.role} />
+            </div>
+          ))}
+        </div>
+      </section>
+      <section className="panel">
+        <h2>Reviewed customer mappings</h2>
+        <p className="muted">
+          An email match alone does not authorize billing changes. Map a
+          verified customer to their provider record after reviewing ownership.
+        </p>
+        {l.data?.contacts.length ? (
+          l.data.contacts.map((contact: Row) => (
+            <details className="contact-mapping" key={contact.id}>
+              <summary>
+                {contact.name || "Visitor"} ·{" "}
+                {contact.email ?? contact.external_id ?? contact.id}{" "}
+                <Badge value={contact.verified ? "verified" : "unverified"} />
+              </summary>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const d = new FormData(e.currentTarget);
+                  void a.run(async () => {
+                    await api(
+                      ws,
+                      `/contacts/${contact.id}/mapping`,
+                      {
+                        mappings: JSON.parse(String(d.get("mappings"))),
+                        ...(d.get("userId") ? { userId: d.get("userId") } : {}),
+                      },
+                      "PUT",
+                    );
+                    l.reload();
+                  }, "Reviewed mapping saved.");
+                }}
+              >
+                <Field
+                  label="Provider identities"
+                  hint={
+                    'For Stripe use "stripe_test" or "stripe_live" with its cus_ ID. Custom actions use their configured mapping key.'
+                  }
+                >
+                  <textarea
+                    name="mappings"
+                    className="code-editor"
+                    defaultValue={JSON.stringify(contact.mappings, null, 2)}
+                  />
+                </Field>
+                <Field label="Verified portal user ID (optional)">
+                  <input name="userId" defaultValue={contact.user_id ?? ""} />
+                </Field>
+                <button disabled={a.busy}>Save reviewed mapping</button>
+              </form>
+            </details>
+          ))
+        ) : (
+          <Empty title="Customer identities will appear here">
+            Verified portal users, signed website identities, and Zendesk
+            requesters are kept separate until explicitly linked.
+          </Empty>
+        )}
+      </section>
+    </>
+  );
+}
+function SettingsPage({ ws }: { ws: string }) {
+  const l = useLoad(() => api(ws, ""), [ws]),
+    a = useAction();
+  const settings = l.data?.workspace.settings;
+  return (
+    <>
+      <Heading
+        eyebrow="YOUR AGENT’S WORKING AGREEMENT"
+        title="Make FieldKit your own."
+      >
+        Set the tone, control model usage, and choose how your agent starts
+        working.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      {a.success && <p className="success">{a.success}</p>}
+      {settings && (
+        <section className="panel">
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const d = new FormData(e.currentTarget);
+              void a.run(async () => {
+                await api(
+                  ws,
+                  "/settings",
+                  {
+                    ...settings,
+                    model: d.get("model"),
+                    instructions: d.get("instructions"),
+                    monthlyTokenBudget: Number(d.get("budget")),
+                    retentionDays: Number(d.get("retention")),
+                    greeting: d.get("greeting"),
+                    brandColor: d.get("color"),
+                    replies: d.get("replies"),
+                  },
+                  "PUT",
+                );
+                l.reload();
+              }, "Workspace settings saved.");
+            }}
+          >
+            <Field
+              label="Agent instructions"
+              hint="Describe your business and preferred tone. Permissions and action policies are controlled separately."
+            >
+              <textarea
+                name="instructions"
+                defaultValue={settings.instructions}
+                rows={5}
+              />
+            </Field>
+            <div className="form-grid">
+              <Field label="Response model">
+                <input name="model" defaultValue={settings.model} required />
+              </Field>
+              <Field label="Monthly token budget">
+                <input
+                  name="budget"
+                  type="number"
+                  min="1000"
+                  defaultValue={settings.monthlyTokenBudget}
+                />
+              </Field>
+              <Field label="Reply behavior">
+                <select name="replies" defaultValue={settings.replies}>
+                  <option value="review">Draft for staff review</option>
+                  <option value="automatic">
+                    Reply automatically from approved knowledge
+                  </option>
+                </select>
+              </Field>
+              <Field label="Resolved conversation retention (days)">
+                <input
+                  name="retention"
+                  type="number"
+                  min="7"
+                  defaultValue={settings.retentionDays}
+                />
+              </Field>
+              <Field label="Customer greeting">
+                <input name="greeting" defaultValue={settings.greeting} />
+              </Field>
+              <Field label="Brand color">
+                <input
+                  name="color"
+                  type="color"
+                  defaultValue={settings.brandColor}
+                />
+              </Field>
+            </div>
+            <button className="primary" disabled={a.busy}>
+              Save settings
+            </button>
+          </form>
+        </section>
+      )}
+    </>
+  );
+}
+function ActivityPage({ ws, admin }: { ws: string; admin: boolean }) {
+  const l = useLoad(
+      async () => ({
+        ...(await api(ws, "/operations")),
+        ...(admin ? await api(ws, "/operations/jobs") : {}),
+        ...(admin ? await api(ws, "/audit") : {}),
+      }),
+      [ws],
+    ),
+    a = useAction();
+  return (
+    <>
+      <Heading
+        eyebrow="A CLEAR RECORD"
+        title="See what happened. Know what’s next."
+        action={<button onClick={l.reload}>Refresh</button>}
+      >
+        Confirmed actions, uncertain outcomes, background work, and the
+        decisions behind them.
+      </Heading>
+      <Alert>{l.error || a.error}</Alert>
+      <section className="panel">
+        <h2>Account operations</h2>
+        {l.data?.operations.length ? (
+          l.data.operations.map((o: Row) => (
+            <article className="activity-item" key={o.id}>
+              <div>
+                <Badge value={o.status} />
+                <code>{o.id}</code>
+              </div>
+              <p>{o.error ?? o.resource}</p>
+              {o.receipt && <pre>{JSON.stringify(o.receipt, null, 2)}</pre>}
+              {admin && ["unknown", "sent"].includes(o.status) && (
+                <button
+                  onClick={() =>
+                    void a.run(async () => {
+                      await api(ws, `/operations/${o.id}/reconcile`, {});
+                      l.reload();
+                    })
+                  }
+                >
+                  Look up provider outcome
+                </button>
+              )}
+            </article>
+          ))
+        ) : (
+          <Empty title="Every action will leave a record">
+            Receipts appear here when an agent executes an approved account
+            action.
+          </Empty>
+        )}
+      </section>
+      {admin && (
+        <>
+          <section className="panel">
+            <h2>Background work requiring attention</h2>
+            {l.data?.jobs?.map((j: Row) => (
+              <article className="activity-item" key={j.id}>
+                <strong>{j.name}</strong> <Badge value={j.state} />
+                <p>{j.output?.message ?? JSON.stringify(j.output ?? {})}</p>
+                {j.state === "failed" && (
+                  <button
+                    onClick={() =>
+                      void a.run(async () => {
+                        await api(ws, `/jobs/${j.id}/retry`, {});
+                        l.reload();
+                      })
+                    }
+                  >
+                    Retry job
+                  </button>
+                )}
+              </article>
+            ))}
+            {l.data?.deliveries?.map((d: Row) => (
+              <article key={d.id}>
+                <Badge value={d.status} />
+                <p>{d.error ?? "Support update is queued"}</p>
+              </article>
+            ))}
+            {!l.data?.jobs?.length && !l.data?.deliveries?.length && (
+              <p className="muted">No background work needs attention.</p>
+            )}
+          </section>
+          <section className="panel">
+            <h2>Audit history</h2>
+            <div className="timeline">
+              {l.data?.events?.map((event: Row) => (
+                <div key={event.id}>
+                  <span className="timeline-dot" />
+                  <div>
+                    <strong>{event.kind.replaceAll(".", " · ")}</strong>
+                    <small>{new Date(event.created_at).toLocaleString()}</small>
+                    <details>
+                      <summary>Details</summary>
+                      <pre>{JSON.stringify(event.data, null, 2)}</pre>
+                    </details>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        </>
+      )}
+    </>
+  );
+}
+function Portal({ slug, widget = false }: { slug: string; widget?: boolean }) {
+  const info = useLoad(
+      () => request(`/v2/public/${slug}${widget ? "/widget/config" : ""}`),
+      [slug],
+    ),
+    [authOpen, setAuthOpen] = useState(false),
+    [joined, setJoined] = useState<any>(null),
+    [bearer, setBearer] = useState<string | undefined>(),
+    [selected, setSelected] = useState(""),
+    [query, setQuery] = useState(""),
+    [article, setArticle] = useState<Row | null>(null),
+    a = useAction();
+  const articles = useLoad(
+    () =>
+      widget
+        ? Promise.resolve({ articles: [] })
+        : request(`/v2/public/${slug}/articles?q=${encodeURIComponent(query)}`),
+    [slug, query],
+  );
+  const tickets = useLoad(
+    () =>
+      joined && !bearer
+        ? api(joined.workspaceId, "/conversations")
+        : Promise.resolve({ conversations: [] }),
+    [joined?.workspaceId, bearer, selected],
+  );
+  const detail = useLoad(
+    () =>
+      joined && selected
+        ? api(
+            joined.workspaceId,
+            `/conversations/${selected}`,
+            undefined,
+            undefined,
+            bearer,
+          )
+        : Promise.resolve(null),
+    [joined?.workspaceId, selected, bearer],
+  );
+  useConversationEvents(
+    joined?.workspaceId ?? "",
+    selected,
+    detail.reload,
+    bearer,
+  );
+  const join = async () => {
+    const value = await request(`/v2/public/${slug}/join`, {});
+    setJoined(value);
+    setBearer(undefined);
+    setAuthOpen(false);
+  };
+  useEffect(() => {
+    if (!widget) void join().catch(() => {});
+  }, [slug]);
+  useEffect(() => {
+    if (!widget || !info.data) return;
+    const receive = (event: MessageEvent) => {
+      if (
+        event.source !== window.parent ||
+        !info.data.origins?.includes(event.origin) ||
+        event.data?.type !== "fieldkit:identity"
+      )
+        return;
+      void a.run(async () => {
+        const value = await request(`/v2/public/${slug}/widget/session`, {
+          signedIdentity: event.data.identity,
+          channel: "widget",
+        });
+        setJoined(value);
+        setBearer(value.token);
+        setSelected("");
+      });
+    };
+    window.addEventListener("message", receive);
+    window.parent.postMessage({ type: "fieldkit:ready" }, "*");
+    return () => window.removeEventListener("message", receive);
+  }, [widget, info.data]);
+  if (info.error)
+    return (
+      <div className="portal-unavailable">
+        <Logo />
+        <h1>This support space isn’t open yet.</h1>
+        <p>{info.error}</p>
+        <a href="/">Back to workspace</a>
+      </div>
+    );
+  if (!info.data) return <div className="loading">Loading support…</div>;
+  async function send(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget,
+      body = new FormData(form).get("body");
+    await a.run(async () => {
+      let identity = joined,
+        credential = bearer;
+      if (!identity) {
+        identity = await request(`/v2/public/${slug}/widget/session`, {
+          channel: widget ? "widget" : "portal",
+        });
+        credential = identity.token;
+        setJoined(identity);
+        setBearer(credential);
+      }
+      if (selected)
+        await api(
+          identity.workspaceId,
+          `/conversations/${selected}/messages`,
+          { body, requestKey: crypto.randomUUID() },
+          undefined,
+          credential,
+        );
+      else {
+        const conv = await api(
+          identity.workspaceId,
+          "/conversations",
+          {
+            body,
+            requestKey: crypto.randomUUID(),
+            channelId: identity.channelId ?? info.data.channelId,
+          },
+          undefined,
+          credential,
+        );
+        setSelected(conv.id);
+      }
+      form.reset();
+      detail.reload();
+      tickets.reload();
+    });
+  }
+  const chat = (
+    <section className="portal-chat">
+      <div className="section-heading">
+        <div>
+          <span className="eyebrow">{info.data.name} SUPPORT</span>
+          <h2>{selected ? "Your conversation" : info.data.greeting}</h2>
+        </div>
+        {selected && (
+          <button onClick={() => setSelected("")}>New conversation</button>
+        )}
+      </div>
+      <div className="messages">
+        {detail.data ? (
+          <MessageList messages={detail.data.messages} />
+        ) : (
+          <div className="chat-welcome">
+            <span className="chat-mark">✦</span>
+            <h3>A little help, right when you need it.</h3>
+            <p>
+              Ask a question about {info.data.name}. We’ll use the company’s
+              approved knowledge, or connect you with the team.
+            </p>
+            {!joined?.contactId && (
+              <small>
+                Sign in to keep ticket history and get account-specific help.
+              </small>
+            )}
+          </div>
+        )}
+      </div>
+      <Alert>{a.error || detail.error}</Alert>
+      <form className="reply-form" onSubmit={send}>
+        <textarea
+          name="body"
+          aria-label="Your message"
+          placeholder="How can we help?"
+          required
+          maxLength={12000}
+        />
+        <div>
+          <small className="muted">
+            AI-assisted support · Human help is available
+          </small>
+          <button className="primary" disabled={a.busy}>
+            {a.busy ? "Sending…" : "Send"} →
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+  return (
+    <div
+      className={widget ? "widget-page" : "portal-page"}
+      style={{ "--accent": info.data.brandColor } as React.CSSProperties}
+    >
+      {!widget && (
+        <header className="portal-header">
+          <a href={`/support/${slug}`}>
+            <span className="portal-monogram">{info.data.name[0]}</span>
+            {info.data.name}
+            <span className="muted"> / Help center</span>
+          </a>
+          <div>
+            {joined && !bearer ? (
+              <>
+                <span className="subtle">Your support account</span>
+                <button
+                  onClick={() =>
+                    void auth.signOut().then(() => {
+                      setJoined(null);
+                      setSelected("");
+                    })
+                  }
+                >
+                  Sign out
+                </button>
+              </>
+            ) : (
+              <button onClick={() => setAuthOpen(!authOpen)}>
+                Sign in / Create account
+              </button>
+            )}
+          </div>
+        </header>
+      )}
+      {authOpen ? (
+        <AuthScreen compact done={() => void a.run(join)} />
+      ) : (
+        <>
+          {!widget && (
+            <>
+              <div className="portal-hero">
+                <span className="eyebrow">HERE TO HELP</span>
+                <h1>{info.data.greeting}</h1>
+                <p>
+                  Find an answer, start a conversation, or check in on a
+                  request.
+                </p>
+                <input
+                  type="search"
+                  aria-label="Search help articles"
+                  placeholder="Search our help center…"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                />
+              </div>
+              <div className="portal-content">
+                <section>
+                  <h2>Browse our knowledge</h2>
+                  {article ? (
+                    <article className="panel">
+                      <button className="link" onClick={() => setArticle(null)}>
+                        ← All articles
+                      </button>
+                      <h2>{article.title}</h2>
+                      <div className="article-body">{article.body}</div>
+                    </article>
+                  ) : (
+                    <div className="article-grid">
+                      {articles.data?.articles.length ? (
+                        articles.data.articles.map((d: Row) => (
+                          <button
+                            className="article-card"
+                            key={d.id}
+                            onClick={() =>
+                              void a.run(async () =>
+                                setArticle(
+                                  await request(
+                                    `/v2/public/${slug}/articles/${d.id}`,
+                                  ),
+                                ),
+                              )
+                            }
+                          >
+                            <Icon name="Knowledge" />
+                            <h3>{d.title}</h3>
+                            <p>{d.excerpt}</p>
+                            <span>Read article →</span>
+                          </button>
+                        ))
+                      ) : (
+                        <p className="muted">
+                          {query
+                            ? "No articles match that search. Ask the team below."
+                            : "Our team is building the help library. Start a conversation below."}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </section>
+                {joined && !bearer && (
+                  <section>
+                    <h2>Your tickets</h2>
+                    {tickets.data?.conversations.length ? (
+                      tickets.data.conversations.map((t: Row) => (
+                        <button
+                          className="portal-ticket"
+                          key={t.id}
+                          onClick={() => setSelected(t.id)}
+                        >
+                          <span>{t.subject}</span>
+                          <Badge value={t.status} />
+                          <span>→</span>
+                        </button>
+                      ))
+                    ) : (
+                      <p className="muted">
+                        You haven’t opened a ticket yet. Your conversations will
+                        be saved here.
+                      </p>
+                    )}
+                  </section>
+                )}
+                {chat}
+              </div>
+            </>
+          )}
+          {widget && chat}
+        </>
+      )}
+      <footer className="portal-footer">
+        Powered by{" "}
+        <a href="/" target="_blank" rel="noreferrer">
+          FieldKit
+        </a>
+      </footer>
+    </div>
+  );
+}
+const portalMatch = location.pathname.match(/^\/(support|widget)\/([^/]+)/);
+createRoot(document.getElementById("root")!).render(
+  portalMatch ? (
+    <Portal slug={portalMatch[2]} widget={portalMatch[1] === "widget"} />
+  ) : (
+    <App />
+  ),
+);

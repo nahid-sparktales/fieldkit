@@ -1,44 +1,42 @@
-# Architecture and change points
+# Architecture
 
-FieldKit augments existing customer operations. The reference support workspace is one client of the same services used by integrations, the CLI, SDK, MCP and evaluation harness.
+The Node HTTP application serves React and the versioned API. The worker runs pg-boss jobs against the same PostgreSQL database. PostgreSQL stores business records, pgvector chunks, Better Auth sessions, queue records, and LangGraph checkpoints in separate schemas. Uploads live in a persistent filesystem volume.
 
-## Boundaries
+## Authority and identity
 
-`packages/core` imports no LangGraph code. `types.ts` validates versioned configuration and normalized intake; `store.ts` owns tenant-scoped canonical access; `services.ts` owns triage, evidence, policy, approvals, financial-operation identity, reconciliation and responses. Narrow support operations are injected through `SupportPort`. The externally useful, fuller `SupportAdapter` contract lives in `packages/integrations`.
+Workspace IDs in routes are selectors, never authorization. Every staff request derives membership from a verified Better Auth session. Owners configure actions and service credentials; owners/admins review knowledge, connections, mappings, and approvals. Agents handle conversations and notes. Customer requests are scoped to their contact identity. Service tokens are hashed, expiring, workspace-scoped, and limited to request creation/status and server-established identities. Widget tokens cannot access staff records.
 
-`support-graph.ts` wraps those services in explicit nodes and trusted conditional edges. `runtime.ts` owns the compiled graph, checkpointer, durable execution-request queue and loopback-demo runner. The queue chooses which stored run to advance; it does not choose workflow steps. LangGraph chooses and checkpoints those steps.
+Customer ownership comes from a verified portal account, a signed assertion from the business's server, or a staff-reviewed provider mapping. An email in a message, model-provided ID, or email match alone cannot grant account access. A Zendesk requester is an external contact; staff must review any link to a portal identity. Stripe test and live customer mappings are independent.
 
-`connectors/adapters.ts` maps raw Acme records, Northstar customer/bill keys, Globex organization/documents, Confluence-style pages and enterprise knowledge documents into canonical values. No provider-specific data rules appear in the graph. Support adapters independently normalize Jira issues, Zendesk tickets and chatbot conversations. Original provider fields are retained with each external ticket.
+Application queries explicitly scope every resource to the authenticated workspace. This release uses application authorization and composite database constraints, not PostgreSQL row-level security. Direct database access is an operator privilege.
 
-## Data ownership
+## A conversation turn
 
-| Store | Authoritative content |
-|---|---|
-| `application.sqlite / records` | Configurations, accounts, subscriptions, invoices, proposals via runs, approvals, operations, receipts, normalized tickets and knowledge |
-| `application.sqlite / runs` | Business lifecycle, input, provenance snapshots, counters, server-generated thread mapping |
-| `application.sqlite / events` | Append-only, ordered business/graph events with tenant/run IDs and invocation correlation |
-| `application.sqlite / jobs` | Durable initial/resume requests with revision-based completion |
-| `application.sqlite / reservations` | One correction operation per tenant/resource/action |
-| `application.sqlite / upstream` | Simulated upstream effects, committed separately from the calling operation receipt |
-| `application.sqlite / external_*` | Original support records and idempotent update receipts |
-| `application.sqlite / deliveries` | Signed-event outbox and delivery attempts |
-| `checkpoints.sqlite` | LangGraph resumable state, pending writes, interrupts and checkpoint history |
+1. A message and its new conversation revision commit with the pg-boss job in one PostgreSQL transaction.
+2. The worker enters the persisted LangGraph: retrieve → structured decision → policy → approval interrupt if required → revalidation → execution → publication.
+3. Retrieval includes only active customer-approved versions in the workspace. The model can answer, clarify, propose a named action, or hand off. It sees customer-visible messages, approved evidence, allowed action schemas, and reviewed account data. Internal notes and credentials are excluded.
+4. Staff intervention and newer messages advance the revision. Each stage checks it. The final effect boundary locks the conversation, so a completed takeover prevents later automatic effects. An already-sent provider request cannot be recalled; it must be reconciled.
+5. Approval binds the exact proposal, parameters, customer mapping revision, action/policy revision, connection revision, workspace revision, conversation revision, and evidence hash. Staff authority, expiry, evidence, provider ownership, and policy are checked again before execution.
+6. Automatic replies and automatic account actions are independent settings. Uploaded text never grants execution authority.
 
-Records use integer minor units and explicit currency. No conversion occurs. Tenant IDs are bound to server-owned sessions at API boundaries; every canonical lookup includes tenant scope. Raw fixture snapshots remain internal and are removed from API exports. Evaluation answer labels never enter graph state, evidence or proposal services.
+Runs use per-conversation PostgreSQL advisory locks and revision checks. Turns within one conversation are serialized; new messages still invalidate an older in-flight response immediately. Only the current conversation revision can publish or execute. All messages are independent records. SSE rechecks access and emits only customer-safe events to customers.
 
-## Typical flow
+## Durable effects
 
-An intake POST validates a bounded payload, binds the requester, persists a run, ticket and execution request, then returns an ID. The runner loads checkpoints independently of the browser. Evidence and policy can stop the action, answer safely, or request an immutable approval. A recorded manager decision transactionally schedules resumption. Revalidation checks the exact proposal, current records and external ticket revision. Execution reserves the resource, commits the mock upstream effect, then records or reconciles a receipt. Ticket bookkeeping, response persistence and original-provider updates are separate nodes.
+An operation ID, proposal hash, resource lock, and sent intent are committed before a provider write. Stripe receives that ID as its idempotency key and metadata. Custom APIs receive `Idempotency-Key` and `operationId`. A successful receipt is stored independently of the conversation transaction so process failure cannot erase knowledge of an external effect.
 
-Browser updates poll ordered stored records. Reconnecting retrieves events after an ID; it never re-submits the ticket. The page is not the worker.
+Timeouts and malformed responses after a write leave an unknown outcome. Reads can retry with bounded backoff; uncertain writes are never blindly replayed. Reconciliation locates Stripe metadata or asks the configured custom lookup endpoint. Pending Stripe refunds remain unknown until confirmed. Unresolved operations prevent conversation retention from deleting their evidence.
 
-## Where to change behavior
+Zendesk deliveries have a separate durable ledger. Ticket creation uses a stable external ID; updates carry audit metadata. Reconciliation searches external IDs/audits. Safe updates use Zendesk's timestamp; changed tickets invalidate queued automatic replies. Synchronization checks ticket audit comment IDs to suppress FieldKit feedback loops. Zendesk is authoritative for externally handled ticket history/status.
 
-- Customer schemas: `connectors/src/adapters.ts` and the matching customer fixtures.
-- Policy or money gates: `core/src/services.ts`, with a regression case.
-- Graph branching/interrupt shape: `workflows/src/support-graph.ts`; increment the graph version for incompatible semantics.
-- Provider normalization/status mappings: `integrations/src/support.ts` and `customers/*/support.json`.
-- Customer readiness checks: `core/src/discovery.ts` and `evals/src/harness.ts`.
-- A future tested live proposal adapter: replace only triage/proposal behavior. Policy, approval and connector paths remain shared.
+## Knowledge and outbound access
 
-The compact layout deliberately avoids separate services, a distributed scheduler, a supervisor agent, mandatory vector storage, or a custom workflow editor. The synchronous SQLite single-runner ceiling is documented; a multi-host product would require a different coordination and provider-authentication design.
+Sources own immutable document versions. New content invalidates the old searchable version before indexing. Refresh errors, revoked access, disconnection, and deletion remove material from customer retrieval. Publishing an article requires customer approval and is independently revocable. Historical conversation citations remain historical records until conversation retention removes them.
+
+Uploads are size bounded and stored under random server-generated names. PDF extraction is capped at 500 pages; image-only files report that OCR is required. Website ingestion accepts one selected public HTTPS page. Remote fetches prohibit redirects and non-public destinations, validate DNS results at connection time, and bound response size/time. Provider destinations are fixed. Custom action destinations and schemas are owner configured; the model cannot change them.
+
+Credentials use AES-256-GCM with workspace/provider scope as authenticated data. Service/widget tokens are hashed at rest. Budget reservations prevent concurrent model calls overspending configured token limits. On an uncertain model failure, the reservation remains conservative; actual token counts are stored when the provider reports them.
+
+## Deliberate deployment limits
+
+One server, persistent local uploads, one agent per workspace, and invited business customers. Large document import/history limits produce visible errors rather than partial silent ingestion. There is no SaaS billing, bundled model allowance, OCR, arbitrary code execution, or multi-region deployment. Provider registrations, DNS, TLS, SMTP, backups, and access governance remain operator responsibilities.

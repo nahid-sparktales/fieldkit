@@ -1,8 +1,18 @@
-name: FieldKit offline regression
+name: FieldKit verification
 on: [push, pull_request]
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: fieldkit_test
+          POSTGRES_PASSWORD: fieldkit-test-password
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:fieldkit-test-password@localhost:5432/fieldkit_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -10,17 +20,37 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npm run check:compat
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - run: npm run test:demo
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser
+      - run: docker build -t fieldkit:local .
+      - name: Verify fresh Compose installation and worker
+        run: |
+          node scripts/setup.ts
+          docker compose up -d --no-build
+          for attempt in $(seq 1 30); do
+            if curl --fail http://127.0.0.1:4317/v2/readiness; then break; fi
+            sleep 2
+          done
+          curl --fail http://127.0.0.1:4317/v2/readiness
+          curl --fail http://127.0.0.1:4317/v2/installation
+          docker compose exec -T app npm run migrate
+          docker compose restart worker
+          sleep 5
+          curl --fail http://127.0.0.1:4317/v2/readiness
+      - name: Container logs
+        if: always()
+        run: test ! -f .env || docker compose logs --no-color --tail=60
+      - name: Stop containers
+        if: always()
+        run: test ! -f .env || docker compose down -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: fieldkit-verification
+          name: verification-results
           path: |
             playwright-report/
             test-results/
-            docs/screenshots/

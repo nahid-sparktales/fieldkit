@@ -1,100 +1,92 @@
-# Existing support-stack integration
+# Integrations and identity
 
-FieldKit's own UI is a control plane and reference client. Operational requests can enter through REST, the typed SDK, simulated provider webhooks or MCP. There is one policy/approval/billing workflow.
+Use dedicated test accounts first. No credentials or approved vendor registrations are distributed in the repository or image. Connecting a key validates access; it does not prove every connector operation passed. Record the real flows in [verification](verification.md).
 
-## Offline adapters
+## OpenAI
 
-| Deployment | Support surface | Account/invoice source | Knowledge source |
-|---|---|---|---|
-| Acme | Mock Jira Service Management | Salesforce/Stripe-style records | Local article array |
-| Northstar | Mock Zendesk | `customer_key`, `bill_key`, `gross_cents`, `settled` | Confluence-style pages, nested versions and body storage |
-| Globex | Existing chatbot + generic support API | `OrganizationId`, `DocumentId`, `TotalMinor`, `CaptureState` | Internal document/revision/governance records |
-| MessyCorp | Mock Jira + legacy mapping failures | Inconsistent identifiers and unsafe billing capability | Contradictory policies and an expired guide |
+Connect a workspace-owned API key in Connections. FieldKit checks access to the selected response model and `text-embedding-3-small`. Defaults are `gpt-5.4-mini` and 1,000,000 total tokens per month. Settings controls the response model and budget; embeddings remain 1536-dimensional with the fixed embedding model. Real responses use structured outputs and `store:false`. Reservations remain charged conservatively if an outcome is uncertain. A model outage or insufficient evidence sends the conversation to staff.
 
-These names describe simulated compatibility fixtures, not an authenticated vendor connection. `support.json` records actual capability, permission, identity/status mapping, rate-limit metadata and webhook examples. `SupportAdapter` covers capabilities, getTicket, internal notes, customer replies and status changes. Assignment and tags are optional and deliberately unavailable; their absence is surfaced, not silently emulated. Configured mock rate limits are metadata; live network rate limiting is not claimed.
+References: [response model](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [embedding model](https://developers.openai.com/api/docs/models/text-embedding-3-small).
 
-Jira fixtures use `key`, nested `fields.status.name`, reporter IDs, a custom account field and `jsdPublic` comments. Zendesk uses integer ticket/requester/organization IDs, status strings, tag/custom-field arrays and `public` comments. Chatbot/native fixtures use conversation IDs, authenticated customer references and message arrays. Native fields are retained for audit and round trips.
+## Zendesk
 
-## Authentication
+The installation operator registers their own OAuth application. Distributed integrations require a Zendesk-approved global OAuth client; vendor approval is a release blocker. Set `ZENDESK_CLIENT_ID`, `ZENDESK_CLIENT_SECRET`, and the exact callback `https://YOUR-ORIGIN/v2/oauth/zendesk/callback`. Connect the account's subdomain in Connections. The flow uses state, PKCE, and server-side encrypted token storage/refresh.
 
-The server binds to loopback and accepts only loopback hosts. Browser requests use an HttpOnly, SameSite=Strict demo session cookie. API/SDK/MCP clients use a bearer session token. Cross-origin requests are rejected; JSON schemas are strict and body/history lengths are bounded.
+Create a signed Zendesk webhook pointing to the workspace URL shown in Connections. Configure ticket-create/update triggers to POST JSON with `{"ticket_id":"{{ticket.id}}"}`. Preserve Zendesk's signature, signature timestamp, and invocation ID headers. Copy the webhook signing secret into FieldKit's Zendesk settings. Signatures cover the timestamp plus exact request body; the server rejects timestamps outside five minutes. Keep the server clock synchronized. Publish the Zendesk channel only after this setup succeeds.
 
-For this local demonstration only, create a session with:
+Requested scopes cover ticket read/write, users, organizations, and help-center read. The connector paginates comments/audits, suppresses its own comment IDs using audit metadata, and uses `safe_update` with `updated_stamp`. It handles conflicts without replaying uncertain writes. Configure native portal/widget handoff independently to native or Zendesk. A native customer needs a verified email to create a Zendesk handoff ticket. Existing Zendesk requesters are not automatically linked to portal accounts by email; review mappings in Team.
 
-```sh
-curl http://localhost:4317/api/session \
-  -H 'Content-Type: application/json' \
-  -d '{"tenant":"acme","persona":"requester"}'
-```
+Test public replies, internal notes, tags, external agent assignment, status, customer follow-ups, requester changes, duplicate webhooks, expired tokens, and provider rate limits. The `/control` endpoint accepts `tags` and `externalAssigneeId`. Staff should inspect unknown deliveries in Activity before retrying; an uncertain write only performs outcome lookup.
 
-Use the returned token as `Authorization: Bearer TOKEN`. A `support_manager` persona can review approvals. Open persona selection is a documented simulation, not authentication assurance. Real hosting would require replacing it before exposure.
+References: [authentication/global OAuth](https://developer.zendesk.com/api-reference/introduction/security-and-auth/), [metadata and safe updates](https://developer.zendesk.com/documentation/ticketing/managing-tickets/creating-and-updating-tickets/).
 
-## REST and SDK
+## Notion
 
-`POST /v1/requests` accepts the version-1 `FieldKitRequestSchema`. Trusted-context assertions must match the authenticated session; putting tenant/account/role claims in text grants no authority. Recent history is limited to six messages of at most 2,000 characters, with a 4,000-character current message. Extra fields are rejected. The request returns `202`, a run ID and status URL, without keeping the connection open for approval.
+Either share selected pages with an internal integration and connect its token, or configure an operator-owned public OAuth integration with `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and callback `/v2/oauth/notion/callback`. Select/shared pages define provider access. Add individual page IDs in Knowledge. FieldKit reads page/block content recursively within documented size/depth limits; it does not import the entire workspace. Hourly refresh removes inaccessible pages from retrieval when Notion revokes access.
+
+[Notion authorization](https://developers.notion.com/guides/get-started/authorization).
+
+## Google Drive
+
+Enable Google Drive API and Picker API in one Google Cloud project. Configure a web OAuth client with callback `/v2/oauth/google/callback`; set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_PICKER_KEY`, and `GOOGLE_APP_ID` (project number). Restrict the Picker browser key to your HTTPS origin and the required APIs. Complete Google's consent/verification requirements for the intended users.
+
+Connect Google, then use **Choose Drive files** in Knowledge. FieldKit requests only `drive.file`, which grants access to files selected/shared with the application. It does not enumerate a user's entire Drive. Native Google documents export to text, spreadsheets to CSV; supported binary documents use the file extractor. Removed, inaccessible, unsupported, and empty files fail visibly and are excluded from retrieval.
+
+[Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server).
+
+## Stripe App restricted keys
+
+Register your own Stripe App using the restricted-API-key template. Configure read permissions for customers, charges, and subscriptions and write permissions for refunds and subscription updates. Follow Stripe's current permission names and app review requirements; this repository does not claim a published/approved marketplace app.
+
+Install it in a dedicated Stripe test account and generate its restricted key. Connect `rk_test_…` under **Stripe test**. Live installations use **Stripe live** and `rk_live_…`; mismatched prefixes are rejected. Both connections can coexist. Each action explicitly selects test or live mode, with test as the default. No ordinary secret `sk_…` key is accepted.
+
+In Team, review the customer's `stripe_test` or `stripe_live` mapping to the correct `cus_…` ID. Select an existing charge/subscription, never infer ownership from supplied text. Refunds use integer minor units and cannot exceed the captured, unrefunded balance. Full refunds are the remaining balance. Cancellation sets `cancel_at_period_end=true` on the selected subscription. All writes require approval initially; automatic refund policies require explicit currency, per-action amount, and daily count limits.
+
+[Restricted-key app installation](https://docs.stripe.com/stripe-apps/api-authentication/rak), [Stripe App permissions](https://docs.stripe.com/stripe-apps/reference/permissions).
+
+## Signed widget identities
+
+Anonymous widget users can ask customer-safe questions. To authenticate an existing website user, generate an identity signing key in Publish and store it only on the website's server. After checking your own session, sign a short-lived payload (at most one hour). The subject must come from your authenticated database record, not request text.
 
 ```ts
-import { FieldKitClient } from './packages/sdk/src/index.js';
-const client = new FieldKitClient('http://localhost:4317', process.env.FIELDKIT_TOKEN!);
-const result = await client.resolve({
-  schemaVersion: 1,
-  deploymentId: 'acme',
-  idempotencyKey: crypto.randomUUID(),
-  external: { conversationId: 'existing-conversation-42', channel: 'existing_chatbot' },
-  message: 'Please refund the duplicate charge for both plans.',
-  trustedContext: { tenantId: 'acme', authenticatedCustomerId: 'acct-1' }
-});
-const status = await client.inspect(result.runId);
-// Present status.run.response only as its persisted, customer-safe result.
+import { createHmac } from 'node:crypto';
+const payload = Buffer.from(JSON.stringify({
+  sub: authenticatedUser.id,
+  name: authenticatedUser.name,
+  email: authenticatedUser.verifiedEmail,
+  exp: Math.floor(Date.now() / 1000) + 300,
+})).toString('base64url');
+const assertion = payload + '.' + createHmac('sha256', process.env.FIELDKIT_IDENTITY_SECRET!)
+  .update(payload).digest('base64url');
+// Return only the short-lived assertion to this signed-in user's browser.
 ```
 
-`GET /v1/runs/:id` returns an authorized run, safe checkpoint summary and pending approval state. `GET /api/approvals` returns the tenant inbox. `POST /api/approvals/:id/decision` accepts only `{revision, decision}`; it loads the exact proposal server-side and schedules resumption. A caller-supplied role, thread, checkpoint, action argument or decision boolean cannot bypass it.
+Load the embed snippet shown in Publish, then call `window.FieldKit.identify(assertion)`. Configure exact allowed website origins. The signing key is never put in browser code. This establishes a customer identity; provider mappings still require staff review. Rotate it in Publish to invalidate old assertions.
 
-`POST /api/runs` supports canonical native/API/mock-email/web-chat intake. `GET /api/runs/:id/events?after=ID` returns stable ordered stored events. `GET /api/traces/:id` is inspection; `POST /api/traces/:id/rerun` is isolated execution.
+## Custom APIs
 
-The SDK is a typed HTTP client, not another orchestrator. Only network-failed GETs have a bounded retry; POSTs are not blindly retried. Repeated intake must reuse its idempotency key. A chatbot conversation ID identifies the stored request context; send a new conversation/request identifier for a new operational request.
+Owners configure a fixed public HTTPS endpoint, optional encrypted bearer credential, a closed JSON input/output schema, a customer mapping key, and approval rules. Save a credential using the authenticated `/connections/key` endpoint with provider `custom:YOUR-ID`; set `credentialId` to `YOUR-ID`. There are no scripts, templated hosts, redirects, private-network endpoints, or model-chosen URLs.
 
-## Provider-shaped inbound events
+Example configuration:
 
-The stored `customers/*/support.json` supplies webhook-shaped fixtures. Call:
-
-```text
-POST /api/integrations/mock_jira_service_management/webhook
-Authorization: Bearer <local-demo-token>
-Content-Type: application/json
-
-{"schemaVersion":1,"eventId":"acme-jsm-1","ticketId":"ACME-1042","sequence":1}
+```json
+{
+  "endpoint": "https://support-api.example.com/change-delivery",
+  "lookupEndpoint": "https://support-api.example.com/operation-status",
+  "credentialId": "orders",
+  "mappingKey": "commerce_customer",
+  "idempotent": true,
+  "inputSchema": {
+    "type": "object", "properties": {"orderId":{"type":"string"}},
+    "required": ["orderId"], "additionalProperties": false
+  },
+  "outputSchema": {
+    "type": "object", "properties": {"status":{"type":"string"},"orderId":{"type":"string"}},
+    "required": ["status","orderId"], "additionalProperties": false
+  }
+}
 ```
 
-This offline endpoint reads the provider-native fixture through its adapter. Duplicate IDs return the original run. Reordered sequences do not roll the ticket backward. Conflicting reuse returns a conflict. Unknown external IDs, missing custom account fields, unsupported statuses and missing required capabilities stop safely. A changed external ticket revision makes an approved action stale.
+The write endpoint receives `{"operationId":"…","customerId":"staff-reviewed-provider-id","parameters":{"orderId":"…"}}`, a bearer header if configured, and `Idempotency-Key`. It must atomically store and replay the result for that operation ID. Enforce customer ownership independently on your API. Read actions use the same fixed POST envelope and must have no business side effects.
 
-Inbound fixtures use the authenticated local bearer boundary, not real Jira webhook-signature verification. No claim is made about live Atlassian webhook compatibility beyond these explicit simulated shapes.
-
-## Outbound events
-
-Every durable waiting/terminal outcome produces a versioned event with event ID, type, tenant/run correlation, receipt reference and original support reference. Supported types include `run.waiting_for_approval`, `run.completed`, `run.failed`, `run.unknown_outcome`, `run.partial_completion`, `run.rejected` and `run.escalated`.
-
-The default destination is a **local simulated receiver**, not a remote URL. Payload bytes are HMAC-SHA256 signed using a generated server-only key under the ignored data directory. Each attempt has a unique ID, timestamp, signature and HTTP-shaped status. The receiver verifies signatures and deduplicates the event ID. Retry budget is three. Failed acknowledgments can be modeled deterministically in tests; startup also processes pending deliveries.
-
-`GET /api/webhooks` exposes tenant-scoped delivery state, without the signing key. Adding a real HTTP sink is an explicit future integration task: it would need endpoint configuration, timestamp/replay-window handling, delivery scheduling, secret rotation, and an SSRF policy. This demonstration does not send internet webhooks.
-
-## MCP
-
-The installed official MCP SDK is pinned at `@modelcontextprotocol/sdk@1.31.0`. Its stdio transport was tested with an actual SDK client. Run:
-
-```sh
-FIELDKIT_URL=http://localhost:4317 FIELDKIT_TOKEN=<session-token> \
-  npx tsx packages/mcp/src/server.ts
-```
-
-Tools: `resolve_support_request`, `get_run_status`, `get_policy_status`. The resolver requests an allowlisted governed action through normal intake. There is no approve, arbitrary connector call, SQL, thread-edit, cross-tenant search, or force-node tool. MCP cannot create its own session or elevate its role. A manager must decide through the normal application approval path.
-
-## Asynchronous sequence
-
-1. The adapter normalizes the external ticket and verifies account mapping against the host identity.
-2. The server stores the provider, ticket/conversation ID, initial native snapshot and revision with the run.
-3. A large action updates that same external ticket to internal-approval waiting, then interrupts.
-4. Restart preserves both the proposal and external reference.
-5. An authorized decision resumes the original thread; current evidence and external revision are checked.
-6. A confirmed receipt enables a customer-safe reply, internal note and resolved status on the original ticket.
-7. Idempotent support-write keys make partial update recovery safe. Financial execution is not repeated.
+The lookup endpoint receives `{"operationId":"…","customerId":"…"}` and returns `{"status":"confirmed","operationId":"…","result":{…}}` only when the original result is known. `result` must match the configured output schema. Anything else remains unknown. Automatic writes cannot be enabled without both an idempotency contract and lookup endpoint. Returning HTTP 200 alone does not establish an uncertain write's outcome.

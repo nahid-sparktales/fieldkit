@@ -1,15 +1,71 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
-import { FieldKitClient } from '../../sdk/src/index.js';
-const base=process.env.FIELDKIT_URL??'http://localhost:4317',token=process.env.FIELDKIT_TOKEN;
-if(!token)throw new Error('FIELDKIT_TOKEN must be a local demo session token. MCP cannot select or elevate an identity.');
-const client=new FieldKitClient(base,token),server=new McpServer({name:'fieldkit',version:'1.0.0'});
-const text=(value:unknown)=>({content:[{type:'text' as const,text:JSON.stringify(value)}]});
-server.registerTool('resolve_support_request',{description:'Request a governed mock support resolution. Scope comes from the host session. Large or destructive actions wait for a manager; this tool cannot approve them.',inputSchema:{message:z.string().min(3).max(4000),conversationId:z.string().min(1).max(100),idempotencyKey:z.string().min(8).max(100)}},async input=>{
-  const data=await client.request<{actor:{tenant:string;id:string;accountId:string}}>('/api/bootstrap');
-  return text(await client.resolve({schemaVersion:1,deploymentId:data.actor.tenant,idempotencyKey:input.idempotencyKey,external:{conversationId:input.conversationId,channel:'mcp'},message:input.message,trustedContext:{tenantId:data.actor.tenant,actorId:data.actor.id,authenticatedCustomerId:data.actor.accountId}}));
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { z } from "zod";
+import { FieldKitClient } from "../../sdk/src/index.js";
+const { FIELDKIT_URL, FIELDKIT_WORKSPACE, FIELDKIT_TOKEN, FIELDKIT_CUSTOMER } =
+  process.env;
+if (
+  !FIELDKIT_URL ||
+  !FIELDKIT_WORKSPACE ||
+  !FIELDKIT_TOKEN ||
+  !FIELDKIT_CUSTOMER
+)
+  throw new Error(
+    "Provide URL, workspace, scoped service token, and the fixed verified external customer ID in the MCP host environment",
+  );
+const client = new FieldKitClient({
+  url: FIELDKIT_URL,
+  workspaceId: FIELDKIT_WORKSPACE,
+  token: FIELDKIT_TOKEN,
+  customerId: FIELDKIT_CUSTOMER,
 });
-server.registerTool('get_run_status',{description:'Read a tenant-authorized run and safe result. Does not execute or resume the graph.',inputSchema:{runId:z.string().uuid()}},async({runId})=>{const {run,approval}=await client.inspect(runId);return text({runId:run.id,status:run.stage,response:run.response,receipt:run.receipt,approval:approval?{id:approval.id,status:approval.status}:undefined});});
-server.registerTool('get_policy_status',{description:'Read this deployment’s deterministic action constraints. Does not change policy.',inputSchema:{}},async()=>{const d=await client.request<{config:unknown;readiness:unknown}>('/api/bootstrap');return text({config:d.config,readiness:d.readiness});});
+const server = new McpServer({ name: "fieldkit", version: "2.0.0" });
+server.registerTool(
+  "request_support",
+  {
+    description:
+      "Request governed support for the customer fixed by this MCP host. The server controls identity, policy, and action approvals.",
+    inputSchema: {
+      message: z.string().min(1).max(12000),
+      idempotencyKey: z.string().min(8).max(120),
+      conversationId: z.string().uuid().optional(),
+    },
+  },
+  async ({ message, idempotencyKey, conversationId }) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(
+          await (conversationId
+            ? client.reply(conversationId, {
+                externalCustomerId: FIELDKIT_CUSTOMER,
+                body: message,
+                requestKey: idempotencyKey,
+              })
+            : client.request({
+                externalCustomerId: FIELDKIT_CUSTOMER,
+                body: message,
+                requestKey: idempotencyKey,
+              })),
+        ),
+      },
+    ],
+  }),
+);
+server.registerTool(
+  "support_status",
+  {
+    description:
+      "Read customer-visible messages and status of a support request in the configured workspace.",
+    inputSchema: { conversationId: z.string().uuid() },
+  },
+  async ({ conversationId }) => ({
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify(await client.status(conversationId)),
+      },
+    ],
+  }),
+);
 await server.connect(new StdioServerTransport());

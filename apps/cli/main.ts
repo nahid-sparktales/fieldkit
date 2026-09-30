@@ -1,24 +1,36 @@
-import { FieldKitClient } from '../../packages/sdk/src/index.js';
-import { TenantId } from '../../packages/core/src/types.js';
-import type { Report } from '../../packages/evals/src/harness.js';
-const args=process.argv.slice(2),url=process.env.FIELDKIT_URL??'http://localhost:4317';
-const flag=(name:string)=>args[args.indexOf(name)+1];
-const tenant=TenantId.parse(process.env.FIELDKIT_CUSTOMER??(args[0]==='eval'||args[0]==='init'?args[1]:args[0]==='onboard'?args[1]?.split('/').filter(Boolean).at(-1):args.includes('--customer')?flag('--customer'):undefined)??'acme');
-try {
-  let token=process.env.FIELDKIT_TOKEN;
-  if(!token){const r=await fetch(`${url}/api/session`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tenant,persona:'support_manager'})});const session=await r.json();if(!r.ok)throw new Error(session.error);token=session.token;}
-  const client=new FieldKitClient(url,token!);let result:unknown;
-  if(args[0]==='init'){result=await client.request('/api/init',{});}
-  else if(args[0]==='onboard'){result=await client.request('/api/discovery/scan',{});}
-  else if(args[0]==='eval'){
-    let report=await client.request<Report>('/api/evaluations',{suite:args.includes('--suite')?flag('--suite'):'smoke',seed:args.includes('--seed')?Number(flag('--seed')):42});
-    while(report.status==='running'){await new Promise(r=>setTimeout(r,500));report=await client.request<Report>(`/api/evaluations/${report.id}`);}
-    console.log(report.markdown);console.log(`Report ID: ${report.id}`);if(report.status==='failed')process.exitCode=1;
-  }else if(args[0]==='workflow'&&args[1]==='inspect')result=await client.request(`/api/traces/${encodeURIComponent(args[2])}`);
-  else if(args[0]==='replay'){
-    if(args.includes('--rerun')){if(!args.includes('--sandbox'))throw new Error('Rerun requires --sandbox');result=await client.request(`/api/traces/${encodeURIComponent(args[1])}/rerun`,{});}
-    else result=await client.request(`/api/traces/${encodeURIComponent(args[1])}`);
-  }else if(args[0]==='demo'&&args[1]==='reset')result=await client.request('/api/reset',{confirm:tenant});
-  else throw new Error('Commands: init <customer>, onboard ./customers/<customer>, eval <customer> --suite smoke|full|recovery --seed 42, workflow inspect <run-id>, replay <trace-id> [--rerun --sandbox], demo reset --customer <customer>. Start the local API first.');
-  if(result)console.log(JSON.stringify(result,null,2));
-}catch(error){console.error(String(error));process.exitCode=1;}
+import { FieldKitClient } from "../../packages/sdk/src/index.js";
+import { existsSync } from "node:fs";
+if (existsSync(".env")) process.loadEnvFile(".env");
+const [command, ...args] = process.argv.slice(2);
+if (command === "help" || !command) {
+  console.log(
+    "FieldKit v2\n\nSet FIELDKIT_URL, FIELDKIT_WORKSPACE, and FIELDKIT_TOKEN (a scoped service token).\n\nidentify CUSTOMER_ID NAME [EMAIL]\nrequest CUSTOMER_ID MESSAGE\nstatus CONVERSATION_ID\n\nAdministrative setup, knowledge review, and approvals are available in the authenticated web app.",
+  );
+  process.exit(0);
+}
+const { FIELDKIT_URL, FIELDKIT_WORKSPACE, FIELDKIT_TOKEN } = process.env;
+if (!FIELDKIT_URL || !FIELDKIT_WORKSPACE || !FIELDKIT_TOKEN)
+  throw new Error(
+    "Set FIELDKIT_URL, FIELDKIT_WORKSPACE, and FIELDKIT_TOKEN; no demo identity is created automatically",
+  );
+const client = new FieldKitClient({
+  url: FIELDKIT_URL,
+  workspaceId: FIELDKIT_WORKSPACE,
+  token: FIELDKIT_TOKEN,
+});
+let result: unknown;
+if (command === "identify" && args.length >= 2)
+  result = await client.identify({
+    externalCustomerId: args[0],
+    name: args[1],
+    email: args[2],
+  });
+else if (command === "request" && args.length >= 2)
+  result = await client.request({
+    externalCustomerId: args[0],
+    body: args.slice(1).join(" "),
+    requestKey: crypto.randomUUID(),
+  });
+else if (command === "status" && args[0]) result = await client.status(args[0]);
+else throw new Error("Unknown command or missing arguments; run fieldkit help");
+console.log(JSON.stringify(result, null, 2));

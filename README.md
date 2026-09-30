@@ -1,125 +1,66 @@
 # FieldKit
 
-**A local customer-deployment toolkit for governed operational AI workflows.** Keep the existing support system. Add evidence, policy, durable approval, verified execution, evaluation, and a trace you can inspect.
+Self-hosted AI support with a customer portal, embedded chat, a staff inbox, and Zendesk integration. Bring your own knowledge and OpenAI account. FieldKit retrieves evidence and proposes actions; application code controls identity, approval, and execution.
 
-The reference deployment resolves fictional billing requests through a **real TypeScript LangGraph StateGraph** with **file-backed SQLite checkpoints**. A $49 duplicate charge changes the mock billing ledger and original support ticket. An $8,000 request pauses without moving money, survives a backend restart, and resumes the same operation after an authorized recorded decision.
+Apache-2.0 licensed. This repository is private during development. **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo` (`npm run demo`, explicitly invoked).
 
-All customers, contacts, articles, accounts, and transactions are fictional. Jira, Zendesk, Salesforce, Stripe, Confluence, and enterprise systems here are **simulated schema-compatibility fixtures**, not authenticated vendor integrations. No paid model, network connector, or real payment is used.
+## What is implemented
 
-![FieldKit support workspace](docs/screenshots/support.png)
+- Verified email/password accounts, recovery, staff invitations, workspace roles, isolated customer history, and server-signed widget identities.
+- Guided setup, model connection, document review, answer preview, publishing, customer accounts, articles, ticket conversations, private notes, assignment, approvals, and human takeover.
+- PDF, DOCX, Markdown, text, individual website pages, selected Notion pages, Google Picker files, and Zendesk help-center articles. Background ingestion, extraction errors, versioning, manual refresh, and hourly synchronization. Imported knowledge starts staff-only; approval for customer answers and public article publication are separate controls.
+- OpenAI Responses structured outputs inside LangGraph, PostgreSQL checkpoints, tenant-scoped pgvector/keyword retrieval, citations, actual usage accounting, and workspace token budgets.
+- Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.
+- Separate Stripe test/live connections, purchase/subscription retrieval, full or partial refunds, and selected-subscription cancellation at period end. Fixed-destination custom APIs with schemas, reviewed customer mappings, exact approvals, automatic limits, durable operation IDs, and outcome lookup.
+- A `/v2` API, event streams, authenticated SDK/CLI/MCP, durable PostgreSQL jobs, a separate worker, health checks, and Docker Compose packaging.
 
-## Run locally
+## Installation
 
-Use **Node.js 24 LTS** (supported engine: Node >=22.12; local verification used Node 25.5.0) and npm. Native SQLite dependencies may need the normal platform build tools if a prebuilt binary is unavailable.
+Use a server with Docker Compose, a TLS reverse proxy, a domain, SMTP, and an OpenAI API key. Node 24 is needed only for the local setup command; alternatively use the Node container below.
+
+```sh
+git clone git@github.com:nahid-sparktales/fieldkit.git
+cd fieldkit
+node scripts/setup.ts
+# Alternatively: docker run --rm -v "$PWD:/app" -w /app node:24 node scripts/setup.ts
+```
+
+Edit the generated, ignored `.env`: set `FIELDKIT_URL` to your public HTTPS origin, `SMTP_URL`, and `SMTP_FROM`. Preserve the generated secrets and database password. Then:
+
+```sh
+docker compose up --build -d
+docker compose logs --tail=50 migrate app worker
+```
+
+Proxy the public domain to `127.0.0.1:4317` with streaming enabled. PostgreSQL is private to the Compose network. App and worker share the persistent uploads volume. Migrations finish before either starts. See [operations](docs/operations.md) for TLS, backup, restoration, upgrades, and key rotation.
+
+Open the app, register, verify your email, and create the first workspace with `FIELDKIT_SETUP_TOKEN` from `.env`. Invite staff from Team. Connect OpenAI, add knowledge, approve customer-safe sources, try a question, configure actions, and publish your channels. Replies initially require staff review; automatic replies are an explicit workspace setting. Account-changing actions initially require approval independently of reply mode.
+
+## Verification status
+
+This is an implemented release candidate, **not a claim that the external release gates have passed**. Local database, safety, recovery, and browser tests use dedicated test databases and injected provider/model doubles. They do not establish real model quality or vendor compatibility. Live SMTP, model, Zendesk, Notion, Google, Stripe, and custom API test-account runs remain release blockers until their evidence is recorded. See [release gates](docs/verification.md).
 
 ```sh
 npm ci
-npm run dev
-```
-
-Open **[http://localhost:4317](http://localhost:4317)** and click **Start demo**. The server binds only to loopback. First startup seeds the four deployments and creates `.fieldkit/`; subsequent starts preserve state. Dependencies are pinned in `package-lock.json`. Once installed, the application runs without runtime internet access or credentials.
-
-Production-style local serving:
-
-```sh
-npm run build
-npm start
-```
-
-`FIELDKIT_PORT` and `FIELDKIT_DATA` customize the local port and synthetic data directory. No `.env` file is required. `npm start` uses `tsx`, so retain development dependencies when installing this demonstration.
-
-## What works
-
-- Seven operational areas: overview, support workspace, approvals, existing support stack, discovery, evaluations, and traces. Responsive layouts, keyboard controls, labeled demo identities, real loading/error states, and deep-linked records.
-- Four support adapters: mock Jira Service Management, mock Zendesk, generic existing chatbot, and the native workspace. Provider-native fields and IDs survive normalized processing and support writes.
-- Acme ($100 automatic authority), Northstar ($25), Globex (every monetary action approved), and deliberately unprepared MessyCorp. Customer/account/invoice and knowledge schemas really differ.
-- Captured-payment, duplicate relationship, ownership, currency, available-balance, evidence-version and current-policy gates. Account deletion always needs approval; ambiguous cancellation escalates.
-- Durable decisions and execution requests; fresh-process recovery; resource reservations; operation reconciliation; explicit unknown and partial outcomes; idempotent support updates.
-- Discovery reads five actual customer files and edits audited working copies. A mapping correction removes an actual finding. Reviewed policy, connector, label and support-capability remediation supports a measured red-to-green journey.
-- Nine smoke cases; 64 independently authored base families; 640 seeded full-suite variations; separate recovery/integration regressions. JSON/Markdown reports, denominators, compatible comparisons, inspectable failures, sandbox reruns and fresh sandbox approvals.
-- A typed REST client, authenticated stdio MCP server, and HMAC-signed outbound events delivered to a **local simulated receiver** with stable event IDs and distinct retry-attempt IDs.
-
-Live model mode and real-provider integrations are unavailable. The deterministic proposal adapter runs inside the real graph. Its results do **not** measure LLM quality.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  J[Mock Jira / Zendesk] --> N[Normalized support boundary]
-  C[Existing chatbot / SDK / MCP] --> N
-  W[FieldKit reference UI] --> N
-  N --> A[Trusted local session + application services]
-  A --> G[LangGraph StateGraph]
-  G <--> CP[(SQLite checkpoints)]
-  G --> P[Deterministic evidence and policy services]
-  P --> H[Durable approval interrupt]
-  H --> V[Fresh action validation]
-  P --> V
-  V --> B[Mock billing + receipt reconciliation]
-  B --> S[Idempotent original-ticket update]
-  A <--> DB[(Canonical SQLite records / outbox / audit)]
-  S --> E[Signed local webhook receiver]
-  DB --> T[Read-only traces and isolated evaluation]
-```
-
-LangGraph persists the next workflow step and approval interruption. FieldKit owns authorization, proposals, decisions, resource reservations, receipts, evaluation and readiness. Checkpoints are neither billing records nor permission tokens. There is one support graph, no multi-agent supervisor, no hosted control plane, and no dependency on other personal projects.
-
-| Directory | Responsibility |
-|---|---|
-| `apps/web` | React / TypeScript reference UI |
-| `apps/api`, `apps/cli` | Local HTTP application and API-backed CLI |
-| `packages/core` | Framework-independent domain contracts, canonical store, policy/services, discovery |
-| `packages/workflows` | LangGraph definition, SQLite checkpointing, durable execution requests and recovery |
-| `packages/connectors` | Customer-specific raw-record and knowledge normalization |
-| `packages/integrations` | SupportAdapter contract, mock provider writes, normalized chatbot boundary, signed events |
-| `packages/sdk`, `packages/mcp` | Thin typed API client and constrained MCP tools |
-| `packages/evals` | Independently labeled cases, generator, isolated harness, reports, readiness and reruns |
-| `customers` | Immutable baseline configuration, fixtures and labels |
-| `tests` | Domain, API/SDK/MCP, real-graph, child-process recovery and browser checks |
-
-## Verification
-
-```sh
-npm run check:compat      # Disk checkpoint, interrupt, exit, fresh-process resume
 npm run typecheck
 npm run build
-npm test                 # Real graph + API + SDK + MCP + recovery/integration tests
-npm run test:recovery
-npx playwright install chromium   # One-time browser installation
-npm run test:browser      # Starts its own isolated local server
+# TEST_DATABASE_URL must point to a disposable database ending in _test.
+npm test
+npx playwright install chromium
+npm run test:browser
+npm run test:demo
 ```
 
-With the main local server running:
+Tests delete the contents of the dedicated test database. Never point them at installation data. Model doubles live only under `tests/`; the running app has no simulation switch. A separate opt-in live evaluation set is available with `npm run test:live` and reports missing credentials as blocked.
 
-```sh
-npm run fieldkit -- eval acme --suite smoke
-npm run fieldkit -- eval acme --suite full --seed 42
-npm run fieldkit -- eval acme --suite recovery
-npm run fieldkit -- onboard ./customers/messycorp
-npm run fieldkit -- workflow inspect RUN_ID
-npm run fieldkit -- replay TRACE_ID
-npm run fieldkit -- replay TRACE_ID --rerun --sandbox
-npm run fieldkit -- demo reset --customer acme
-```
-
-`init acme` refuses to overwrite the deployment that startup already seeded. CLI defaults to an explicitly simulated manager identity; `FIELDKIT_TOKEN` supplies an existing session instead. Use `FIELDKIT_CUSTOMER=northstar` for inspecting that customer's IDs. The CLI never accepts a thread override or arbitrary execution node. Read-only `replay` does not invoke LangGraph.
-
-Reports intentionally retain real simulator failures. The reference seed-42 full run observed **620/640 case successes**, **410/410 critical-case passes**, and **640/640 side-effect safety checks**. Two held-out wording families (`reverse the second payment`, `credit the extra payment`) each contribute ten failures: the simulator safely escalates instead of recognizing their intent. These are synthetic observations, not production claims. See the dated [verification record](docs/verification.md) for commands, counts, report IDs and limitations.
+For local development, configure PostgreSQL 17 with pgvector, run `npm run migrate`, then run `npm run dev` and `npm run worker` in separate terminals. Real signup still needs SMTP.
 
 ## Guides
 
-- [Three-minute demo and real restart walkthrough](docs/demo-walkthrough.md)
-- [Architecture and change points](docs/architecture.md)
-- [LangGraph design and verified dependency APIs](docs/langgraph-design.md)
-- [Recovery, crash windows and replay semantics](docs/recovery-and-replay.md)
-- [Existing support stack, REST, SDK, MCP and webhook contracts](docs/integrations.md)
-- [Evaluation methodology and readiness gates](docs/evaluation-methodology.md)
-- [Fictional customer case study](docs/customer-case-study.md)
-- [Local deployment guide](docs/deployment-guide.md)
-- [Threat model and limitations](docs/safety-and-limitations.md)
+- [Integrations, identities, and custom actions](docs/integrations.md)
+- [Installation and operations](docs/operations.md)
+- [Architecture and authorization](docs/architecture.md)
+- [API, SDK, CLI, and MCP](docs/api.md)
+- [Verification and external release blockers](docs/verification.md)
 
-## Boundaries
-
-This is a single-machine, single-runner demonstration. Demo actor selection is intentionally available locally; it is not enterprise IAM. Canonical and upstream mock records share a SQLite engine but commit in separate transactions; tested behavior is not a guarantee for a real remote provider. Outbound delivery targets only the local simulated receiver. No public deployment, real vendor authentication, genuine financial operation, live model, calibrated confidence, production latency, savings, or real-customer outcomes are claimed.
-
-Runtime databases, checkpoints, sessions, webhook keys and generated evaluations stay under ignored `.fieldkit/`. The scoped reset affects the selected tenant's synthetic records and checkpoint threads; see retention details in the safety guide. Baseline customer files are never silently overwritten.
+One installation on one server and one agent configuration per workspace are the initial deployment boundaries. Paid hosting, subscriptions, included model credits, OCR, arbitrary scripts, and unrestricted agent HTTP access are outside this release.

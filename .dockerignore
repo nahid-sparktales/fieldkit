@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+.fieldkit
+node_modules
+dist
+examples
+tests
+test-results
+playwright-report
+*.zip

@@ -1,24 +1,182 @@
-import { test, expect } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
-test.beforeEach(async({page,request})=>{
-  await request.post('/api/session',{data:{tenant:'acme',persona:'support_manager'}});await request.post('/api/reset',{data:{confirm:'acme'}});await page.goto('/');await expect(page.getByRole('heading',{name:'Your deployment, at a glance.'})).toBeVisible();
+import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
+
+test("real onboarding, knowledge review, portal conversation, and human takeover", async ({
+  page,
+  browser,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  await page.goto("/");
+  await expect(
+    page.getByRole("heading", { name: "Welcome back" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Create an account", exact: true })
+    .click();
+  await page.getByLabel("Name", { exact: true }).fill("Test owner");
+  await page
+    .getByLabel("Email", { exact: true })
+    .fill("browser-owner@example.test");
+  await page
+    .getByLabel("Password", { exact: true })
+    .fill("correct-horse-battery-staple");
+  await page
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  await expect(
+    page.getByText("Check your email to verify your account."),
+  ).toBeVisible();
+  const email = await readFile(
+    ".fieldkit/browser/browser_owner_example_test.txt",
+    "utf8",
+  );
+  await page.goto(email.match(/https?:\/\/\S+/)![0]);
+  await page.goto("/");
+  if (await page.getByRole("heading", { name: "Welcome back" }).isVisible()) {
+    await page
+      .getByLabel("Email", { exact: true })
+      .fill("browser-owner@example.test");
+    await page
+      .getByLabel("Password", { exact: true })
+      .fill("correct-horse-battery-staple");
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  }
+  await expect(
+    page.getByRole("heading", { name: "A home for your support." }),
+  ).toBeVisible();
+  await page.getByLabel("Business name").fill("Northstar Workshop");
+  await page.getByLabel("Portal address").fill("northstar-workshop");
+  await page
+    .getByLabel("Installation setup token")
+    .fill(await readFile(".fieldkit/browser/setup-token", "utf8"));
+  await page.getByRole("button", { name: "Create workspace" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "A thoughtful start to better support.",
+    }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/workspace.png", fullPage: true });
+  await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await page
+    .getByLabel("API key", { exact: true })
+    .fill("test-key-placeholder");
+  await page.getByRole("button", { name: "Verify & connect" }).click();
+  await expect(page.getByText("Connection verified and saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Knowledge", exact: true }).click();
+  await page.locator("input[type=file]").setInputFiles({
+    name: "returns.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      "Unused items can be returned within 30 days. Contact our team for help.",
+    ),
+  });
+  await expect(async () => {
+    await page.getByRole("button", { name: "Refresh status" }).click();
+    await expect(
+      page.locator("td").getByText("ready", { exact: true }),
+    ).toBeVisible();
+  }).toPass({ timeout: 20000 });
+  await page.getByLabel("Audience for returns.txt").selectOption("customer");
+  await page
+    .getByRole("button", { name: "Publish article", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Unpublish article", exact: true }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/knowledge.png", fullPage: true });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByLabel("Reply behavior").selectOption("automatic");
+  await page.getByRole("button", { name: "Save settings" }).click();
+  await expect(page.getByText("Workspace settings saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Publish", exact: true }).click();
+  const portal = page.locator("section.panel").filter({
+    has: page.getByRole("heading", { name: "Support portal", exact: true }),
+  });
+  await portal.getByLabel("Publish this channel").check();
+  await portal.getByRole("button", { name: "Save channel" }).click();
+  await expect(portal.getByText("published", { exact: true })).toBeVisible();
+  const customerContext = await browser.newContext(),
+    customer = await customerContext.newPage();
+  await customer.goto("http://127.0.0.1:4351/support/northstar-workshop");
+  await expect(
+    customer.getByRole("heading", { name: "How can we help?" }).first(),
+  ).toBeVisible();
+  await expect(
+    customer.getByRole("heading", { name: "returns.txt" }),
+  ).toBeVisible();
+  await customer
+    .getByRole("button", { name: "Sign in / Create account" })
+    .click();
+  await customer
+    .getByRole("button", { name: "Create an account", exact: true })
+    .click();
+  await customer.getByLabel("Name", { exact: true }).fill("A real customer");
+  await customer
+    .getByLabel("Email", { exact: true })
+    .fill("browser-customer@example.test");
+  await customer
+    .getByLabel("Password", { exact: true })
+    .fill("correct-horse-battery-staple");
+  await customer
+    .getByRole("button", { name: "Create account", exact: true })
+    .click();
+  await expect(
+    customer.getByText("Check your email to verify your account."),
+  ).toBeVisible();
+  const customerEmail = await readFile(
+    ".fieldkit/browser/browser_customer_example_test.txt",
+    "utf8",
+  );
+  await customer.goto(customerEmail.match(/https?:\/\/\S+/)![0]);
+  await customer.goto("http://127.0.0.1:4351/support/northstar-workshop");
+  await expect(customer.getByText("Your support account")).toBeVisible();
+  await customer.getByLabel("Your message").fill("What is your return policy?");
+  await customer.getByRole("button", { name: "Send →" }).click();
+  await expect(
+    customer.getByText("You can return an unused item within 30 days."),
+  ).toBeVisible({ timeout: 20000 });
+  await expect(
+    customer.getByRole("heading", { name: "Your tickets" }),
+  ).toBeVisible();
+  await customer.screenshot({
+    path: "test-results/portal.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "What is your return policy?" }).last(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Take over", exact: true }).click();
+  await expect(page.getByText("human takeover", { exact: true })).toBeVisible();
+  await page
+    .getByLabel("Reply", { exact: true })
+    .fill("I’m here to help with your return.");
+  await page.getByRole("button", { name: "Send reply" }).click();
+  await expect(
+    customer.getByText("I’m here to help with your return."),
+  ).toBeVisible({ timeout: 10000 });
+  await page.screenshot({ path: "test-results/inbox.png", fullPage: true });
+  await customer.reload();
+  await expect(
+    customer.getByRole("button", { name: /What is your return policy/ }),
+  ).toBeVisible();
+  await customer
+    .getByRole("button", { name: /What is your return policy/ })
+    .click();
+  await expect(
+    customer.getByText("I’m here to help with your return."),
+  ).toBeVisible();
+  await customer.setViewportSize({ width: 390, height: 844 });
+  await customer.screenshot({
+    path: "test-results/mobile.png",
+    fullPage: true,
+  });
+  expect(
+    await customer.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  expect(errors).toEqual([]);
+  await customerContext.close();
 });
-test('automatic refund, ordered timeline, receipt and reload persistence',{tag:'@smoke'},async({page})=>{
-  const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.getByRole('button',{name:'Start demo',exact:true}).click();await page.getByRole('button',{name:'Run workflow',exact:true}).click();await expect(page.locator('.message.assistant')).toContainText('$49.00 refund is confirmed');await expect(page.locator('.proposal')).toContainText('EXECUTION CONFIRMED');await page.reload();await expect(page.locator('.message.assistant')).toContainText('$49.00 refund is confirmed');await expect(page.locator('.timeline')).toContainText('write confirmed');expect(errors).toEqual([]);mkdirSync('docs/screenshots',{recursive:true});await page.screenshot({path:'docs/screenshots/support.png',fullPage:true});
-});
-test('large approval persists across refresh; manager approves exact action once',async({page})=>{
-  await page.getByRole('button',{name:'Support workspace',exact:true}).click();await page.getByRole('button',{name:'Large refund',exact:true}).click();await page.getByRole('button',{name:'Run workflow',exact:true}).click();await expect(page.locator('.message.assistant')).toContainText('No action has executed');await page.getByRole('button',{name:'Approvals',exact:true}).click();await expect(page.getByText('$8,000.00',{exact:true})).toBeVisible();await page.reload();await expect(page.getByRole('button',{name:'Approve exact action'})).toBeVisible();page.on('dialog',d=>d.accept());await page.getByRole('button',{name:'Approve exact action'}).click();await expect(page.getByText('Execution confirmed with receipt')).toBeVisible();await page.screenshot({path:'docs/screenshots/approval.png',fullPage:true});
-});
-test('external Jira ticket receives governed reply and resolves',async({page})=>{
-  await page.getByRole('button',{name:'Existing support stack',exact:true}).click();const ticket=page.locator('.external-ticket').filter({hasText:'ACME-1042'});await ticket.getByRole('button',{name:'Process ticket'}).click();await expect(page.locator('.message.assistant')).toContainText('$49.00 refund is confirmed');await page.getByRole('button',{name:'Existing support stack',exact:true}).click();await expect(ticket).toContainText('Resolved');await ticket.getByText('Native fields, comments & status').click();await expect(ticket.locator('pre')).toContainText('jsdPublic');await expect(ticket.locator('pre')).toContainText('refund is confirmed');await page.screenshot({path:'docs/screenshots/integrations.png',fullPage:true});
-});
-test('discovery remediation changes real findings',async({page})=>{
-  await page.getByLabel('Customer deployment').selectOption('messycorp');await page.getByRole('button',{name:'Customer discovery',exact:true}).click();await expect(page.getByText('unmapped-inv-49',{exact:true})).toBeVisible();await page.getByRole('button',{name:'Apply verified account mapping'}).click();await expect(page.getByText('unmapped-inv-49',{exact:true})).toHaveCount(0);await expect(page.getByText('policy-conflict',{exact:true})).toBeVisible();await page.screenshot({path:'docs/screenshots/discovery.png',fullPage:true});
-});
-test('evaluation failure trace reruns in a fresh sandbox',async({page})=>{
-  await page.getByRole('button',{name:'Evaluations',exact:true}).click();await page.getByRole('button',{name:'Run smoke',exact:true}).click();await expect(page.getByRole('heading',{name:'8 / 9 cases passed'})).toBeVisible();const row=page.getByRole('row').filter({hasText:'heldout-reversal'});await row.getByRole('button',{name:'Inspect',exact:true}).click();await expect(page.getByRole('heading',{name:'Execution record'})).toBeVisible();await page.getByRole('button',{name:'Rerun in isolated sandbox'}).click();await expect(page.getByRole('heading',{name:'Isolated simulation'})).toBeVisible();await expect(page.getByText('Original ledger preserved.',{exact:false})).toBeVisible();
-});
-test('mobile navigation remains named and fits the viewport',async({page})=>{
-  await page.setViewportSize({width:390,height:844});await expect(page.getByRole('button',{name:'Support workspace',exact:true})).toBeVisible();await page.getByRole('button',{name:'Support workspace',exact:true}).click();await expect(page.getByLabel('Support request',{exact:true})).toBeVisible();expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);await page.screenshot({path:'docs/screenshots/mobile.png',fullPage:true});
-});
-test('overview screenshot and no console errors',async({page})=>{const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await page.reload();await expect(page.getByRole('heading',{name:'Your deployment, at a glance.'})).toBeVisible();await page.screenshot({path:'docs/screenshots/overview.png',fullPage:true});expect(errors).toEqual([]);});

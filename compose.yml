@@ -1,0 +1,59 @@
+x-app: &app
+  image: fieldkit:local
+  build: .
+  env_file: .env
+  environment:
+    DATABASE_URL: postgresql://fieldkit:${POSTGRES_PASSWORD:?Run npm run setup and configure .env}@postgres:5432/fieldkit
+    FIELDKIT_HOST: 0.0.0.0
+    FIELDKIT_PORT: 4317
+    FIELDKIT_DATA: /data
+    NODE_ENV: production
+  volumes:
+    - uploads:/data
+  restart: unless-stopped
+  init: true
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: fieldkit
+      POSTGRES_USER: fieldkit
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - database:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U fieldkit -d fieldkit"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+  migrate:
+    <<: *app
+    command: [npm, run, migrate]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+  app:
+    <<: *app
+    ports:
+      - "127.0.0.1:${FIELDKIT_PORT:-4317}:4317"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:4317/v2/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+  worker:
+    <<: *app
+    command: [npm, run, worker]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  database:
+  uploads:
