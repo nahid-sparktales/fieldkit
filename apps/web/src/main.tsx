@@ -589,13 +589,14 @@ function Heading({
 }
 function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
   const l = useLoad(async () => {
-    const [base, connections, knowledge, inbox] = await Promise.all([
+    const [base, connections, knowledge, inbox, actions] = await Promise.all([
       api(ws, ""),
       api(ws, "/connections"),
       api(ws, "/sources"),
       api(ws, "/conversations"),
+      api(ws, "/actions"),
     ]);
-    return { base, connections, knowledge, inbox };
+    return { base, connections, knowledge, inbox, actions };
   }, [ws]);
   const d = l.data;
   const preview = useAction(),
@@ -619,7 +620,7 @@ function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
       title: "Decide what your agent can do",
       text: "Configure account actions and the rules for human approval.",
       view: "Actions",
-      done: false,
+      done: (d?.actions.actions.length ?? 0) > 0,
     },
     {
       title: "Open your support channels",
