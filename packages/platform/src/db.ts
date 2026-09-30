@@ -132,6 +132,7 @@ CREATE TABLE IF NOT EXISTS inbound_events(workspace_id text NOT NULL REFERENCES 
 CREATE TABLE IF NOT EXISTS deliveries(id text PRIMARY KEY, workspace_id text NOT NULL, conversation_id text NOT NULL, payload jsonb NOT NULL, status text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0, error text, receipt jsonb, created_at timestamptz NOT NULL DEFAULT now(), FOREIGN KEY(workspace_id,conversation_id) REFERENCES conversations(workspace_id,id) ON DELETE CASCADE);
 CREATE TABLE IF NOT EXISTS rate_limits(key text PRIMARY KEY, count integer NOT NULL, expires_at timestamptz NOT NULL);
 CREATE TABLE IF NOT EXISTS worker_heartbeats(id text PRIMARY KEY, last_seen timestamptz NOT NULL DEFAULT now());
+ALTER TABLE operations ADD COLUMN IF NOT EXISTS context jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS external_requester_id text;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS graph_version text NOT NULL DEFAULT 'support-v2';
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;

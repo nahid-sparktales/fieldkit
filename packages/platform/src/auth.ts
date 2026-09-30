@@ -105,6 +105,13 @@ export async function principal(
       throw new HttpError(401, "Credential is invalid or expired");
     if (credential.kind === "service")
       return { workspaceId, role: "service", scopes: credential.scopes };
+    if (
+      !(await db.one(
+        "SELECT id FROM channels WHERE workspace_id=$1 AND kind='widget' AND published",
+        [workspaceId],
+      ))
+    )
+      throw new HttpError(401, "The widget is no longer published");
     const contact = requireValue(
       await db.one("SELECT * FROM contacts WHERE workspace_id=$1 AND id=$2", [
         workspaceId,

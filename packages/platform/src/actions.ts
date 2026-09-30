@@ -361,7 +361,7 @@ export class Actions {
     );
     if (op?.status === "confirmed") return op.receipt;
     if (op?.status === "unknown" || op?.status === "sent")
-      return this.reconcile(ws, op, p, action, identity);
+      return this.reconcileOperation(ws, op);
     if (op?.status === "failed")
       throw new HttpError(
         409,
@@ -371,8 +371,16 @@ export class Actions {
     if (!op)
       op = (
         await this.db.rows(
-          "INSERT INTO operations(id,workspace_id,run_id,action_id,proposal_hash,resource) VALUES($1,$2,$3,$4,$5,$6) RETURNING *",
-          [uid(), ws, runId, action.id, digest(p), resource],
+          "INSERT INTO operations(id,workspace_id,run_id,action_id,proposal_hash,resource,context) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+          [
+            uid(),
+            ws,
+            runId,
+            action.id,
+            digest(p),
+            resource,
+            { action, identity, proposal: p },
+          ],
         )
       )[0];
     await this.db.pool.query(
@@ -487,6 +495,29 @@ export class Actions {
         );
     }
     return result;
+  }
+  async reconcileOperation(ws: string, op: any) {
+    if (op.workspace_id !== ws) throw new HttpError(404, "Operation not found");
+    if (op.status === "confirmed") return op.receipt;
+    if (!["sent", "unknown"].includes(op.status))
+      throw new HttpError(
+        409,
+        "Only uncertain sent operations can be reconciled",
+      );
+    const { action, identity, proposal } = op.context ?? {};
+    if (
+      !action ||
+      !identity ||
+      !proposal ||
+      digest(proposal) !== op.proposal_hash
+    )
+      throw new HttpError(
+        409,
+        "Original operation context is missing or invalid; preserve the record for manual investigation",
+      );
+    // Read-only outcome lookup uses the immutable operation contract, even after policy edits.
+    // It cannot grant a new approval, select a new destination, or issue another write.
+    return this.reconcile(ws, op, proposal, action, identity);
   }
   async reconcile(
     ws: string,

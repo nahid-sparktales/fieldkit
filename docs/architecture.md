@@ -19,13 +19,13 @@ Application queries explicitly scope every resource to the authenticated workspa
 5. Approval binds the exact proposal, parameters, customer mapping revision, action/policy revision, connection revision, workspace revision, conversation revision, and evidence hash. Staff authority, expiry, evidence, provider ownership, and policy are checked again before execution.
 6. Automatic replies and automatic account actions are independent settings. Uploaded text never grants execution authority.
 
-Runs use per-conversation PostgreSQL advisory locks and revision checks. Turns within one conversation are serialized; new messages still invalidate an older in-flight response immediately. Only the current conversation revision can publish or execute. All messages are independent records. SSE rechecks access and emits only customer-safe events to customers.
+Runs use per-conversation PostgreSQL advisory locks and revision checks. Turns within one conversation are serialized; new messages still invalidate an older in-flight response immediately. Only the current conversation revision can publish or execute. Unpublishing a channel pauses its conversations and revokes widget credentials; republishing does not silently resume paused conversations. All messages are independent records. SSE rechecks access and emits only customer-safe events to customers.
 
 ## Durable effects
 
 An operation ID, proposal hash, resource lock, and sent intent are committed before a provider write. Stripe receives that ID as its idempotency key and metadata. Custom APIs receive `Idempotency-Key` and `operationId`. A successful receipt is stored independently of the conversation transaction so process failure cannot erase knowledge of an external effect.
 
-Timeouts and malformed responses after a write leave an unknown outcome. Reads can retry with bounded backoff; uncertain writes are never blindly replayed. Reconciliation locates Stripe metadata or asks the configured custom lookup endpoint. Pending Stripe refunds remain unknown until confirmed. Unresolved operations prevent conversation retention from deleting their evidence.
+Timeouts and malformed responses after a write leave an unknown outcome. Reads can retry with bounded backoff; uncertain writes are never blindly replayed. Reconciliation locates Stripe metadata or asks the original configured custom lookup endpoint. Each operation stores its immutable action contract and identity for read-only reconciliation after later policy/mapping edits; this never revives an approval or authorizes a second write. Pending Stripe refunds remain unknown until confirmed. Unresolved operations prevent conversation retention from deleting their evidence.
 
 Zendesk deliveries have a separate durable ledger. Ticket creation uses a stable external ID; updates carry audit metadata. Reconciliation searches external IDs/audits. Safe updates use Zendesk's timestamp; changed tickets invalidate queued automatic replies. Synchronization checks ticket audit comment IDs to suppress FieldKit feedback loops. Zendesk is authoritative for externally handled ticket history/status.
 

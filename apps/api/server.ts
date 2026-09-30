@@ -1157,26 +1157,7 @@ export async function createApp(
               [ws, m[1]],
             ),
           );
-          const run = requireValue(
-            await app.db.one(
-              "SELECT * FROM runs WHERE workspace_id=$1 AND id=$2",
-              [ws, op.run_id],
-            ),
-          );
-          const { action, identity } = await app.actions.revalidate(
-            ws,
-            run.state.proposal,
-          );
-          json(
-            res,
-            await app.actions.reconcile(
-              ws,
-              op,
-              run.state.proposal,
-              action,
-              identity,
-            ),
-          );
+          json(res, await app.actions.reconcileOperation(ws, op));
           return;
         }
         if (suffix === "/operations/jobs" && method === "GET") {

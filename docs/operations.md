@@ -25,7 +25,7 @@ SMTP is mandatory for verification, recovery, invitations, and channel publicati
 - `docker compose logs app worker`: structured application/job errors; do not publish customer logs.
 - **Activity**: failed jobs, delivery failures, pending/unknown operations, and audit events. Retry a failed job after fixing its cause. Retry of a sent/unknown effect performs reconciliation rather than a second write.
 
-pg-boss records jobs durably and leases them. Restarting a worker preserves queued work and LangGraph checkpoints. An interrupted external call may already have committed; leave it unknown until provider lookup proves the result. Policy or identity changes can intentionally block old approvals. Never manually reset a financial operation to prepared just to get it to run again.
+pg-boss records jobs durably and leases them. Restarting a worker preserves queued work and LangGraph checkpoints. An interrupted external call may already have committed; leave it unknown until provider lookup proves the result. Policy or identity changes can intentionally block old approvals. Read-only reconciliation uses the stored original operation contract and remains available after those changes. Never manually reset a financial operation to prepared just to get it to run again.
 
 ## Backup and restore
 

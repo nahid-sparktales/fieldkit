@@ -1033,3 +1033,68 @@ test("revoked evidence cannot leak through a handoff citation after generation",
     model.hook = undefined;
   }
 });
+
+test("an uncertain operation can be reconciled from its immutable contract after policy and identity edits", async () => {
+  const w = await workspace(app);
+  await refundAction(w.ws.id, true);
+  providers.refunds = [];
+  providers.writes = 0;
+  providers.timeoutAfterCommit = true;
+  let run: any;
+  try {
+    ({ run } = await runText(w, "refund please"));
+  } finally {
+    providers.timeoutAfterCommit = false;
+  }
+  const op = await app.db.one("SELECT * FROM operations WHERE run_id=$1", [
+    run.id,
+  ]);
+  assert.equal(op.status, "unknown");
+  await app.db.pool.query(
+    "UPDATE actions SET enabled=false,revision=revision+1 WHERE workspace_id=$1",
+    [w.ws.id],
+  );
+  await app.db.pool.query(
+    "UPDATE contacts SET mappings='{}',revision=revision+1 WHERE id=$1",
+    [w.contactId],
+  );
+  await assert.rejects(
+    app.actions.revalidate(w.ws.id, run.state.proposal),
+    /changed/,
+  );
+  const receipt = await app.actions.reconcileOperation(w.ws.id, op);
+  assert.equal(receipt.result.amountMinor, 4900);
+  assert.equal(providers.writes, 1);
+});
+
+test("unpublishing a channel pauses its conversations and revokes existing widget credentials", async () => {
+  const w = await workspace(app);
+  const channel = await app.db.one(
+    "UPDATE channels SET published=true WHERE workspace_id=$1 AND kind='widget' RETURNING *",
+    [w.ws.id],
+  );
+  const conv = await app.newConversation(w.customer, {
+    channelId: channel.id,
+    body: "Question",
+    requestKey: uid(),
+  });
+  const key = token();
+  await app.db.pool.query(
+    "INSERT INTO credentials(hash,workspace_id,contact_id,kind,expires_at) VALUES($1,$2,$3,'widget',now()+interval '1 hour')",
+    [tokenHash(key), w.ws.id, w.contactId],
+  );
+  await app.publishChannel(w.owner, channel.id, {
+    published: false,
+    settings: { origins: [], handoff: "native" },
+  });
+  const updated = await app.db.one("SELECT * FROM conversations WHERE id=$1", [
+    conv.id,
+  ]);
+  assert.equal(updated.mode, "human");
+  assert.equal(updated.revision, conv.revision + 1);
+  const response = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/conversations/${conv.id}`,
+    { headers: { Authorization: `Bearer ${key}` } },
+  );
+  assert.equal(response.status, 401);
+});

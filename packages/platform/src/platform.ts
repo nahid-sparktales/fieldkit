@@ -246,6 +246,12 @@ export class Platform {
   async publishChannel(p: Principal, id: string, input: unknown) {
     requireAdmin(p);
     const data = ChannelInput.parse(input);
+    const channel = requireValue(
+      await this.db.one(
+        "SELECT * FROM channels WHERE workspace_id=$1 AND id=$2",
+        [p.workspaceId, id],
+      ),
+    );
     for (const origin of data.settings.origins) {
       const u = new URL(origin);
       if (
@@ -268,17 +274,47 @@ export class Platform {
           "Configure SMTP before publishing customer-facing channels",
         );
       await this.db.connection(p.workspaceId, "openai");
-      if (data.settings.handoff === "zendesk")
-        await this.db.connection(p.workspaceId, "zendesk");
+      if (data.settings.handoff === "zendesk" || channel.kind === "zendesk") {
+        const connection = await this.db.connection(p.workspaceId, "zendesk");
+        requireValue(
+          this.connections.secret(connection).webhookSecret,
+          409,
+          "Configure the Zendesk webhook signing secret before publishing",
+        );
+      }
     }
-    return requireValue(
-      (
-        await this.db.rows(
-          "UPDATE channels SET published=$1,settings=$2 WHERE workspace_id=$3 AND id=$4 RETURNING *",
-          [data.published, data.settings, p.workspaceId, id],
-        )
-      )[0],
-    );
+    return this.db.tx(async (q) => {
+      const saved = requireValue(
+        (
+          await this.db.rows(
+            "UPDATE channels SET published=$1,settings=$2 WHERE workspace_id=$3 AND id=$4 RETURNING *",
+            [data.published, data.settings, p.workspaceId, id],
+            q,
+          )
+        )[0],
+      );
+      if (!data.published) {
+        await q.query(
+          "UPDATE conversations SET mode='human',revision=revision+1 WHERE workspace_id=$1 AND channel_id=$2 AND mode='agent'",
+          [p.workspaceId, id],
+        );
+        await q.query(
+          "UPDATE approvals SET status='stale' WHERE status='pending' AND run_id IN (SELECT r.id FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE c.workspace_id=$1 AND c.channel_id=$2)",
+          [p.workspaceId, id],
+        );
+        if (channel.kind === "widget")
+          await q.query(
+            "DELETE FROM credentials WHERE workspace_id=$1 AND kind='widget'",
+            [p.workspaceId],
+          );
+      }
+      await this.db.event(q, p.workspaceId, "channel.updated", {
+        channelId: id,
+        published: data.published,
+        actor: p.userId,
+      });
+      return saved;
+    });
   }
   async newConversation(
     p: Principal,
