@@ -2,6 +2,10 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Observed results — 2026-09-30
+
+All 30 v2 regressions, the complete browser journey, and the 33 separately archived demo tests passed. The [clean Node 24/Linux CI run](https://github.com/nahid-sparktales/fieldkit/actions/runs/36689961164) also built the Docker image and verified a fresh Compose installation, repeat migrations, and worker restart. Local backup restoration preserved record counts and immutable operation contracts/receipts; upload files matched their original SHA-256 hashes. Encryption-key rotation and keyboard focus checks passed. See [machine-readable results](verification-results.json) for scope and exact evidence. External test-account gates below remain blocked.
+
 ## Automated local checks
 
 `npm run typecheck`, `npm run build`, and the v2 database tests exercise actual PostgreSQL, pgvector, pg-boss transactional insertion, Better Auth sessions, LangGraph checkpoints, upload parsing, and HTTP authorization. Only model/provider responses and email delivery are injected. The binary PDF/DOCX fixtures contain synthetic text authored for these tests.

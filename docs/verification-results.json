@@ -1,11 +1,11 @@
 {
-  "recorded_at": "2026-09-30T08:20:06.132494+00:00",
+  "recorded_at": "2026-09-30T08:33:50.567Z",
   "release_status": "candidate; external gates blocked",
   "local": {
     "typecheck": "passed",
     "production_build": "passed",
     "v2_database_tests": {
-      "passed": 28,
+      "passed": 30,
       "failed": 0,
       "provider_mode": "injected test doubles; real PostgreSQL and LangGraph"
     },
@@ -21,10 +21,13 @@
     },
     "postgres_restore": {
       "passed": true,
-      "restored_workspaces": 22,
-      "restored_conversations": 19,
-      "restored_checkpoints": 116,
-      "restored_operations": 5
+      "counts": {
+        "workspaces": 26,
+        "conversations": 23,
+        "checkpoints.checkpoints": 129,
+        "operations": 6
+      },
+      "operation_contracts_and_receipts": "exact JSON equality"
     },
     "upload_restore": {
       "passed": true,
@@ -37,9 +40,26 @@
       "worker": true,
       "initialized": false,
       "smtp": false
-    }
+    },
+    "keyboard_accessibility": "Login email, password, sign-in focus order and mobile overflow passed"
   },
-  "container_verification": "pending GitHub Actions; Docker unavailable locally",
+  "container_verification": {
+    "status": "passed",
+    "commit": "f1b5d47a652f8fb2d5a3385e16de8e37e8aae6de",
+    "workflow_url": "https://github.com/nahid-sparktales/fieldkit/actions/runs/36689961164",
+    "checks": [
+      "clean Node 24 install",
+      "typecheck",
+      "production build",
+      "30 v2 tests",
+      "33 archived demo tests",
+      "full browser journey",
+      "Docker image build",
+      "fresh Docker Compose installation",
+      "migration repeat",
+      "worker restart/readiness"
+    ]
+  },
   "external": {
     "SMTP": "BLOCKED: dedicated credentials/account or vendor registration required",
     "OpenAI live evaluations": "BLOCKED: dedicated credentials/account or vendor registration required",
