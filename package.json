@@ -1,0 +1,43 @@
+{
+  "name": "fieldkit",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "tsx apps/api/main.ts",
+    "start": "NODE_ENV=production tsx apps/api/main.ts",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test:recovery": "tsx --test --test-concurrency=1 tests/recovery.test.ts",
+    "test:browser": "playwright test",
+    "fieldkit": "tsx apps/cli/main.ts",
+    "check:compat": "tsx tests/compatibility.ts",
+    "check": "npm run typecheck && npm run build && npm test"
+  },
+  "dependencies": {
+    "@langchain/core": "1.2.13",
+    "@langchain/langgraph": "1.4.18",
+    "@langchain/langgraph-checkpoint": "1.1.5",
+    "@langchain/langgraph-checkpoint-sqlite": "1.0.4",
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "better-sqlite3": "12.10.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.63.0",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "24.10.1",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.1.1",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "8.3.1"
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "accounts": [
+    {
+      "OrganizationId": "acct-1",
+      "LegalName": "Maya Chen \u00b7 Juniper Studio",
+      "PrimaryContact": "maya@juniper.example"
+    },
+    {
+      "OrganizationId": "acct-2",
+      "LegalName": "Elliot Park \u00b7 Cedar Labs",
+      "PrimaryContact": "elliot@cedar.example"
+    }
+  ],
+  "invoices": [
+    {
+      "DocumentId": "inv-original",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 4900,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": null,
+      "EntitlementId": "sub-old"
+    },
+    {
+      "DocumentId": "inv-49",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 4900,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": "inv-original",
+      "EntitlementId": "sub-new"
+    },
+    {
+      "DocumentId": "inv-annual-original",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 800000,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": null,
+      "EntitlementId": "sub-team"
+    },
+    {
+      "DocumentId": "inv-8000",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 800000,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": "inv-annual-original",
+      "EntitlementId": "sub-team"
+    },
+    {
+      "DocumentId": "inv-unpaid",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 4900,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "OPEN",
+      "DuplicateDocument": "inv-original",
+      "EntitlementId": "sub-new"
+    },
+    {
+      "DocumentId": "inv-past",
+      "OrganizationRef": "acct-1",
+      "TotalMinor": 1900,
+      "ReturnedMinor": 1900,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": "inv-original",
+      "EntitlementId": "sub-old"
+    },
+    {
+      "DocumentId": "inv-other",
+      "OrganizationRef": "acct-2",
+      "TotalMinor": 4900,
+      "ReturnedMinor": 0,
+      "CurrencyCode": "USD",
+      "CaptureState": "SETTLED",
+      "DuplicateDocument": null,
+      "EntitlementId": "sub-other"
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "sub-old",
+      "accountId": "acct-1",
+      "plan": "Starter",
+      "status": "migrated",
+      "migratedFrom": null,
+      "version": 1
+    },
+    {
+      "id": "sub-new",
+      "accountId": "acct-1",
+      "plan": "Growth",
+      "status": "active",
+      "migratedFrom": "sub-old",
+      "version": 1
+    },
+    {
+      "id": "sub-team",
+      "accountId": "acct-1",
+      "plan": "Enterprise",
+      "status": "active",
+      "migratedFrom": null,
+      "version": 1
+    }
+  ]
+}

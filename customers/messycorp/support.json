@@ -1,0 +1,83 @@
+{
+  "provider": "mock_jira_service_management",
+  "capabilities": {
+    "simulated": true,
+    "authentication": "local_demo_session",
+    "read": true,
+    "internalNote": true,
+    "reply": true,
+    "updateStatus": false,
+    "assign": false,
+    "tags": false,
+    "webhooks": true,
+    "idempotency": true,
+    "reconciliation": true,
+    "rateLimitPerMinute": 60,
+    "statusMap": {
+      "Open": "open",
+      "Waiting for internal approval": "waiting_for_approval",
+      "Resolved": "resolved",
+      "Escalated": "escalated",
+      "Declined": "denied"
+    },
+    "accountMap": {}
+  },
+  "tickets": [
+    {
+      "key": "MESSY-801",
+      "id": "10000",
+      "fields": {
+        "summary": "Charged for both plans",
+        "description": "I upgraded yesterday but I am still being charged for both plans. Can you fix this?",
+        "status": {
+          "name": "Open"
+        },
+        "reporter": {
+          "accountId": "requester-42"
+        },
+        "customfield_10042": "legacy-customer",
+        "customfield_10001": "Billing request",
+        "labels": [
+          "billing"
+        ]
+      },
+      "comments": []
+    },
+    {
+      "key": "MESSY-802",
+      "id": "10001",
+      "fields": {
+        "summary": "Duplicate annual invoice",
+        "description": "Please refund the duplicate $8000 annual enterprise invoice.",
+        "status": {
+          "name": "Open"
+        },
+        "reporter": {
+          "accountId": "requester-42"
+        },
+        "customfield_10042": "legacy-customer",
+        "customfield_10001": "Billing request",
+        "labels": [
+          "billing"
+        ]
+      },
+      "comments": []
+    }
+  ],
+  "webhook_examples": [
+    {
+      "schemaVersion": 1,
+      "eventId": "messycorp-event-1",
+      "ticketId": "MESSY-801",
+      "sequence": 1,
+      "provider": "mock_jira_service_management"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "messycorp-event-2",
+      "ticketId": "MESSY-802",
+      "sequence": 1,
+      "provider": "mock_jira_service_management"
+    }
+  ]
+}

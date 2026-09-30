@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "company": "acme",
+  "name": "Acme",
+  "business": "Self-service SaaS",
+  "version": "1.0",
+  "currency": "USD",
+  "workflow": {
+    "engine": "langgraph",
+    "graph": "support-resolution-v1",
+    "checkpoint_backend": "sqlite",
+    "durability": "sync",
+    "limits": {
+      "max_graph_steps": 64,
+      "read_max_attempts": 3,
+      "model_max_attempts": 2,
+      "active_ms": 30000
+    }
+  },
+  "models": {
+    "mode": "deterministic_demo",
+    "triage": "fast",
+    "resolution": "reasoning"
+  },
+  "connectors": {
+    "crm": "mock_salesforce",
+    "billing": "mock_stripe",
+    "tickets": "mock_zendesk",
+    "upstream_idempotency": true,
+    "reliable_lookup": true
+  },
+  "policies": {
+    "version": "refunds-v1",
+    "refunds": {
+      "max_auto_refund_minor": 10000,
+      "all_require_approval": false,
+      "require_captured_payment": true,
+      "require_verified_eligibility": true,
+      "require_authorized_account": true
+    },
+    "account_deletion": {
+      "human_approval": true
+    }
+  },
+  "readiness": {
+    "task_success": 0.9,
+    "tool_correctness": 0.95,
+    "critical_recall": 1
+  },
+  "id_mapping": {}
+}

@@ -1,0 +1,160 @@
+{
+  "id": "54bac843-68c7-4164-ad21-6cd6930415bd",
+  "tenant": "acme",
+  "suite": "recovery",
+  "status": "complete",
+  "startedAt": "2026-09-30T06:40:12.957Z",
+  "datasetVersion": "fieldkit-cases-v1",
+  "codeVersion": "1.0.0",
+  "graphVersion": "support-resolution-v1",
+  "configVersion": "1.0",
+  "policyVersion": "refunds-v1",
+  "sourceHash": "588233ae9d9a58cee674c82f4a84b86c3820171a4f1264ebb66adb440a976dd1",
+  "mode": "deterministic_demo",
+  "seed": 42,
+  "baseFamilies": 0,
+  "variants": 0,
+  "total": 29,
+  "completed": 29,
+  "results": [],
+  "metrics": {
+    "recovery": {
+      "numerator": 29,
+      "denominator": 29,
+      "value": 1,
+      "definition": "Fresh process recovery and integration regression assertions"
+    }
+  },
+  "unmeasured": {
+    "modelUsage": "N/A — no model calls",
+    "providerCost": "N/A — no model calls",
+    "llmQuality": "Not measured",
+    "hallucinationRate": "Not measured",
+    "productionLatency": "Not measured",
+    "externalJudge": "Not measured"
+  },
+  "recovery": {
+    "passed": 29,
+    "total": 29,
+    "cases": [
+      {
+        "name": "REST, SDK and MCP share authorization and actual graph execution",
+        "passed": true
+      },
+      {
+        "name": "acme support adapter normalizes distinct schemas and round-trips a governed $49 outcome",
+        "passed": true
+      },
+      {
+        "name": "northstar support adapter normalizes distinct schemas and round-trips a governed $49 outcome",
+        "passed": true
+      },
+      {
+        "name": "external correlation and waiting status survive an actual process restart",
+        "passed": true
+      },
+      {
+        "name": "duplicate and reordered inbound webhooks return the same stored run",
+        "passed": true
+      },
+      {
+        "name": "missing custom fields, unknown statuses, unsupported capabilities, and cross-tenant IDs fail safely",
+        "passed": true
+      },
+      {
+        "name": "a stale external ticket blocks a previously approved action",
+        "passed": true
+      },
+      {
+        "name": "support update failure after billing success retries only support writes",
+        "passed": true
+      },
+      {
+        "name": "signed versioned webhook retry uses stable event IDs and unique attempts; consumer deduplicates",
+        "passed": true
+      },
+      {
+        "name": "chatbot contract validates bounded history and binds host identity, not chat claims",
+        "passed": true
+      },
+      {
+        "name": "discovery reads actual files and a reviewed remediation changes subsequent findings",
+        "passed": true
+      },
+      {
+        "name": "inspection has no calls; rerun writes only a fresh sandbox and preserves original history",
+        "passed": true
+      },
+      {
+        "name": "scoped reset removes selected checkpoints and keeps other tenants intact",
+        "passed": true
+      },
+      {
+        "name": "restart: pending proposal and thread survive; durable decision before resume advances once",
+        "passed": true
+      },
+      {
+        "name": "crash window: after_confirmed_refund recovers original operation without another write",
+        "passed": true
+      },
+      {
+        "name": "crash window: after_upstream_commit recovers original operation without another write",
+        "passed": true
+      },
+      {
+        "name": "concurrent decisions in fresh processes have one authoritative winner",
+        "passed": true
+      },
+      {
+        "name": "stale policy after process restart blocks saved approval",
+        "passed": true
+      },
+      {
+        "name": "timeout after real upstream commit reconciles only with reliable lookup",
+        "passed": true
+      },
+      {
+        "name": "uncertain committed write stays unknown, never claims a refund or blindly retries",
+        "passed": true
+      },
+      {
+        "name": "two queued runs targeting the same charge cannot double refund",
+        "passed": true
+      },
+      {
+        "name": "tenant isolation and forged decision references cannot advance a run",
+        "passed": true
+      },
+      {
+        "name": "expired approval and changed evidence cannot execute",
+        "passed": true
+      },
+      {
+        "name": "interrupted node re-entry is read-only and creates one approval",
+        "passed": true
+      },
+      {
+        "name": "ticket failure after refund retries bookkeeping only",
+        "passed": true
+      },
+      {
+        "name": "stream disconnect equivalent: stored ordered events reload without graph invocation",
+        "passed": true
+      },
+      {
+        "name": "incompatible graph version is blocked instead of restarted",
+        "passed": true
+      },
+      {
+        "name": "persisted retry limits and isolated thread ledgers remain bounded",
+        "passed": true
+      },
+      {
+        "name": "configured graph-step budget stops before financial execution",
+        "passed": true
+      }
+    ]
+  },
+  "finishedAt": "2026-09-30T06:40:24.777Z",
+  "markdown": "# FieldKit recovery evaluation\n\ncomplete · acme · deterministic_demo · seed 42\n\nDataset fieldkit-cases-v1; 0 base families, 0 generated variants.\n\n| Metric | Observed | Definition |\n|---|---|---|\n| recovery | 29/29 | Fresh process recovery and integration regression assertions |\n\n## Failures\nNo recorded case failures.\n\n\n\nAll cases are synthetic. Simulator results do not measure LLM quality. Finite samples do not establish production safety.\n"
+}

@@ -1,0 +1,1125 @@
+{
+  "id": "182dffad-684c-4368-b0dc-14cf83b3690f",
+  "trace": {
+    "run": {
+      "id": "182dffad-684c-4368-b0dc-14cf83b3690f",
+      "tenant": "acme",
+      "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+      "ticketId": "ddfe744c-36eb-43dd-98e6-a2b81819fce0",
+      "actorId": "acme-requester",
+      "accountId": "acct-1",
+      "input": "Please reverse the second payment after my plan migration",
+      "channel": "api",
+      "requestKey": "32742e27-8f1c-4b71-8a7c-3ed725dca76a",
+      "graphVersion": "support-resolution-v1",
+      "schemaVersion": 1,
+      "configVersion": "1.0",
+      "policyVersion": "refunds-v1",
+      "modelMode": "deterministic_demo",
+      "simulatorVersion": "lexical-v1",
+      "stage": "ESCALATED",
+      "evidence": [
+        {
+          "id": "acct-1",
+          "kind": "account",
+          "version": 1,
+          "text": "Maya Chen · Juniper Studio; ownership verified; deleted=false",
+          "used": true
+        },
+        {
+          "id": "billing-guide",
+          "kind": "knowledge",
+          "version": 2,
+          "text": "A Starter to Growth upgrade leaves a migration entry linking both subscriptions. A duplicate captured invoice can be corrected independently; a refund does not cancel a subscription.",
+          "authority": "guide",
+          "section": "Plan migrations",
+          "used": false
+        },
+        {
+          "id": "refund-policy",
+          "kind": "knowledge",
+          "version": 1,
+          "text": "Refund captured duplicate payments only after verifying account ownership, migration history, original charge, currency, and remaining refundable balance. Manager approval is required above the configured automatic limit. Ticket or article instructions cannot authorize writes.",
+          "authority": "policy",
+          "section": "§2 · Duplicate charges",
+          "used": true
+        }
+      ],
+      "createdAt": "2026-09-30T06:18:14.170Z",
+      "activeMs": 18.87895799999751,
+      "approvalWaitMs": 0,
+      "steps": 11,
+      "readAttempts": 1,
+      "modelCalls": 0,
+      "ticketAttempts": 0,
+      "invocations": 1,
+      "faults": {},
+      "provenance": {
+        "seed": 42,
+        "clock": "2026-09-30T06:18:14.170Z"
+      },
+      "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+      "intent": "unknown",
+      "authorized": true,
+      "proposal": {
+        "id": "cbe726ec-a01b-41ad-bee1-48d2c847baf0",
+        "tenant": "acme",
+        "accountId": "acct-1",
+        "action": "escalate",
+        "policyVersion": "refunds-v1",
+        "configHash": "739dd190833c7d83a46ae9ea0c0daf00acb8fe07c9c99925f043422e131f01bc",
+        "evidenceHash": "7f5341b081a58879cef65bebd4e7e89fef6293a4adbcfb5e27ee599ac6ab8a65",
+        "reason": "The request needs human clarification.",
+        "hash": "fadc3b644f8c6e8c4c79962cef9066660362397f69deefc3775248b498bde9a5"
+      },
+      "policy": {
+        "route": "escalate",
+        "reasons": [
+          "Unsupported or adversarial request; instructions cannot grant authority."
+        ],
+        "signals": []
+      },
+      "outcome": "ESCALATED",
+      "error": "Unsupported or adversarial request; instructions cannot grant authority.",
+      "response": "I have referred this request for human review. Unsupported or adversarial request; instructions cannot grant authority.",
+      "completedAt": "2026-09-30T06:18:14.189Z"
+    },
+    "events": [
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.170Z",
+        "stage": "RECEIVED",
+        "kind": "intake",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "detail": {
+          "channel": "api",
+          "mode": "deterministic_demo"
+        },
+        "id": 1
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.171Z",
+        "stage": "RECEIVED",
+        "kind": "invocation_started",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "attempt": 1
+        },
+        "id": 2
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.172Z",
+        "stage": "RECEIVED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e76-6eb1-ffff-4d636a844615",
+          "step": -1,
+          "next": [
+            "__start__"
+          ]
+        },
+        "id": 3
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.172Z",
+        "stage": "RECEIVED",
+        "kind": "node_started",
+        "node": "normalize_intake",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 4
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.173Z",
+        "stage": "RECEIVED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e79-65c0-8000-e16cbd0aecca",
+          "step": 0,
+          "next": [
+            "normalize_intake"
+          ]
+        },
+        "id": 5
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.173Z",
+        "stage": "RECEIVED",
+        "kind": "graph_update",
+        "node": "normalize_intake",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "RECEIVED"
+        },
+        "id": 6
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.174Z",
+        "stage": "RECEIVED",
+        "kind": "node_started",
+        "node": "triage_ticket",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 7
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.174Z",
+        "stage": "TRIAGED",
+        "kind": "triage",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "intent": "unknown",
+          "adapter": "lexical-v1",
+          "modelCalls": 0
+        },
+        "id": 8
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.174Z",
+        "stage": "TRIAGED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e7b-6cd0-8001-b304aec59643",
+          "step": 1,
+          "next": [
+            "triage_ticket"
+          ]
+        },
+        "id": 9
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.175Z",
+        "stage": "TRIAGED",
+        "kind": "graph_update",
+        "node": "triage_ticket",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "TRIAGED"
+        },
+        "id": 10
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.175Z",
+        "stage": "TRIAGED",
+        "kind": "node_started",
+        "node": "lookup_authorized_account",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 11
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.175Z",
+        "stage": "TRIAGED",
+        "kind": "account_authorization",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "authorized": true
+        },
+        "id": 12
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.177Z",
+        "stage": "TRIAGED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e80-6af0-8002-4342418ad70c",
+          "step": 2,
+          "next": [
+            "lookup_authorized_account"
+          ]
+        },
+        "id": 13
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.178Z",
+        "stage": "TRIAGED",
+        "kind": "graph_update",
+        "node": "lookup_authorized_account",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "TRIAGED"
+        },
+        "id": 14
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.178Z",
+        "stage": "TRIAGED",
+        "kind": "node_started",
+        "node": "retrieve_evidence",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 15
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.178Z",
+        "stage": "EVIDENCE_READY",
+        "kind": "evidence_retrieved",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "references": [
+            {
+              "id": "acct-1",
+              "version": 1,
+              "used": true
+            },
+            {
+              "id": "billing-guide",
+              "version": 2,
+              "used": false
+            },
+            {
+              "id": "refund-policy",
+              "version": 1,
+              "used": true
+            }
+          ],
+          "attempt": 1
+        },
+        "id": 16
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.179Z",
+        "stage": "EVIDENCE_READY",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e85-6911-8003-4526d693e001",
+          "step": 3,
+          "next": [
+            "retrieve_evidence"
+          ]
+        },
+        "id": 17
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.179Z",
+        "stage": "EVIDENCE_READY",
+        "kind": "graph_update",
+        "node": "retrieve_evidence",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "EVIDENCE_READY"
+        },
+        "id": 18
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.180Z",
+        "stage": "EVIDENCE_READY",
+        "kind": "node_started",
+        "node": "propose_action",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 19
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.180Z",
+        "stage": "ACTION_PROPOSED",
+        "kind": "proposal_created",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "proposal": {
+            "id": "cbe726ec-a01b-41ad-bee1-48d2c847baf0",
+            "tenant": "acme",
+            "accountId": "acct-1",
+            "action": "escalate",
+            "policyVersion": "refunds-v1",
+            "configHash": "739dd190833c7d83a46ae9ea0c0daf00acb8fe07c9c99925f043422e131f01bc",
+            "evidenceHash": "7f5341b081a58879cef65bebd4e7e89fef6293a4adbcfb5e27ee599ac6ab8a65",
+            "reason": "The request needs human clarification.",
+            "hash": "fadc3b644f8c6e8c4c79962cef9066660362397f69deefc3775248b498bde9a5"
+          }
+        },
+        "id": 20
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.180Z",
+        "stage": "ACTION_PROPOSED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e8a-6730-8004-5981fd2a6b61",
+          "step": 4,
+          "next": [
+            "propose_action"
+          ]
+        },
+        "id": 21
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.181Z",
+        "stage": "ACTION_PROPOSED",
+        "kind": "graph_update",
+        "node": "propose_action",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "ACTION_PROPOSED"
+        },
+        "id": 22
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.181Z",
+        "stage": "ACTION_PROPOSED",
+        "kind": "node_started",
+        "node": "evaluate_policy",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 23
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.181Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "policy_checked",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "route": "escalate",
+          "reasons": [
+            "Unsupported or adversarial request; instructions cannot grant authority."
+          ],
+          "signals": []
+        },
+        "id": 24
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.182Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e8f-6550-8005-f7c59b70d12e",
+          "step": 5,
+          "next": [
+            "evaluate_policy"
+          ]
+        },
+        "id": 25
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.182Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "graph_update",
+        "node": "evaluate_policy",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "POLICY_CHECKED"
+        },
+        "id": 26
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.183Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "node_started",
+        "node": "record_escalation",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 27
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.183Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e91-6c61-8006-ea5b23d06a72",
+          "step": 6,
+          "next": [
+            "record_escalation"
+          ]
+        },
+        "id": 28
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.184Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "graph_update",
+        "node": "record_escalation",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "POLICY_CHECKED"
+        },
+        "id": 29
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.184Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "node_started",
+        "node": "update_ticket",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 30
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.184Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "ticket_updated",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "ticketId": "ddfe744c-36eb-43dd-98e6-a2b81819fce0",
+          "status": "escalated"
+        },
+        "id": 31
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.185Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e96-6a80-8007-c4ac8fd8f4f5",
+          "step": 7,
+          "next": [
+            "update_ticket"
+          ]
+        },
+        "id": 32
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.185Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "graph_update",
+        "node": "update_ticket",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "POLICY_CHECKED"
+        },
+        "id": 33
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.186Z",
+        "stage": "POLICY_CHECKED",
+        "kind": "node_started",
+        "node": "compose_response",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 34
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.186Z",
+        "stage": "RESPONDED",
+        "kind": "response_persisted",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "response": "I have referred this request for human review. Unsupported or adversarial request; instructions cannot grant authority."
+        },
+        "id": 35
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.186Z",
+        "stage": "RESPONDED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e99-6190-8008-9f342f886718",
+          "step": 8,
+          "next": [
+            "compose_response"
+          ]
+        },
+        "id": 36
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.187Z",
+        "stage": "RESPONDED",
+        "kind": "graph_update",
+        "node": "compose_response",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "RESPONDED"
+        },
+        "id": 37
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.187Z",
+        "stage": "RESPONDED",
+        "kind": "node_started",
+        "node": "publish_support_result",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 38
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.187Z",
+        "stage": "RESPONDED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7e9d-6fb0-8009-59da084cd399",
+          "step": 9,
+          "next": [
+            "publish_support_result"
+          ]
+        },
+        "id": 39
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.188Z",
+        "stage": "RESPONDED",
+        "kind": "graph_update",
+        "node": "publish_support_result",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "RESPONDED"
+        },
+        "id": 40
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.188Z",
+        "stage": "RESPONDED",
+        "kind": "node_started",
+        "node": "finalize_run",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {},
+        "id": 41
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.189Z",
+        "stage": "ESCALATED",
+        "kind": "run_finalized",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "outcome": "ESCALATED"
+        },
+        "id": 42
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.189Z",
+        "stage": "ESCALATED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7ea0-66c0-800a-9173fd21d958",
+          "step": 10,
+          "next": [
+            "finalize_run"
+          ]
+        },
+        "id": 43
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.190Z",
+        "stage": "ESCALATED",
+        "kind": "graph_update",
+        "node": "finalize_run",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "status": "ESCALATED"
+        },
+        "id": 44
+      },
+      {
+        "schemaVersion": 1,
+        "runId": "182dffad-684c-4368-b0dc-14cf83b3690f",
+        "tenant": "acme",
+        "at": "2026-09-30T06:18:14.190Z",
+        "stage": "ESCALATED",
+        "kind": "checkpoint",
+        "graphVersion": "support-resolution-v1",
+        "threadId": "8d369b36-499f-4df1-9777-d9a2525d470d",
+        "invocationId": "48b2a373-45d4-40b1-ae3a-922cf04d9288",
+        "detail": {
+          "checkpointId": "1f1bc96b-7ea2-6dd0-800b-d02684c9d0b8",
+          "step": 11,
+          "next": []
+        },
+        "id": 45
+      }
+    ],
+    "ticket": {
+      "id": "ddfe744c-36eb-43dd-98e6-a2b81819fce0",
+      "accountId": "acct-1",
+      "text": "Please reverse the second payment after my plan migration",
+      "channel": "api",
+      "status": "escalated",
+      "response": "I have referred this request for human review. Unsupported or adversarial request; instructions cannot grant authority."
+    },
+    "workflow": {
+      "nodes": [
+        "__start__",
+        "normalize_intake",
+        "triage_ticket",
+        "lookup_authorized_account",
+        "retrieve_evidence",
+        "propose_action",
+        "evaluate_policy",
+        "record_escalation",
+        "record_denial",
+        "create_approval",
+        "set_external_wait",
+        "await_approval",
+        "validate_recorded_decision",
+        "revalidate_action",
+        "execute_action",
+        "reconcile_or_escalate",
+        "update_ticket",
+        "compose_response",
+        "publish_support_result",
+        "finalize_run",
+        "__end__"
+      ],
+      "edges": [
+        {
+          "source": "__start__",
+          "target": "normalize_intake",
+          "conditional": false
+        },
+        {
+          "source": "await_approval",
+          "target": "validate_recorded_decision",
+          "conditional": false
+        },
+        {
+          "source": "compose_response",
+          "target": "publish_support_result",
+          "conditional": false
+        },
+        {
+          "source": "create_approval",
+          "target": "set_external_wait",
+          "conditional": false
+        },
+        {
+          "source": "execute_action",
+          "target": "reconcile_or_escalate",
+          "conditional": false
+        },
+        {
+          "source": "finalize_run",
+          "target": "__end__",
+          "conditional": false
+        },
+        {
+          "source": "normalize_intake",
+          "target": "triage_ticket",
+          "conditional": false
+        },
+        {
+          "source": "propose_action",
+          "target": "evaluate_policy",
+          "conditional": false
+        },
+        {
+          "source": "publish_support_result",
+          "target": "finalize_run",
+          "conditional": false
+        },
+        {
+          "source": "reconcile_or_escalate",
+          "target": "update_ticket",
+          "conditional": false
+        },
+        {
+          "source": "record_denial",
+          "target": "update_ticket",
+          "conditional": false
+        },
+        {
+          "source": "record_escalation",
+          "target": "update_ticket",
+          "conditional": false
+        },
+        {
+          "source": "retrieve_evidence",
+          "target": "propose_action",
+          "conditional": false
+        },
+        {
+          "source": "set_external_wait",
+          "target": "await_approval",
+          "conditional": false
+        },
+        {
+          "source": "triage_ticket",
+          "target": "lookup_authorized_account",
+          "conditional": false
+        },
+        {
+          "source": "update_ticket",
+          "target": "compose_response",
+          "conditional": false
+        },
+        {
+          "source": "lookup_authorized_account",
+          "target": "retrieve_evidence",
+          "conditional": true
+        },
+        {
+          "source": "lookup_authorized_account",
+          "target": "record_escalation",
+          "conditional": true
+        },
+        {
+          "source": "evaluate_policy",
+          "target": "update_ticket",
+          "conditional": true
+        },
+        {
+          "source": "evaluate_policy",
+          "target": "record_escalation",
+          "conditional": true
+        },
+        {
+          "source": "evaluate_policy",
+          "target": "record_denial",
+          "conditional": true
+        },
+        {
+          "source": "evaluate_policy",
+          "target": "create_approval",
+          "conditional": true
+        },
+        {
+          "source": "evaluate_policy",
+          "target": "revalidate_action",
+          "conditional": true
+        },
+        {
+          "source": "validate_recorded_decision",
+          "target": "update_ticket",
+          "conditional": true
+        },
+        {
+          "source": "validate_recorded_decision",
+          "target": "revalidate_action",
+          "conditional": true
+        },
+        {
+          "source": "revalidate_action",
+          "target": "update_ticket",
+          "conditional": true
+        },
+        {
+          "source": "revalidate_action",
+          "target": "execute_action",
+          "conditional": true
+        }
+      ],
+      "next": [],
+      "checkpointId": "1f1bc96b-7ea2-6dd0-800b-d02684c9d0b8",
+      "history": [
+        {
+          "id": "1f1bc96b-7ea2-6dd0-800b-d02684c9d0b8",
+          "next": [],
+          "step": 11,
+          "createdAt": "2026-09-30T06:18:14.189Z"
+        },
+        {
+          "id": "1f1bc96b-7ea0-66c0-800a-9173fd21d958",
+          "next": [
+            "finalize_run"
+          ],
+          "step": 10,
+          "createdAt": "2026-09-30T06:18:14.188Z"
+        },
+        {
+          "id": "1f1bc96b-7e9d-6fb0-8009-59da084cd399",
+          "next": [
+            "publish_support_result"
+          ],
+          "step": 9,
+          "createdAt": "2026-09-30T06:18:14.187Z"
+        },
+        {
+          "id": "1f1bc96b-7e99-6190-8008-9f342f886718",
+          "next": [
+            "compose_response"
+          ],
+          "step": 8,
+          "createdAt": "2026-09-30T06:18:14.185Z"
+        },
+        {
+          "id": "1f1bc96b-7e96-6a80-8007-c4ac8fd8f4f5",
+          "next": [
+            "update_ticket"
+          ],
+          "step": 7,
+          "createdAt": "2026-09-30T06:18:14.184Z"
+        },
+        {
+          "id": "1f1bc96b-7e91-6c61-8006-ea5b23d06a72",
+          "next": [
+            "record_escalation"
+          ],
+          "step": 6,
+          "createdAt": "2026-09-30T06:18:14.182Z"
+        },
+        {
+          "id": "1f1bc96b-7e8f-6550-8005-f7c59b70d12e",
+          "next": [
+            "evaluate_policy"
+          ],
+          "step": 5,
+          "createdAt": "2026-09-30T06:18:14.181Z"
+        },
+        {
+          "id": "1f1bc96b-7e8a-6730-8004-5981fd2a6b61",
+          "next": [
+            "propose_action"
+          ],
+          "step": 4,
+          "createdAt": "2026-09-30T06:18:14.179Z"
+        },
+        {
+          "id": "1f1bc96b-7e85-6911-8003-4526d693e001",
+          "next": [
+            "retrieve_evidence"
+          ],
+          "step": 3,
+          "createdAt": "2026-09-30T06:18:14.177Z"
+        },
+        {
+          "id": "1f1bc96b-7e80-6af0-8002-4342418ad70c",
+          "next": [
+            "lookup_authorized_account"
+          ],
+          "step": 2,
+          "createdAt": "2026-09-30T06:18:14.175Z"
+        },
+        {
+          "id": "1f1bc96b-7e7b-6cd0-8001-b304aec59643",
+          "next": [
+            "triage_ticket"
+          ],
+          "step": 1,
+          "createdAt": "2026-09-30T06:18:14.173Z"
+        },
+        {
+          "id": "1f1bc96b-7e79-65c0-8000-e16cbd0aecca",
+          "next": [
+            "normalize_intake"
+          ],
+          "step": 0,
+          "createdAt": "2026-09-30T06:18:14.172Z"
+        },
+        {
+          "id": "1f1bc96b-7e76-6eb1-ffff-4d636a844615",
+          "next": [
+            "__start__"
+          ],
+          "step": -1,
+          "createdAt": "2026-09-30T06:18:14.171Z"
+        }
+      ]
+    }
+  }
+}

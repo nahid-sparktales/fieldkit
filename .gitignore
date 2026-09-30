@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.fieldkit/
+.env
+test-results/
+playwright-report/
+*.zip
+.DS_Store

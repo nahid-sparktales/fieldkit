@@ -1,0 +1,17 @@
+[
+  {
+    "id": "duplicate-49",
+    "expected_action": "refund",
+    "expected_approval": false
+  },
+  {
+    "id": "large-8000",
+    "expected_action": "refund",
+    "expected_approval": true
+  },
+  {
+    "id": "cancel",
+    "expected_action": "escalate",
+    "expected_approval": false
+  }
+]

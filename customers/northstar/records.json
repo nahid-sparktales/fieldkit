@@ -1,0 +1,112 @@
+{
+  "accounts": [
+    {
+      "customer_key": "acct-1",
+      "display_name": "Maya Chen \u00b7 Juniper Studio",
+      "billing_contact": "maya@juniper.example"
+    },
+    {
+      "customer_key": "acct-2",
+      "display_name": "Elliot Park \u00b7 Cedar Labs",
+      "billing_contact": "elliot@cedar.example"
+    }
+  ],
+  "invoices": [
+    {
+      "bill_key": "inv-original",
+      "customer_ref": "acct-1",
+      "gross_cents": 4900,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": null,
+      "subscription_ref": "sub-old"
+    },
+    {
+      "bill_key": "inv-49",
+      "customer_ref": "acct-1",
+      "gross_cents": 4900,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": "inv-original",
+      "subscription_ref": "sub-new"
+    },
+    {
+      "bill_key": "inv-annual-original",
+      "customer_ref": "acct-1",
+      "gross_cents": 800000,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": null,
+      "subscription_ref": "sub-team"
+    },
+    {
+      "bill_key": "inv-8000",
+      "customer_ref": "acct-1",
+      "gross_cents": 800000,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": "inv-annual-original",
+      "subscription_ref": "sub-team"
+    },
+    {
+      "bill_key": "inv-unpaid",
+      "customer_ref": "acct-1",
+      "gross_cents": 4900,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": false,
+      "duplicate_bill": "inv-original",
+      "subscription_ref": "sub-new"
+    },
+    {
+      "bill_key": "inv-past",
+      "customer_ref": "acct-1",
+      "gross_cents": 1900,
+      "credited_cents": 1900,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": "inv-original",
+      "subscription_ref": "sub-old"
+    },
+    {
+      "bill_key": "inv-other",
+      "customer_ref": "acct-2",
+      "gross_cents": 4900,
+      "credited_cents": 0,
+      "iso_currency": "USD",
+      "settled": true,
+      "duplicate_bill": null,
+      "subscription_ref": "sub-other"
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "sub-old",
+      "accountId": "acct-1",
+      "plan": "Starter",
+      "status": "migrated",
+      "migratedFrom": null,
+      "version": 1
+    },
+    {
+      "id": "sub-new",
+      "accountId": "acct-1",
+      "plan": "Growth",
+      "status": "active",
+      "migratedFrom": "sub-old",
+      "version": 1
+    },
+    {
+      "id": "sub-team",
+      "accountId": "acct-1",
+      "plan": "Enterprise",
+      "status": "active",
+      "migratedFrom": null,
+      "version": 1
+    }
+  ]
+}

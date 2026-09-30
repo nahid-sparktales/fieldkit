@@ -1,0 +1,83 @@
+{
+  "provider": "mock_zendesk",
+  "capabilities": {
+    "simulated": true,
+    "authentication": "local_demo_session",
+    "read": true,
+    "internalNote": true,
+    "reply": true,
+    "updateStatus": true,
+    "assign": false,
+    "tags": false,
+    "webhooks": true,
+    "idempotency": true,
+    "reconciliation": true,
+    "rateLimitPerMinute": 60,
+    "statusMap": {
+      "open": "open",
+      "hold": "waiting_for_approval",
+      "solved": "resolved",
+      "pending": "escalated",
+      "closed": "denied"
+    },
+    "accountMap": {
+      "501": "acct-1"
+    }
+  },
+  "tickets": [
+    {
+      "id": 2401,
+      "requester_id": 902,
+      "organization_id": 501,
+      "subject": "Charged for both plans",
+      "description": "I upgraded yesterday but I am still being charged for both plans. Can you fix this?",
+      "status": "open",
+      "tags": [
+        "billing",
+        "web"
+      ],
+      "custom_fields": [
+        {
+          "id": 311,
+          "value": "subscription"
+        }
+      ],
+      "comments": []
+    },
+    {
+      "id": 2402,
+      "requester_id": 902,
+      "organization_id": 501,
+      "subject": "Duplicate annual invoice",
+      "description": "Please refund the duplicate $8000 annual enterprise invoice.",
+      "status": "open",
+      "tags": [
+        "billing",
+        "web"
+      ],
+      "custom_fields": [
+        {
+          "id": 311,
+          "value": "subscription"
+        }
+      ],
+      "comments": []
+    }
+  ],
+  "webhook_examples": [
+    {
+      "schemaVersion": 1,
+      "eventId": "northstar-event-1",
+      "ticketId": "2401",
+      "sequence": 1,
+      "provider": "mock_zendesk"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "northstar-event-2",
+      "ticketId": "2402",
+      "sequence": 1,
+      "provider": "mock_zendesk"
+    }
+  ]
+}

@@ -1,0 +1,119 @@
+{
+  "accounts": [
+    {
+      "id": "acct-1",
+      "name": "Maya Chen \u00b7 Juniper Studio",
+      "email": "maya@juniper.example"
+    },
+    {
+      "id": "acct-2",
+      "name": "Elliot Park \u00b7 Cedar Labs",
+      "email": "elliot@cedar.example"
+    }
+  ],
+  "invoices": [
+    {
+      "id": "inv-original",
+      "accountId": "acct-1",
+      "amountMinor": 4900,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": null,
+      "subscriptionId": "sub-old",
+      "version": 1
+    },
+    {
+      "id": "inv-49",
+      "accountId": "acct-1",
+      "amountMinor": 4900,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": "inv-original",
+      "subscriptionId": "sub-new",
+      "version": 1
+    },
+    {
+      "id": "inv-annual-original",
+      "accountId": "acct-1",
+      "amountMinor": 800000,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": null,
+      "subscriptionId": "sub-team",
+      "version": 1
+    },
+    {
+      "id": "inv-8000",
+      "accountId": "acct-1",
+      "amountMinor": 800000,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": "inv-annual-original",
+      "subscriptionId": "sub-team",
+      "version": 1
+    },
+    {
+      "id": "inv-unpaid",
+      "accountId": "acct-1",
+      "amountMinor": 4900,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "unpaid",
+      "duplicateOf": "inv-original",
+      "subscriptionId": "sub-new",
+      "version": 1
+    },
+    {
+      "id": "inv-past",
+      "accountId": "acct-1",
+      "amountMinor": 1900,
+      "refundedMinor": 1900,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": "inv-original",
+      "subscriptionId": "sub-old",
+      "version": 1
+    },
+    {
+      "id": "inv-other",
+      "accountId": "acct-2",
+      "amountMinor": 4900,
+      "refundedMinor": 0,
+      "currency": "USD",
+      "status": "captured",
+      "duplicateOf": null,
+      "subscriptionId": "sub-other",
+      "version": 1
+    }
+  ],
+  "subscriptions": [
+    {
+      "id": "sub-old",
+      "accountId": "acct-1",
+      "plan": "Starter",
+      "status": "migrated",
+      "migratedFrom": null,
+      "version": 1
+    },
+    {
+      "id": "sub-new",
+      "accountId": "acct-1",
+      "plan": "Growth",
+      "status": "active",
+      "migratedFrom": "sub-old",
+      "version": 1
+    },
+    {
+      "id": "sub-team",
+      "accountId": "acct-1",
+      "plan": "Enterprise",
+      "status": "active",
+      "migratedFrom": null,
+      "version": 1
+    }
+  ]
+}

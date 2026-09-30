@@ -1,0 +1,67 @@
+{
+  "provider": "generic_chatbot",
+  "capabilities": {
+    "simulated": true,
+    "authentication": "local_demo_session",
+    "read": true,
+    "internalNote": true,
+    "reply": true,
+    "updateStatus": true,
+    "assign": false,
+    "tags": false,
+    "webhooks": true,
+    "idempotency": true,
+    "reconciliation": true,
+    "rateLimitPerMinute": 60,
+    "statusMap": {
+      "open": "open",
+      "waiting_for_approval": "waiting_for_approval",
+      "resolved": "resolved",
+      "escalated": "escalated",
+      "denied": "denied"
+    },
+    "accountMap": {
+      "acct-1": "acct-1"
+    }
+  },
+  "tickets": [
+    {
+      "conversation_id": "conv-301",
+      "customer_ref": "acct-1",
+      "sender": "enterprise-contact",
+      "message": "I upgraded yesterday but I am still being charged for both plans. Can you fix this?",
+      "state": "open",
+      "messages": [],
+      "metadata": {
+        "department": "customer-success"
+      }
+    },
+    {
+      "conversation_id": "conv-302",
+      "customer_ref": "acct-1",
+      "sender": "enterprise-contact",
+      "message": "Please refund the duplicate $8000 annual enterprise invoice.",
+      "state": "open",
+      "messages": [],
+      "metadata": {
+        "department": "customer-success"
+      }
+    }
+  ],
+  "webhook_examples": [
+    {
+      "schemaVersion": 1,
+      "eventId": "globex-event-1",
+      "ticketId": "conv-301",
+      "sequence": 1,
+      "provider": "generic_chatbot"
+    },
+    {
+      "schemaVersion": 1,
+      "eventId": "globex-event-2",
+      "ticketId": "conv-302",
+      "sequence": 1,
+      "provider": "generic_chatbot"
+    }
+  ]
+}
