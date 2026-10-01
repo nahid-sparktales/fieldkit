@@ -833,7 +833,7 @@ export async function createApp(
               [ws],
             ),
             documents: await app.db.rows(
-              "SELECT id,source_id,title,version,active,published,slug FROM documents WHERE workspace_id=$1 ORDER BY created_at DESC",
+              "SELECT id,source_id,title,version,active,published,slug,locator FROM documents WHERE workspace_id=$1 ORDER BY created_at DESC",
               [ws],
             ),
           });

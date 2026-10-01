@@ -726,7 +726,14 @@ function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
             <p>{previewResult.answer}</p>
             {previewResult.citations.map((c: Row) => (
               <blockquote key={c.id}>
-                {c.title} · v{c.version}
+                {c.url ? (
+                  <a href={c.url} target="_blank" rel="noreferrer">
+                    {c.title} ↗
+                  </a>
+                ) : (
+                  c.title
+                )}{" "}
+                · v{c.version}
                 <p>{c.excerpt}</p>
               </blockquote>
             ))}
@@ -1092,7 +1099,14 @@ function MessageList({ messages }: { messages: Row[] }) {
               {m.citations.map((c: Row) => (
                 <blockquote key={c.id}>
                   <strong>
-                    {c.title} · v{c.version}
+                    {c.url ? (
+                      <a href={c.url} target="_blank" rel="noreferrer">
+                        {c.title} ↗
+                      </a>
+                    ) : (
+                      c.title
+                    )}{" "}
+                    · v{c.version}
                   </strong>
                   <p>{c.excerpt}</p>
                 </blockquote>
@@ -1141,6 +1155,14 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
     a = useAction(),
     [preview, setPreview] = useState<Row | null>(null),
     [kind, setKind] = useState("website");
+  const importing = l.data?.sources.some((s: Row) =>
+    ["queued", "processing"].includes(s.status),
+  );
+  useEffect(() => {
+    if (!importing) return;
+    const timer = setInterval(l.reload, 2000);
+    return () => clearInterval(timer);
+  }, [ws, importing]);
   const upload = useRef<HTMLInputElement>(null);
   return (
     <>
@@ -1196,7 +1218,8 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
               const d = new FormData(e.currentTarget);
               void a.run(async () => {
                 await api(ws, "/sources", {
-                  kind,
+                  kind: kind === "site" ? "website" : kind,
+                  scope: kind === "site" ? "site" : "page",
                   title: d.get("title"),
                   locator: d.get("locator"),
                 });
@@ -1207,6 +1230,7 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
             <Field label="Source">
               <select value={kind} onChange={(e) => setKind(e.target.value)}>
                 <option value="website">Website page</option>
+                <option value="site">Documentation site</option>
                 <option value="notion">Notion page</option>
                 <option value="zendesk">Zendesk article</option>
               </select>
@@ -1216,27 +1240,39 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
             </Field>
             <Field
               label={
-                kind === "website"
-                  ? "Page URL"
-                  : kind === "notion"
-                    ? "Shared page ID"
-                    : "Article ID"
+                kind === "site"
+                  ? "Documentation URL"
+                  : kind === "website"
+                    ? "Page URL"
+                    : kind === "notion"
+                      ? "Shared page ID"
+                      : "Article ID"
               }
             >
               <input
                 name="locator"
+                type={kind === "site" || kind === "website" ? "url" : "text"}
                 required
                 placeholder={
-                  kind === "website"
-                    ? "https://example.com/help"
-                    : kind === "notion"
-                      ? "Page ID shared with your connection"
-                      : "123456789"
+                  kind === "site"
+                    ? "https://docs.locushost.co/"
+                    : kind === "website"
+                      ? "https://example.com/help"
+                      : kind === "notion"
+                        ? "Page ID shared with your connection"
+                        : "123456789"
                 }
               />
             </Field>
             <button disabled={a.busy}>Add source →</button>
           </form>
+          {kind === "site" && (
+            <p className="inline-note">
+              Import Docusaurus, GitBook, or other public documentation. Scans
+              pages on this domain and under this path using sitemaps and links.
+              Up to 500 pages; refreshes hourly.
+            </p>
+          )}
           <div className="inline-note">
             Notion and Zendesk need a connection first.{" "}
             <button
@@ -1280,15 +1316,18 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
               </thead>
               <tbody>
                 {l.data.sources.map((s: Row) => {
-                  const doc = l.data.documents.find(
+                  const docs = l.data.documents.filter(
                     (d: Row) => d.source_id === s.id && d.active,
                   );
+                  const site =
+                    s.kind === "website" && s.metadata.scope === "site";
+                  const progress = s.metadata.crawl;
                   return (
                     <tr key={s.id}>
                       <td>
                         <strong>{s.title}</strong>
                         <small>
-                          {s.kind} ·{" "}
+                          {site ? "Documentation site" : s.kind} ·{" "}
                           {s.last_synced
                             ? new Date(s.last_synced).toLocaleString()
                             : "Not indexed yet"}
@@ -1299,6 +1338,29 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
                       </td>
                       <td>
                         <Badge value={s.status} />
+                        {site && progress && (
+                          <small role="status">
+                            {progress.phase === "complete"
+                              ? `${progress.indexed} pages indexed`
+                              : progress.phase === "discovering"
+                                ? "Discovering pages…"
+                                : progress.phase === "indexing"
+                                  ? `Indexing ${progress.indexed} of ${progress.scanned - progress.skipped.length} pages`
+                                  : `Scanned ${progress.scanned} of ${progress.discovered} discovered pages`}
+                          </small>
+                        )}
+                        {site && progress?.skipped.length > 0 && (
+                          <details>
+                            <summary>
+                              {progress.skipped.length} pages skipped
+                            </summary>
+                            {progress.skipped.map((item: Row) => (
+                              <small key={item.url}>
+                                {item.url}: {item.reason}
+                              </small>
+                            ))}
+                          </details>
+                        )}
                       </td>
                       <td>
                         {admin ? (
@@ -1325,41 +1387,63 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
                         )}
                       </td>
                       <td>
-                        {doc ? (
-                          <>
-                            <button
-                              className="link"
-                              onClick={() =>
-                                void a.run(async () =>
-                                  setPreview(
-                                    await api(ws, `/documents/${doc.id}`),
-                                  ),
-                                )
-                              }
-                            >
-                              Preview v{doc.version}
-                            </button>
-                            {admin && (
-                              <button
-                                className="link"
-                                disabled={s.visibility !== "customer" || a.busy}
-                                onClick={() =>
-                                  void a.run(async () => {
-                                    await api(
-                                      ws,
-                                      `/documents/${doc.id}/publish`,
-                                      { published: !doc.published },
-                                    );
-                                    l.reload();
-                                  })
-                                }
-                              >
-                                {doc.published
-                                  ? "Unpublish article"
-                                  : "Publish article"}
-                              </button>
-                            )}
-                          </>
+                        {docs.length ? (
+                          <details open={!site}>
+                            <summary>
+                              {site
+                                ? `${docs.length} indexed pages`
+                                : "Article"}
+                            </summary>
+                            {docs.map((doc: Row) => (
+                              <div key={doc.id}>
+                                {site && (
+                                  <small>
+                                    <a
+                                      href={doc.locator}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {doc.title} ↗
+                                    </a>
+                                  </small>
+                                )}
+                                <button
+                                  className="link"
+                                  onClick={() =>
+                                    void a.run(async () =>
+                                      setPreview(
+                                        await api(ws, `/documents/${doc.id}`),
+                                      ),
+                                    )
+                                  }
+                                >
+                                  Preview v{doc.version}
+                                </button>
+                                {admin && (
+                                  <button
+                                    className="link"
+                                    disabled={
+                                      s.visibility !== "customer" || a.busy
+                                    }
+                                    onClick={() =>
+                                      void a.run(async () => {
+                                        await api(
+                                          ws,
+                                          `/documents/${doc.id}/publish`,
+                                          { published: !doc.published },
+                                        );
+                                        l.reload();
+                                      })
+                                    }
+                                  >
+                                    {doc.published
+                                      ? "Unpublish article"
+                                      : "Publish article"}
+                                  </button>
+                                )}
+                              </div>
+                            ))}
+                          </details>
                         ) : (
                           <span className="muted">—</span>
                         )}

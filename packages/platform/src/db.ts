@@ -56,7 +56,7 @@ export class Database {
       retryLimit: 4,
       retryDelay: 5,
       retryBackoff: true,
-      expireInSeconds: 300,
+      expireInSeconds: name === "ingest" ? 1800 : 300,
     });
   }
   async event(
@@ -135,5 +135,9 @@ CREATE TABLE IF NOT EXISTS worker_heartbeats(id text PRIMARY KEY, last_seen time
 ALTER TABLE operations ADD COLUMN IF NOT EXISTS context jsonb NOT NULL DEFAULT '{}';
 ALTER TABLE conversations ADD COLUMN IF NOT EXISTS external_requester_id text;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS graph_version text NOT NULL DEFAULT 'support-v2';
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS locator text NOT NULL DEFAULT '';
+ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_source_id_version_key;
+CREATE UNIQUE INDEX IF NOT EXISTS document_page_version ON documents(source_id,locator,version);
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;
+INSERT INTO app_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
 `;

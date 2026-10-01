@@ -2,6 +2,12 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Documentation import and response fix — 2026-10-01
+
+The documentation crawler read all 45 pages discovered on `https://docs.locushost.co/` (214,633 extracted characters, no skipped pages), and four pages in GitBook's live `/docs/getting-started` section. These were public HTTP/extraction checks, not paid embedding runs. Isolated database tests cover per-page indexing, citations, staff-only defaults, unchanged-embedding reuse, version changes, removal, and revoked access. The browser journey includes creating a documentation-site source and previewing its pages.
+
+A live OpenAI request using the installation's configured model returned a valid clarification after removing the transport-only `parametersJson` field. OpenAI reported 249 input and 62 output tokens. This verifies the response adapter fix; it is not the full live-model quality evaluation. The regression invokes the actual `LiveModel` adapter with a mocked SDK response and checks strict draft validation and usage accounting. Earlier requests that reached OpenAI before the app rejected their outputs remain real recorded usage.
+
 ## Observed results — 2026-09-30
 
 All 30 v2 regressions, the complete browser journey, and the 33 separately archived demo tests passed. The [clean Node 24/Linux CI run](https://github.com/nahid-sparktales/fieldkit/actions/runs/36689961164) also built the Docker image and verified a fresh Compose installation, repeat migrations, and worker restart. Local backup restoration preserved record counts and immutable operation contracts/receipts; upload files matched their original SHA-256 hashes. Encryption-key rotation and keyboard focus checks passed. See [machine-readable results](verification-results.json) for scope and exact evidence. External test-account gates below remain blocked.

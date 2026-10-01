@@ -85,6 +85,34 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     page.getByRole("button", { name: "Unpublish article", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/knowledge.png", fullPage: true });
+  await page
+    .getByRole("combobox", { name: "Source", exact: true })
+    .selectOption("site");
+  await page.getByLabel("Title", { exact: true }).fill("Company documentation");
+  await page
+    .getByLabel("Documentation URL")
+    .fill("https://docs.example.test/guide");
+  await page.getByRole("button", { name: "Add source" }).click();
+  const docs = page
+    .getByRole("row")
+    .filter({ hasText: "Company documentation" });
+  await expect(
+    docs.getByText("3 pages indexed", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    docs.getByLabel("Audience for Company documentation"),
+  ).toHaveValue("staff");
+  await docs.getByText("3 indexed pages", { exact: true }).click();
+  await expect(
+    docs.getByRole("link", { name: "GitBook page" }),
+  ).toHaveAttribute("href", "https://docs.example.test/guide/unlinked");
+  await docs.getByRole("button", { name: "Preview v1" }).first().click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Close preview" }).click();
+  await page.screenshot({
+    path: "test-results/documentation-site.png",
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByLabel("Reply behavior").selectOption("automatic");
   await page.getByRole("button", { name: "Save settings" }).click();

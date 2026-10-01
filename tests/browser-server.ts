@@ -6,14 +6,20 @@ import {
   TestProviders,
 } from "./helpers.js";
 import { writeFile, mkdir } from "node:fs/promises";
+import { docsFixture } from "./website-fixture.js";
 const c = testConfig(4351);
+const docs = docsFixture(),
+  providers = new TestProviders();
 await resetDatabase(c.DATABASE_URL);
 await mkdir(".fieldkit/browser", { recursive: true });
 const app = await createApp(c, {
   migrate: true,
   workers: true,
   model: new TestModel(),
-  fetch: new TestProviders().fetch,
+  fetch: (url, init) =>
+    new URL(url).origin === docs.origin
+      ? docs.fetch(url, init)
+      : providers.fetch(url, init),
   mailer: async (to, _subject, text) => {
     await writeFile(
       ".fieldkit/browser/" + to.replace(/[^a-zA-Z0-9]/g, "_") + ".txt",

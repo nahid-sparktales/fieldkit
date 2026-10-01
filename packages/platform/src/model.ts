@@ -112,10 +112,10 @@ export class LiveModel implements ModelPort {
         502,
         "The model did not return a valid support decision",
       );
-    const parsed = response.output_parsed;
+    const { parametersJson, ...parsed } = response.output_parsed;
     let parameters: unknown;
     try {
-      parameters = JSON.parse(parsed.parametersJson);
+      parameters = JSON.parse(parametersJson);
     } catch {
       throw new HttpError(502, "Invalid action parameters");
     }

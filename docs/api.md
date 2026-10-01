@@ -38,6 +38,14 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 
 Public routes under `/v2/public/:slug` expose only published configuration and articles. `/join` binds a verified portal account. `/widget/session` creates an anonymous or server-signed customer token for a published widget. Exact allowed origins are checked. `/v2/webhooks/zendesk/:workspaceId` accepts only provider-signed events. OAuth callbacks are `/v2/oauth/:provider/callback`.
 
+## Documentation site imports
+
+Create a source with `{"kind":"website","scope":"site","title":"Product docs","locator":"https://docs.example.com/"}`. Omit `scope` or use `"page"` to import only one page. In the app, choose **Knowledge → Documentation site**. Use the documentation root to include the whole site, or a section URL to restrict the scan to that path.
+
+The worker discovers pages from sitemaps (including sitemap indexes and robots.txt declarations) and internal links. It stays on the exact HTTPS origin and under the selected path, honors robots.txt and noindex, and never executes page scripts. Public, server-rendered pages are supported; login-protected or JavaScript-only content needs another import method. Query strings, fragments, and trailing slashes are treated as aliases. Crawls are bounded to 500 discovered pages, 25 sitemaps, 2 MB per response, 50 MB per scan, five million extracted characters, and five minutes of crawling. A limit or transient provider failure is an explicit failed import, not a successful partial index.
+
+`sources.metadata.crawl` reports discovery, scanning, indexing, and skipped-page reasons. Each page has its own document, URL (`documents.locator` and citation `url`), version, preview, and publication control. Unchanged pages reuse embeddings. Hourly/manual refresh removes unavailable or no-longer-discovered pages from retrieval and unpublishes them; a failed import disables the source's evidence until a successful refresh. New content stays within the source's selected audience, and publishing articles remains an explicit per-page action.
+
 ## SDK
 
 `packages/sdk/src/index.ts` is a server-side TypeScript client. Keep its service token on your trusted server. `identify` asserts ownership, so call it only from your authenticated account system; never expose it as a model tool.

@@ -9,6 +9,7 @@ import type { ModelPort } from "./model.js";
 import { HttpError, requireValue } from "./config.js";
 import { digest, externalURL } from "./security.js";
 import type { Citation } from "./contracts.js";
+import { crawlWebsite, type CrawlProgress, type WebPage } from "./website.js";
 
 const MAX_BYTES = 20 * 1024 * 1024;
 export function chunks(text: string): string[] {
@@ -112,14 +113,26 @@ export class Knowledge {
   }
   async add(
     ws: string,
-    input: { kind: string; title: string; locator: string },
+    input: {
+      kind: string;
+      title: string;
+      locator: string;
+      scope?: "page" | "site";
+    },
   ) {
     this.validateLocator(input.kind, input.locator);
     const id = uid();
     return this.db.tx(async (q) => {
       await q.query(
-        "INSERT INTO sources(id,workspace_id,kind,title,locator) VALUES($1,$2,$3,$4,$5)",
-        [id, ws, input.kind, input.title, input.locator],
+        "INSERT INTO sources(id,workspace_id,kind,title,locator,metadata) VALUES($1,$2,$3,$4,$5,$6)",
+        [
+          id,
+          ws,
+          input.kind,
+          input.title,
+          input.locator,
+          { scope: input.scope ?? "page" },
+        ],
       );
       await this.db.enqueue(q, "ingest", { workspaceId: ws, sourceId: id });
       return { id, status: "queued" };
@@ -266,53 +279,98 @@ export class Knowledge {
     throw new Error("Unsupported source");
   }
   async ingest(ws: string, id: string) {
+    const lock = await this.db.pool.connect();
+    const key = `knowledge:${ws}:${id}`;
+    try {
+      await lock.query("SELECT pg_advisory_lock(hashtextextended($1,0))", [
+        key,
+      ]);
+      await this.ingestSource(ws, id);
+    } finally {
+      await lock.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [
+        key,
+      ]);
+      lock.release();
+    }
+  }
+  private async ingestSource(ws: string, id: string) {
     const source = await this.db.one(
       "SELECT * FROM sources WHERE workspace_id=$1 AND id=$2 AND active",
       [ws, id],
     );
     if (!source) return;
     await this.db.pool.query(
-      "UPDATE sources SET status='processing',error=null WHERE id=$1",
+      "UPDATE sources SET status='processing',error=null,metadata=metadata-'crawl' WHERE id=$1",
       [id],
     );
-    try {
-      const text = (await this.load(source)).replace(/\u0000/g, "").trim();
-      if (text.length < 10) throw new Error("Source contains no readable text");
-      if (text.length > 1500000) throw new Error("Source is too large");
-      const hash = digest(text),
-        previous = await this.db.one(
-          "SELECT * FROM documents WHERE workspace_id=$1 AND source_id=$2 ORDER BY version DESC LIMIT 1",
-          [ws, id],
+    const deadline = Date.now() + 20 * 60_000;
+    const report = async (progress: CrawlProgress) => {
+      if (Date.now() > deadline)
+        throw new Error(
+          "Indexing exceeded twenty minutes. Import smaller documentation sections.",
         );
-      if (previous?.hash === hash) {
-        await this.db.tx(async (q) => {
-          const current = await this.db.one(
-            "SELECT revision,active FROM sources WHERE id=$1 FOR UPDATE",
-            [id],
-            q,
-          );
-          if (!current?.active || current.revision !== source.revision) return;
-          await q.query("UPDATE documents SET active=true WHERE id=$1", [
-            previous.id,
-          ]);
-          await q.query(
-            "UPDATE sources SET status='ready',last_synced=now(),error=null WHERE id=$1",
-            [id],
-          );
-        });
-        return;
+      const updated = await this.db.pool.query(
+        "UPDATE sources SET metadata=jsonb_set(metadata,'{crawl}',$1::jsonb) WHERE id=$2 AND revision=$3 AND active",
+        [JSON.stringify(progress), id, source.revision],
+      );
+      if (!updated.rowCount)
+        throw new Error("Source changed during import; a new scan is required");
+    };
+    try {
+      let pages: WebPage[], progress: CrawlProgress | undefined;
+      if (source.kind === "website" && source.metadata.scope === "site") {
+        ({ pages, progress } = await crawlWebsite(
+          source.locator,
+          this.connections.fetch,
+          report,
+        ));
+        progress.phase = "indexing";
+        await report(progress);
+      } else {
+        const text = (await this.load(source)).replace(/\u0000/g, "").trim();
+        if (text.length < 10)
+          throw new Error("Source contains no readable text");
+        if (text.length > 1500000) throw new Error("Source is too large");
+        pages = [{ locator: "", title: source.title, text }];
       }
-      const texts = chunks(text),
-        vectors: number[][] = [];
-      for (let i = 0; i < texts.length; i += 24)
-        vectors.push(...(await this.model.embed(ws, texts.slice(i, i + 24))));
-      if (
-        vectors.length !== texts.length ||
-        vectors.some(
-          (v) => v.length !== 1536 || v.some((n) => !Number.isFinite(n)),
+      const previous = await this.db.rows(
+        "SELECT DISTINCT ON (locator) * FROM documents WHERE workspace_id=$1 AND source_id=$2 ORDER BY locator,version DESC",
+        [ws, id],
+      );
+      const prepared: {
+        page: WebPage;
+        hash: string;
+        old: any;
+        unchanged: boolean;
+        texts: string[];
+        vectors: number[][];
+      }[] = [];
+      for (const page of pages) {
+        const hash = digest(page.text);
+        const old = previous.find((d) => d.locator === page.locator);
+        const unchanged = old?.hash === hash && old?.title === page.title;
+        const texts = unchanged ? [] : chunks(page.text),
+          vectors: number[][] = [];
+        for (let i = 0; i < texts.length; i += 24) {
+          if (Date.now() > deadline)
+            throw new Error(
+              "Indexing exceeded twenty minutes. Import smaller documentation sections.",
+            );
+          vectors.push(...(await this.model.embed(ws, texts.slice(i, i + 24))));
+        }
+        if (
+          vectors.length !== texts.length ||
+          vectors.some(
+            (v) => v.length !== 1536 || v.some((n) => !Number.isFinite(n)),
+          )
         )
-      )
-        throw new Error("Embedding response has invalid dimensions");
+          throw new Error("Embedding response has invalid dimensions");
+        prepared.push({ page, hash, old, unchanged, texts, vectors });
+        if (progress) {
+          progress.indexed++;
+          await report(progress);
+        }
+      }
       await this.db.tx(async (q) => {
         const current = await this.db.one(
           "SELECT revision,active FROM sources WHERE id=$1 FOR UPDATE",
@@ -320,54 +378,71 @@ export class Knowledge {
           q,
         );
         if (!current?.active || current.revision !== source.revision) return;
-        const version = (await this.db.one(
-          "SELECT COALESCE(max(version),0)+1 n FROM documents WHERE source_id=$1",
-          [id],
-          q,
-        ))!.n;
-        await q.query(
-          "UPDATE documents SET active=false,published=false WHERE source_id=$1",
-          [id],
-        );
-        const documentId = uid();
-        await q.query(
-          "INSERT INTO documents(id,workspace_id,source_id,version,title,body,hash,slug) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
-          [
-            documentId,
-            ws,
-            id,
-            version,
-            source.title,
-            text,
-            hash,
-            `${source.title
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, "-")
-              .slice(0, 60)}-${id.slice(0, 8)}`,
-          ],
-        );
-        for (let n = 0; n < texts.length; n++)
+        await q.query("UPDATE documents SET active=false WHERE source_id=$1", [
+          id,
+        ]);
+        for (const { page, hash, old, unchanged, texts, vectors } of prepared) {
+          if (unchanged) {
+            await q.query("UPDATE documents SET active=true WHERE id=$1", [
+              old.id,
+            ]);
+            continue;
+          }
+          const version = (old?.version ?? 0) + 1,
+            documentId = uid();
           await q.query(
-            "INSERT INTO chunks(id,workspace_id,document_id,position,body,embedding,embedding_model) VALUES($1,$2,$3,$4,$5,$6::vector,$7)",
+            "INSERT INTO documents(id,workspace_id,source_id,version,title,body,hash,slug,locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
             [
-              uid(),
-              ws,
               documentId,
-              n,
-              texts[n],
-              JSON.stringify(vectors[n]),
-              "text-embedding-3-small",
+              ws,
+              id,
+              version,
+              page.title,
+              page.text,
+              hash,
+              `${page.title
+                .toLowerCase()
+                .replace(/[^a-z0-9]+/g, "-")
+                .slice(
+                  0,
+                  60,
+                )}-${id.slice(0, 8)}${page.locator ? "-" + digest(page.locator).slice(0, 8) : ""}`,
+              page.locator,
             ],
           );
+          for (let n = 0; n < texts.length; n++)
+            await q.query(
+              "INSERT INTO chunks(id,workspace_id,document_id,position,body,embedding,embedding_model) VALUES($1,$2,$3,$4,$5,$6::vector,$7)",
+              [
+                uid(),
+                ws,
+                documentId,
+                n,
+                texts[n],
+                JSON.stringify(vectors[n]),
+                "text-embedding-3-small",
+              ],
+            );
+        }
+        await q.query(
+          "UPDATE documents SET published=false WHERE source_id=$1 AND NOT active",
+          [id],
+        );
+        if (progress) {
+          progress.phase = "complete";
+          await q.query(
+            "UPDATE sources SET metadata=jsonb_set(metadata,'{crawl}',$1::jsonb) WHERE id=$2",
+            [JSON.stringify(progress), id],
+          );
+        }
         await q.query(
           "UPDATE sources SET status='ready',last_synced=now(),error=null WHERE id=$1",
           [id],
         );
         await this.db.event(q, ws, "knowledge.ready", {
           sourceId: id,
-          documentId,
-          version,
-          chunks: texts.length,
+          pages: pages.length,
+          chunks: prepared.reduce((n, p) => n + p.texts.length, 0),
         });
       });
     } catch (e) {
@@ -394,6 +469,7 @@ export class Knowledge {
     const [embedding] = await this.model.embed(ws, [query.slice(0, 6000)]);
     const rows = await this.db.rows(
       `SELECT c.id,c.document_id,d.source_id,d.title,d.version,c.body,
+      COALESCE(NULLIF(d.locator,''),CASE WHEN s.kind='website' THEN s.locator END) url,
       (1-(c.embedding<=>$3::vector))+ts_rank_cd(c.search,websearch_to_tsquery('english',$2)) score
       FROM chunks c JOIN documents d ON d.id=c.document_id AND d.workspace_id=c.workspace_id JOIN sources s ON s.id=d.source_id AND s.workspace_id=d.workspace_id
       WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' AND c.embedding_model='text-embedding-3-small'
@@ -407,6 +483,7 @@ export class Knowledge {
       title: r.title,
       version: r.version,
       excerpt: r.body,
+      ...(r.url ? { url: r.url } : {}),
     }));
   }
   async validEvidence(

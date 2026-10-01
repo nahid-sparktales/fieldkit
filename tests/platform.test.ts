@@ -1,4 +1,4 @@
-import { test, before, after } from "node:test";
+import { test, before, after, mock } from "node:test";
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { createApp } from "../apps/api/server.js";
@@ -19,7 +19,11 @@ import {
 } from "../packages/platform/src/security.js";
 import { uid } from "../packages/platform/src/db.js";
 import { extract } from "../packages/platform/src/knowledge.js";
-import { Settings } from "../packages/platform/src/contracts.js";
+import { Knowledge } from "../packages/platform/src/knowledge.js";
+import { Connections } from "../packages/platform/src/connections.js";
+import { docsFixture } from "./website-fixture.js";
+import { Settings, DraftSchema } from "../packages/platform/src/contracts.js";
+import { LiveModel } from "../packages/platform/src/model.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { FieldKitClient } from "../packages/sdk/src/index.js";
@@ -265,6 +269,149 @@ test("extraction rejects unreadable/unsupported and oversized content", async ()
     extract(Buffer.alloc(21 * 1024 * 1024), "large.txt"),
     /20 MB/,
   );
+});
+test("live model adapter removes transport-only JSON before strict draft validation and records actual usage", async () => {
+  const w = await workspace(app),
+    live = new LiveModel(app.db, app.connections);
+  let parametersJson = '{"orderId":"order-123"}';
+  const client = mock.method(live as any, "client", async () => ({
+    responses: {
+      parse: async () => ({
+        output_parsed: {
+          intent: "clarify",
+          answer: "Which order do you mean?",
+          citationIds: [],
+          actionName: null,
+          parametersJson,
+          reason: "Need a specific order",
+        },
+        usage: { input_tokens: 31, output_tokens: 12 },
+      }),
+    },
+  }));
+  const input = {
+    workspaceId: w.ws.id,
+    runId: uid(),
+    messages: [{ role: "customer", body: "test" }],
+    evidence: [],
+    actions: [],
+    account: null,
+    instructions: "Use approved evidence",
+    model: "gpt-5.4-mini",
+  };
+  try {
+    const draft = DraftSchema.parse(await live.answer(input));
+    assert.deepEqual(draft.parameters, { orderId: "order-123" });
+    assert.equal("parametersJson" in draft, false);
+    const usage = await app.db.one(
+      "SELECT input_tokens,output_tokens,reserved FROM usage WHERE workspace_id=$1",
+      [w.ws.id],
+    );
+    assert.deepEqual(usage, {
+      input_tokens: 31,
+      output_tokens: 12,
+      reserved: 0,
+    });
+    parametersJson = "[]";
+    await assert.rejects(live.answer(input), /parameters must be an object/);
+    parametersJson = "invalid";
+    await assert.rejects(live.answer(input), /Invalid action parameters/);
+  } finally {
+    client.mock.restore();
+  }
+});
+test("documentation sites index separate cited pages, refresh versions and remove deleted/revoked pages", async () => {
+  const w = await workspace(app),
+    f = docsFixture();
+  let embedded = 0;
+  const knowledge = new Knowledge(app.db, new Connections(app.db, f.fetch), {
+    answer: (input) => model.answer(input),
+    embed: (ws, texts) => {
+      embedded += texts.length;
+      return model.embed(ws, texts);
+    },
+  });
+  const source = await knowledge.add(w.ws.id, {
+    kind: "website",
+    scope: "site",
+    title: "Company docs",
+    locator: f.origin + "/guide",
+  });
+  await knowledge.ingest(w.ws.id, source.id);
+  const docs = () =>
+    app.db.rows(
+      "SELECT * FROM documents WHERE source_id=$1 AND active ORDER BY locator",
+      [source.id],
+    );
+  assert.equal((await docs()).length, 3);
+  assert.equal(
+    (await knowledge.retrieve(w.ws.id, "workspace")).length,
+    0,
+    "imports stay staff-only",
+  );
+  await app.db.pool.query(
+    "UPDATE sources SET visibility='customer' WHERE id=$1",
+    [source.id],
+  );
+  await app.db.pool.query(
+    "UPDATE documents SET published=true WHERE source_id=$1",
+    [source.id],
+  );
+  let evidence = await knowledge.retrieve(w.ws.id, "workspace");
+  assert.equal(evidence.length, 3);
+  assert.ok(evidence.every((c) => c.url?.startsWith(f.origin + "/guide")));
+  assert.equal(
+    (await knowledge.retrieve((await workspace(app)).ws.id, "workspace"))
+      .length,
+    0,
+  );
+  const before = embedded;
+  await knowledge.ingest(w.ws.id, source.id);
+  assert.equal(
+    embedded,
+    before,
+    "unchanged pages do not consume embeddings again",
+  );
+  assert.ok((await docs()).every((d: any) => d.version === 1 && d.published));
+  f.routes.set("/guide/start", [
+    "<main><h1>Getting started</h1><p>New installation instructions for your workspace.</p></main>",
+  ]);
+  f.routes.delete("/guide/unlinked");
+  await knowledge.ingest(w.ws.id, source.id);
+  const refreshed = await docs();
+  assert.equal(refreshed.length, 2);
+  assert.equal(
+    refreshed.find((d: any) => d.locator.endsWith("/start")).version,
+    2,
+  );
+  assert.equal(
+    refreshed.find((d: any) => d.locator.endsWith("/start")).published,
+    false,
+  );
+  assert.equal(
+    refreshed.find((d: any) => d.locator.endsWith("/guide")).published,
+    true,
+  );
+  assert.equal(await knowledge.validEvidence(w.ws.id, evidence), false);
+  evidence = await knowledge.retrieve(w.ws.id, "workspace");
+  assert.equal(evidence.length, 2);
+  f.routes.set("/robots.txt", [
+    "User-agent: *\nDisallow: /",
+    200,
+    "text/plain",
+  ]);
+  await assert.rejects(
+    knowledge.ingest(w.ws.id, source.id),
+    /disallows crawling/,
+  );
+  assert.equal((await knowledge.retrieve(w.ws.id, "workspace")).length, 0);
+  assert.equal(
+    (await app.db.one("SELECT status FROM sources WHERE id=$1", [source.id]))
+      .status,
+    "failed",
+  );
+  await knowledge.remove(w.ws.id, source.id);
+  assert.equal((await docs()).length, 0);
 });
 test("a cited answer persists through the real LangGraph graph and a follow-up keeps the conversation", async () => {
   const w = await workspace(app);

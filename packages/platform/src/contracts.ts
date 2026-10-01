@@ -55,8 +55,13 @@ export const SourceInput = z
     kind: z.enum(["website", "notion", "google", "zendesk"]),
     title: z.string().trim().min(1).max(200),
     locator: z.string().min(1).max(2000),
+    scope: z.enum(["page", "site"]).default("page"),
   })
-  .strict();
+  .strict()
+  .refine(
+    (input) => input.scope === "page" || input.kind === "website",
+    "Only website sources support a full-site scan",
+  );
 export const ActionPolicy = z
   .object({
     mode: z.enum(["approval", "automatic"]).default("approval"),
@@ -124,6 +129,7 @@ export type Citation = {
   title: string;
   version: number;
   excerpt: string;
+  url?: string;
 };
 export type Proposal = {
   actionId: string;
