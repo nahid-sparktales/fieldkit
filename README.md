@@ -8,6 +8,7 @@ Apache-2.0 licensed. This repository is private during development. **Version 2 
 
 - Verified email/password accounts, recovery, staff invitations, workspace roles, isolated customer history, and server-signed widget identities.
 - Guided setup, model connection, document review, answer preview, publishing, customer accounts, articles, ticket conversations, private notes, assignment, approvals, and human takeover.
+- **Knowledge → FAQs:** write and edit FAQ drafts, improve an answer with AI, or generate up to eight drafts from customer-approved knowledge. Approve each answer for retrieval and optionally publish it in the help center. Editing withdraws the previous answer until it is approved again; manual drafting requires no model key.
 - PDF, DOCX, Markdown, text, individual website pages or entire public documentation sites (Docusaurus/GitBook), selected Notion pages, Google Picker files, and Zendesk help-center articles. Background ingestion, extraction errors, per-page versions and citations, manual refresh, and hourly synchronization. Imported knowledge starts staff-only; approval for customer answers and public article publication are separate controls.
 - OpenAI Responses structured outputs inside LangGraph, PostgreSQL checkpoints, tenant-scoped pgvector/keyword retrieval, citations, actual usage accounting, and workspace token budgets.
 - Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.

@@ -2,6 +2,12 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## FAQ authoring and AI assistance — 2026-10-01
+
+All 40 v2 regressions, type checking, the production build, and the browser journey passed. FAQ tests cover private drafts, tenant and role boundaries, exact-revision approvals, concurrent approval, withdrawal after editing, deletion, customer-approved AI context, revoked evidence, unsupported citations, duplicate suggestions, structured model output, token accounting, and budget enforcement. The browser journey creates and improves an FAQ, approves and publishes it, edits it back into a private draft, generates another private FAQ, and checks desktop and mobile layouts. These automated journeys use injected model responses.
+
+One live request through the configured OpenAI model successfully rewrote a supplied answer into an FAQ, using 267 input and 45 output tokens. No FAQ was saved to the real workspace by this check. This verifies the live FAQ adapter and usage accounting; it is not a broader AI quality evaluation.
+
 ## Documentation import and response fix — 2026-10-01
 
 The documentation crawler read all 45 pages discovered on `https://docs.locushost.co/` (214,633 extracted characters, no skipped pages), and four pages in GitBook's live `/docs/getting-started` section. These were public HTTP/extraction checks, not paid embedding runs. Isolated database tests cover per-page indexing, citations, staff-only defaults, unchanged-embedding reuse, version changes, removal, and revoked access. The browser journey includes creating a documentation-site source and previewing its pages.

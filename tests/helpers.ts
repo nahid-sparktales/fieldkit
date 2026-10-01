@@ -1,7 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { Pool } from "pg";
 import { config } from "../packages/platform/src/config.js";
-import type { ModelPort, ModelInput } from "../packages/platform/src/model.js";
+import type {
+  ModelPort,
+  ModelInput,
+  FaqModelInput,
+} from "../packages/platform/src/model.js";
 import type { Draft } from "../packages/platform/src/contracts.js";
 import type { Fetcher } from "../packages/platform/src/security.js";
 import { Settings } from "../packages/platform/src/contracts.js";
@@ -36,6 +40,20 @@ export async function resetDatabase(url: string) {
   }
 }
 export class TestModel implements ModelPort {
+  faqHook?: (input: FaqModelInput) => Promise<void>;
+  async faqs(input: FaqModelInput) {
+    await this.faqHook?.(input);
+    if (this.fail) throw new Error("Model outage");
+    return [
+      {
+        question: input.question || "How long do I have to return an item?",
+        answer: input.answer
+          ? "Improved: " + input.answer
+          : "Unused items can be returned within 30 days.",
+        citationIds: input.evidence.slice(0, 1).map((e) => e.id),
+      },
+    ];
+  }
   hook?: (input: ModelInput) => Promise<void>;
   invalidCitation = false;
   fail = false;

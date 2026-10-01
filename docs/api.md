@@ -23,6 +23,11 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | `/sources/:id/visibility` | PUT | Admin customer-answer approval |
 | `/documents/:id/publish` | PUT | Separate public article publication |
 | `/sources/:id` | DELETE | Admin source removal |
+| `/faqs` | GET / POST | Staff FAQ library / admin private draft creation |
+| `/faqs/:id` | PUT / DELETE | Admin edit with revision / remove FAQ |
+| `/faqs/:id/approve` | POST | Admin approval of the exact revision; queues indexing |
+| `/faqs/generate` | POST | Admin AI generation of private drafts from approved knowledge |
+| `/faqs/assist` | POST | Admin AI suggestion for the editor; does not save or publish |
 | `/connections` | GET | Admin metadata, no stored secrets |
 | `/connections/key` | POST | Validated key connection |
 | `/connections/:provider/oauth` | POST | Session-bound OAuth start |
@@ -45,6 +50,14 @@ Create a source with `{"kind":"website","scope":"site","title":"Product docs","l
 The worker discovers pages from sitemaps (including sitemap indexes and robots.txt declarations) and internal links. It stays on the exact HTTPS origin and under the selected path, honors robots.txt and noindex, and never executes page scripts. Public, server-rendered pages are supported; login-protected or JavaScript-only content needs another import method. Query strings, fragments, and trailing slashes are treated as aliases. Crawls are bounded to 500 discovered pages, 25 sitemaps, 2 MB per response, 50 MB per scan, five million extracted characters, and five minutes of crawling. A limit or transient provider failure is an explicit failed import, not a successful partial index.
 
 `sources.metadata.crawl` reports discovery, scanning, indexing, and skipped-page reasons. Each page has its own document, URL (`documents.locator` and citation `url`), version, preview, and publication control. Unchanged pages reuse embeddings. Hourly/manual refresh removes unavailable or no-longer-discovered pages from retrieval and unpublishes them; a failed import disables the source's evidence until a successful refresh. New content stays within the source's selected audience, and publishing articles remains an explicit per-page action.
+
+## FAQs
+
+FAQs are workspace-scoped knowledge sources (`kind: "faq"`). Create one with `{ "question": "How do I get help?", "answer": "Open a ticket in the help center." }`. It starts in `draft` with staff-only visibility and requires no model call. Edits also include the current `revision`; conflicting saves return 409. Editing immediately deactivates/unpublishes the old document and resets the FAQ to a private draft.
+
+Approve with `{ "revision": 1 }` at `/faqs/:id/approve`. Approval requires a connected model for embedding and queues indexing in the same transaction. Once ready, the agent can cite the FAQ. Public help-center publication remains a separate `/documents/:id/publish` action. Draft FAQs are excluded from hourly ingestion and cannot be retrieved by customers.
+
+AI generation accepts `{ "count": 5, "instructions": "Focus on onboarding", "sourceId": "optional-approved-source-id" }` (1–8 FAQs). It uses a bounded selection of current customer-approved chunks, validates returned citations, rechecks source access, and saves private drafts only. `/faqs/assist` accepts `question`, optional `answer`, optional `instructions`, and optional `sourceId`; it returns one suggestion without modifying saved FAQs. Existing answer text can be rewritten without indexed knowledge. Both use the configured OpenAI model, workspace token budget, timeout, and actual usage accounting (`kind: "faq"`). No source access or publication permission is granted by model output.
 
 ## SDK
 

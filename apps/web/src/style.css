@@ -614,6 +614,51 @@ input[type="color"] {
   grid-template-columns: 1fr 1fr;
   gap: 0 22px;
 }
+.knowledge-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.knowledge-tabs button[aria-pressed="true"] {
+  background: var(--green, #146b57);
+  color: white;
+}
+.faq-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 20px;
+}
+.faq-form {
+  display: grid;
+  gap: 16px;
+}
+.faq-list {
+  display: grid;
+  gap: 20px;
+}
+.faq-card {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  min-width: 0;
+}
+.faq-card h3 {
+  margin: 0;
+  font-size: 16px;
+  overflow-wrap: anywhere;
+}
+.faq-answer {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+.faq-card .button-row {
+  margin-top: 16px;
+}
+@media (max-width: 1000px) {
+  .faq-layout {
+    grid-template-columns: 1fr;
+  }
+}
 .source-form {
   display: flex;
   align-items: flex-end;

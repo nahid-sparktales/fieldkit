@@ -270,6 +270,244 @@ test("extraction rejects unreadable/unsupported and oversized content", async ()
     /20 MB/,
   );
 });
+test("manual FAQs need no model key, require exact approval, and edits withdraw indexed/public answers", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  await app.connections.disconnect(w.ws.id, "openai");
+  const [faq] = await app.knowledge.createFaqs(w.ws.id, [
+    {
+      question: "How do I get help?",
+      answer: "Open a support ticket in the help center.",
+      citationIds: [],
+    },
+  ]);
+  assert.equal(faq.status, "draft");
+  assert.equal(faq.visibility, "staff");
+  await app.knowledge.ingest(w.ws.id, faq.id);
+  assert.equal(
+    (await app.db.rows("SELECT id FROM documents WHERE source_id=$1", [faq.id]))
+      .length,
+    0,
+  );
+  await assert.rejects(
+    app.knowledge.approveFaq(w.ws.id, faq.id, faq.revision),
+    /Connect openai/,
+  );
+  await app.connections.save(w.ws.id, "openai", { apiKey: "test" }, {});
+  await assert.rejects(
+    app.knowledge.updateFaq(other.ws.id, faq.id, {
+      question: faq.title,
+      answer: "Wrong workspace",
+      revision: faq.revision,
+    }),
+    /not found/i,
+  );
+  const approvals = await Promise.allSettled([
+    app.knowledge.approveFaq(w.ws.id, faq.id, faq.revision),
+    app.knowledge.approveFaq(w.ws.id, faq.id, faq.revision),
+  ]);
+  assert.equal(approvals.filter((r) => r.status === "fulfilled").length, 1);
+  await app.knowledge.ingest(w.ws.id, faq.id);
+  const evidence = await app.knowledge.retrieve(w.ws.id, "get help");
+  assert.equal(evidence.length, 1);
+  await app.db.pool.query(
+    "UPDATE documents SET published=true WHERE source_id=$1",
+    [faq.id],
+  );
+  const current = await app.db.one("SELECT revision FROM sources WHERE id=$1", [
+    faq.id,
+  ]);
+  const updated = await app.knowledge.updateFaq(w.ws.id, faq.id, {
+    question: "How do I contact support?",
+    answer: "Use the contact form in the help center.",
+    revision: current.revision,
+  });
+  assert.equal(updated.status, "draft");
+  assert.equal(updated.visibility, "staff");
+  assert.equal(await app.knowledge.validEvidence(w.ws.id, evidence), false);
+  assert.equal((await app.knowledge.retrieve(w.ws.id, "help")).length, 0);
+  assert.equal(
+    (
+      await app.db.rows(
+        "SELECT id FROM documents WHERE source_id=$1 AND (active OR published)",
+        [faq.id],
+      )
+    ).length,
+    0,
+  );
+  await assert.rejects(
+    app.knowledge.approveFaq(w.ws.id, faq.id, current.revision),
+    /changed/,
+  );
+  await app.knowledge.approveFaq(w.ws.id, faq.id, updated.revision);
+  await app.knowledge.ingest(w.ws.id, faq.id);
+  const doc = await app.db.one(
+    "SELECT version,published FROM documents WHERE source_id=$1 AND active",
+    [faq.id],
+  );
+  assert.deepEqual(doc, { version: 2, published: false });
+  await app.knowledge.remove(w.ws.id, faq.id);
+  assert.equal((await app.knowledge.retrieve(w.ws.id, "help")).length, 0);
+});
+test("AI FAQ drafts use only approved tenant knowledge and reject fabricated or revoked citations", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  await assert.rejects(
+    app.knowledge.suggestFaqs(w.ws.id, { count: 3, instructions: "" }),
+    /customer-approved knowledge/,
+  );
+  const source = await knowledge(app, w.ws.id);
+  const secret = await app.knowledge.upload(
+    w.ws.id,
+    "private.txt",
+    Buffer.from("Staff secret: use the private discount code SECRET-123."),
+  );
+  await app.knowledge.ingest(w.ws.id, secret.id);
+  const foreign = await knowledge(app, other.ws.id);
+  await assert.rejects(
+    app.knowledge.suggestFaqs(w.ws.id, {
+      count: 1,
+      instructions: "",
+      sourceId: foreign.id,
+    }),
+    /Choose available/,
+  );
+  model.faqHook = async (input) => {
+    assert.equal(input.workspaceId, w.ws.id);
+    assert.ok(input.evidence.length > 0);
+    assert.ok(
+      input.evidence.every(
+        (e) => e.sourceId === source.id && !e.excerpt.includes("SECRET"),
+      ),
+    );
+  };
+  try {
+    const result = await app.knowledge.suggestFaqs(w.ws.id, {
+      count: 3,
+      instructions: "Returns",
+      sourceId: source.id,
+    });
+    const [faq] = await app.knowledge.createFaqs(
+      w.ws.id,
+      result.drafts,
+      true,
+      result.evidence,
+    );
+    assert.equal(faq.visibility, "staff");
+    assert.equal(faq.status, "draft");
+    assert.equal(faq.metadata.aiGenerated, true);
+    await assert.rejects(
+      app.knowledge.suggestFaqs(w.ws.id, {
+        count: 3,
+        instructions: "Returns",
+        sourceId: source.id,
+      }),
+      /already exist/,
+    );
+    assert.equal(
+      (
+        await app.db.rows("SELECT id FROM documents WHERE source_id=$1", [
+          faq.id,
+        ])
+      ).length,
+      0,
+    );
+    const invalid = mock.method(model, "faqs", async () => [
+      {
+        question: "Can I get free products?",
+        answer: "All products are free.",
+        citationIds: ["invented"],
+      },
+    ]);
+    try {
+      await assert.rejects(
+        app.knowledge.suggestFaqs(w.ws.id, { count: 1, instructions: "" }),
+        /unsupported FAQ/,
+      );
+    } finally {
+      invalid.mock.restore();
+    }
+    model.faqHook = async () => {
+      await app.db.pool.query(
+        "UPDATE sources SET visibility='staff' WHERE id=$1",
+        [source.id],
+      );
+    };
+    await assert.rejects(
+      app.knowledge.suggestFaqs(w.ws.id, { count: 1, instructions: "" }),
+      /knowledge changed/,
+    );
+    await assert.rejects(
+      app.knowledge.createFaqs(w.ws.id, result.drafts, true, result.evidence),
+      /knowledge changed/,
+    );
+    model.faqHook = undefined;
+    const edit = await app.knowledge.suggestFaqs(w.ws.id, {
+      count: 1,
+      question: "How do I get help?",
+      answer: "Use our support page.",
+      instructions: "Be concise",
+    });
+    assert.match(edit.drafts[0].answer, /Use our support page/);
+  } finally {
+    model.faqHook = undefined;
+  }
+});
+test("FAQ APIs enforce staff roles, tenant boundaries, input limits and draft-only creation", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  const user = await app.db.one(
+    'SELECT id,email FROM "user" WHERE "emailVerified"=true LIMIT 1',
+  );
+  await app.db.pool.query("INSERT INTO memberships VALUES($1,$2,'owner')", [
+    w.ws.id,
+    user.id,
+  ]);
+  const login = await call("/api/auth/sign-in/email", {
+    email: user.email,
+    password: "correct-horse-battery-staple",
+  });
+  const cookie = login.response.headers
+    .getSetCookie()
+    .map((v) => v.split(";")[0])
+    .join("; ");
+  const path = `/v2/workspaces/${w.ws.id}/faqs`;
+  const created = await call(
+    path,
+    {
+      question: "Where do I get support?",
+      answer: "Visit our support portal.",
+    },
+    cookie,
+  );
+  assert.equal(created.response.status, 201, JSON.stringify(created.json));
+  assert.equal(created.json.status, "draft");
+  assert.equal(
+    (await call(path + "/generate", { count: 999 }, cookie)).response.status,
+    400,
+  );
+  assert.equal(
+    (await call(`/v2/workspaces/${other.ws.id}/faqs`, undefined, cookie))
+      .response.status,
+    403,
+  );
+  await app.db.pool.query(
+    "UPDATE memberships SET role='agent' WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, user.id],
+  );
+  assert.equal((await call(path, undefined, cookie)).response.status, 200);
+  for (const [suffix, method, body] of [
+    ["", "POST", { question: "Another question?", answer: "Another answer." }],
+    ["/generate", "POST", {}],
+    ["/assist", "POST", { question: "Help me?" }],
+    [`/${created.json.id}`, "DELETE", {}],
+    [`/${created.json.id}/approve`, "POST", { revision: 1 }],
+  ] as const)
+    assert.equal(
+      (await call(path + suffix, body, cookie, method)).response.status,
+      403,
+    );
+});
 test("live model adapter removes transport-only JSON before strict draft validation and records actual usage", async () => {
   const w = await workspace(app),
     live = new LiveModel(app.db, app.connections);
@@ -320,11 +558,67 @@ test("live model adapter removes transport-only JSON before strict draft validat
     client.mock.restore();
   }
 });
+test("live FAQ adapter validates structured drafts, records usage and applies the workspace budget", async () => {
+  const w = await workspace(app),
+    live = new LiveModel(app.db, app.connections);
+  let calls = 0;
+  const client = mock.method(live as any, "client", async () => ({
+    responses: {
+      parse: async () => {
+        calls++;
+        return {
+          output_parsed: {
+            faqs: [
+              {
+                question: "How do I get help?",
+                answer: "Use the support portal.",
+                citationIds: [],
+              },
+            ],
+          },
+          usage: { input_tokens: 51, output_tokens: 29 },
+        };
+      },
+    },
+  }));
+  const input = {
+    workspaceId: w.ws.id,
+    model: "gpt-5.4-mini",
+    count: 1,
+    instructions: "Be concise",
+    question: "How do I get help?",
+    answer: "Use the support portal.",
+    evidence: [],
+    existingQuestions: [],
+  };
+  try {
+    assert.equal((await live.faqs(input))[0].answer, "Use the support portal.");
+    const usage = await app.db.one(
+      "SELECT kind,input_tokens,output_tokens,reserved FROM usage WHERE workspace_id=$1",
+      [w.ws.id],
+    );
+    assert.deepEqual(usage, {
+      kind: "faq",
+      input_tokens: 51,
+      output_tokens: 29,
+      reserved: 0,
+    });
+    await app.db.pool.query(
+      "UPDATE workspaces SET settings=jsonb_set(settings,'{monthlyTokenBudget}','1000'::jsonb) WHERE id=$1",
+      [w.ws.id],
+    );
+    await assert.rejects(live.faqs(input), /budget reached/);
+    assert.equal(calls, 1);
+  } finally {
+    client.mock.restore();
+  }
+});
 test("documentation sites index separate cited pages, refresh versions and remove deleted/revoked pages", async () => {
   const w = await workspace(app),
     f = docsFixture();
   let embedded = 0;
   const knowledge = new Knowledge(app.db, new Connections(app.db, f.fetch), {
+    faqs: (input) => model.faqs(input),
     answer: (input) => model.answer(input),
     embed: (ws, texts) => {
       embedded += texts.length;

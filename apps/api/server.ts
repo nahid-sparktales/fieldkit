@@ -30,6 +30,8 @@ import {
   SourceInput,
   MessageInput,
   DraftSchema,
+  FaqInput,
+  FaqGenerationInput,
 } from "../../packages/platform/src/contracts.js";
 import { uid } from "../../packages/platform/src/db.js";
 import {
@@ -824,6 +826,102 @@ export async function createApp(
             const expiry = setTimeout(() => res.end(), 5 * 60 * 1000);
             return;
           }
+        }
+        if (suffix === "/faqs" && method === "GET") {
+          requireStaff(p);
+          json(res, {
+            faqs: await app.db.rows(
+              "SELECT * FROM sources WHERE workspace_id=$1 AND kind='faq' ORDER BY title",
+              [ws],
+            ),
+          });
+          return;
+        }
+        if (suffix === "/faqs" && method === "POST") {
+          requireAdmin(p);
+          const input = FaqInput.parse(await body(req));
+          json(
+            res,
+            (
+              await app.knowledge.createFaqs(ws, [
+                { ...input, citationIds: [] },
+              ])
+            )[0],
+            201,
+          );
+          return;
+        }
+        if (suffix === "/faqs/generate" && method === "POST") {
+          requireAdmin(p);
+          const input = FaqGenerationInput.parse(await body(req));
+          const result = await app.knowledge.suggestFaqs(ws, input);
+          json(
+            res,
+            {
+              faqs: await app.knowledge.createFaqs(
+                ws,
+                result.drafts,
+                true,
+                result.evidence,
+              ),
+            },
+            201,
+          );
+          return;
+        }
+        if (suffix === "/faqs/assist" && method === "POST") {
+          requireAdmin(p);
+          const input = FaqGenerationInput.omit({ count: true })
+            .extend({
+              question: FaqInput.shape.question,
+              answer: z.string().trim().max(12000).default(""),
+            })
+            .parse(await body(req));
+          const result = await app.knowledge.suggestFaqs(ws, {
+            ...input,
+            count: 1,
+          });
+          json(res, result.drafts[0]);
+          return;
+        }
+        m = suffix.match(/^\/faqs\/([^/]+)(\/approve)?$/);
+        if (m && ["PUT", "POST", "DELETE"].includes(method)) {
+          requireAdmin(p);
+          requireValue(
+            await app.db.one(
+              "SELECT id FROM sources WHERE workspace_id=$1 AND id=$2 AND kind='faq'",
+              [ws, m[1]],
+            ),
+          );
+          if (method === "PUT" && !m[2])
+            json(
+              res,
+              await app.knowledge.updateFaq(
+                ws,
+                m[1],
+                FaqInput.extend({
+                  revision: z.number().int().positive(),
+                }).parse(await body(req)),
+              ),
+            );
+          else if (method === "POST" && m[2])
+            json(
+              res,
+              await app.knowledge.approveFaq(
+                ws,
+                m[1],
+                z
+                  .object({ revision: z.number().int().positive() })
+                  .strict()
+                  .parse(await body(req)).revision,
+              ),
+              202,
+            );
+          else if (method === "DELETE" && !m[2]) {
+            await app.knowledge.remove(ws, m[1]);
+            json(res, { deleted: true });
+          } else throw new HttpError(405, "Method not allowed");
+          return;
         }
         if (suffix === "/sources" && method === "GET") {
           requireStaff(p);

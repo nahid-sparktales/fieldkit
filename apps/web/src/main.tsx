@@ -1154,7 +1154,8 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
   const l = useLoad(() => api(ws, "/sources"), [ws]),
     a = useAction(),
     [preview, setPreview] = useState<Row | null>(null),
-    [kind, setKind] = useState("website");
+    [kind, setKind] = useState("website"),
+    [section, setSection] = useState("sources");
   const importing = l.data?.sources.some((s: Row) =>
     ["queued", "processing"].includes(s.status),
   );
@@ -1170,7 +1171,8 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
         eyebrow="A SHARED SOURCE OF TRUTH"
         title="What your business knows."
         action={
-          admin && (
+          admin &&
+          section === "sources" && (
             <button className="primary" onClick={() => upload.current?.click()}>
               ＋ Upload documents
             </button>
@@ -1180,335 +1182,763 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
         Bring in your documents and connected knowledge. Review what customers
         can see before you publish.
       </Heading>
-      <input
-        ref={upload}
-        hidden
-        type="file"
-        accept=".pdf,.docx,.md,.txt"
-        multiple
-        onChange={(e) => {
-          const files = Array.from(e.target.files ?? []);
-          void a.run(async () => {
-            for (const file of files) {
-              const data = new FormData();
-              data.append("file", file);
-              await api(ws, "/sources/upload", data);
-            }
+      <nav className="knowledge-tabs" aria-label="Knowledge sections">
+        <button
+          aria-pressed={section === "sources"}
+          onClick={() => {
+            setSection("sources");
             l.reload();
-          }, "Files queued for ingestion.");
-        }}
-      />
-      <Alert>{l.error || a.error}</Alert>
-      {a.success && <p className="success">{a.success}</p>}
-      <div className="knowledge-banner">
-        <Icon name="Knowledge" />
-        <p>
-          <strong>Private until you say otherwise.</strong> Imported documents
-          start as staff-only knowledge. Approving customer answers and
-          publishing an article are separate choices.
-        </p>
-      </div>
-      {admin && (
-        <section className="panel">
-          <h2>Connect a knowledge source</h2>
-          <form
-            className="source-form"
-            onSubmit={(e) => {
-              e.preventDefault();
-              const d = new FormData(e.currentTarget);
+          }}
+        >
+          Sources
+        </button>
+        <button
+          aria-pressed={section === "faqs"}
+          onClick={() => setSection("faqs")}
+        >
+          FAQs
+        </button>
+      </nav>
+      {section === "faqs" ? (
+        <FaqPage key={ws} ws={ws} admin={admin} />
+      ) : (
+        <>
+          <input
+            ref={upload}
+            hidden
+            type="file"
+            accept=".pdf,.docx,.md,.txt"
+            multiple
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
               void a.run(async () => {
-                await api(ws, "/sources", {
-                  kind: kind === "site" ? "website" : kind,
-                  scope: kind === "site" ? "site" : "page",
-                  title: d.get("title"),
-                  locator: d.get("locator"),
-                });
-                l.reload();
-              });
-            }}
-          >
-            <Field label="Source">
-              <select value={kind} onChange={(e) => setKind(e.target.value)}>
-                <option value="website">Website page</option>
-                <option value="site">Documentation site</option>
-                <option value="notion">Notion page</option>
-                <option value="zendesk">Zendesk article</option>
-              </select>
-            </Field>
-            <Field label="Title">
-              <input name="title" required placeholder="Getting started" />
-            </Field>
-            <Field
-              label={
-                kind === "site"
-                  ? "Documentation URL"
-                  : kind === "website"
-                    ? "Page URL"
-                    : kind === "notion"
-                      ? "Shared page ID"
-                      : "Article ID"
-              }
-            >
-              <input
-                name="locator"
-                type={kind === "site" || kind === "website" ? "url" : "text"}
-                required
-                placeholder={
-                  kind === "site"
-                    ? "https://docs.locushost.co/"
-                    : kind === "website"
-                      ? "https://example.com/help"
-                      : kind === "notion"
-                        ? "Page ID shared with your connection"
-                        : "123456789"
+                for (const file of files) {
+                  const data = new FormData();
+                  data.append("file", file);
+                  await api(ws, "/sources/upload", data);
                 }
-              />
-            </Field>
-            <button disabled={a.busy}>Add source →</button>
-          </form>
-          {kind === "site" && (
-            <p className="inline-note">
-              Import Docusaurus, GitBook, or other public documentation. Scans
-              pages on this domain and under this path using sitemaps and links.
-              Up to 500 pages; refreshes hourly.
+                l.reload();
+              }, "Files queued for ingestion.");
+            }}
+          />
+          <Alert>{l.error || a.error}</Alert>
+          {a.success && <p className="success">{a.success}</p>}
+          <div className="knowledge-banner">
+            <Icon name="Knowledge" />
+            <p>
+              <strong>Private until you say otherwise.</strong> Imported
+              documents start as staff-only knowledge. Approving customer
+              answers and publishing an article are separate choices.
             </p>
-          )}
-          <div className="inline-note">
-            Notion and Zendesk need a connection first.{" "}
-            <button
-              className="link"
-              disabled={a.busy}
-              onClick={() =>
-                void a.run(async () => {
-                  await googlePicker(ws, async (files) => {
-                    for (const f of files)
-                      await api(ws, "/sources", {
-                        kind: "google",
-                        title: f.name,
-                        locator: f.id,
-                      });
-                  });
-                  l.reload();
-                })
-              }
-            >
-              Choose files from Google Drive ↗
-            </button>
           </div>
-        </section>
-      )}
-      <section className="panel">
-        <div className="section-heading">
-          <h2>Your knowledge library</h2>
-          <button onClick={l.reload}>Refresh status</button>
-        </div>
-        {l.data?.sources.length ? (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Source</th>
-                  <th>Index status</th>
-                  <th>Audience</th>
-                  <th>Article</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {l.data.sources.map((s: Row) => {
-                  const docs = l.data.documents.filter(
-                    (d: Row) => d.source_id === s.id && d.active,
-                  );
-                  const site =
-                    s.kind === "website" && s.metadata.scope === "site";
-                  const progress = s.metadata.crawl;
-                  return (
-                    <tr key={s.id}>
-                      <td>
-                        <strong>{s.title}</strong>
-                        <small>
-                          {site ? "Documentation site" : s.kind} ·{" "}
-                          {s.last_synced
-                            ? new Date(s.last_synced).toLocaleString()
-                            : "Not indexed yet"}
-                        </small>
-                        {s.error && (
-                          <small className="error-text">{s.error}</small>
-                        )}
-                      </td>
-                      <td>
-                        <Badge value={s.status} />
-                        {site && progress && (
-                          <small role="status">
-                            {progress.phase === "complete"
-                              ? `${progress.indexed} pages indexed`
-                              : progress.phase === "discovering"
-                                ? "Discovering pages…"
-                                : progress.phase === "indexing"
-                                  ? `Indexing ${progress.indexed} of ${progress.scanned - progress.skipped.length} pages`
-                                  : `Scanned ${progress.scanned} of ${progress.discovered} discovered pages`}
-                          </small>
-                        )}
-                        {site && progress?.skipped.length > 0 && (
-                          <details>
-                            <summary>
-                              {progress.skipped.length} pages skipped
-                            </summary>
-                            {progress.skipped.map((item: Row) => (
-                              <small key={item.url}>
-                                {item.url}: {item.reason}
+          {admin && (
+            <section className="panel">
+              <h2>Connect a knowledge source</h2>
+              <form
+                className="source-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const d = new FormData(e.currentTarget);
+                  void a.run(async () => {
+                    await api(ws, "/sources", {
+                      kind: kind === "site" ? "website" : kind,
+                      scope: kind === "site" ? "site" : "page",
+                      title: d.get("title"),
+                      locator: d.get("locator"),
+                    });
+                    l.reload();
+                  });
+                }}
+              >
+                <Field label="Source">
+                  <select
+                    value={kind}
+                    onChange={(e) => setKind(e.target.value)}
+                  >
+                    <option value="website">Website page</option>
+                    <option value="site">Documentation site</option>
+                    <option value="notion">Notion page</option>
+                    <option value="zendesk">Zendesk article</option>
+                  </select>
+                </Field>
+                <Field label="Title">
+                  <input name="title" required placeholder="Getting started" />
+                </Field>
+                <Field
+                  label={
+                    kind === "site"
+                      ? "Documentation URL"
+                      : kind === "website"
+                        ? "Page URL"
+                        : kind === "notion"
+                          ? "Shared page ID"
+                          : "Article ID"
+                  }
+                >
+                  <input
+                    name="locator"
+                    type={
+                      kind === "site" || kind === "website" ? "url" : "text"
+                    }
+                    required
+                    placeholder={
+                      kind === "site"
+                        ? "https://docs.locushost.co/"
+                        : kind === "website"
+                          ? "https://example.com/help"
+                          : kind === "notion"
+                            ? "Page ID shared with your connection"
+                            : "123456789"
+                    }
+                  />
+                </Field>
+                <button disabled={a.busy}>Add source →</button>
+              </form>
+              {kind === "site" && (
+                <p className="inline-note">
+                  Import Docusaurus, GitBook, or other public documentation.
+                  Scans pages on this domain and under this path using sitemaps
+                  and links. Up to 500 pages; refreshes hourly.
+                </p>
+              )}
+              <div className="inline-note">
+                Notion and Zendesk need a connection first.{" "}
+                <button
+                  className="link"
+                  disabled={a.busy}
+                  onClick={() =>
+                    void a.run(async () => {
+                      await googlePicker(ws, async (files) => {
+                        for (const f of files)
+                          await api(ws, "/sources", {
+                            kind: "google",
+                            title: f.name,
+                            locator: f.id,
+                          });
+                      });
+                      l.reload();
+                    })
+                  }
+                >
+                  Choose files from Google Drive ↗
+                </button>
+              </div>
+            </section>
+          )}
+          <section className="panel">
+            <div className="section-heading">
+              <h2>Your knowledge library</h2>
+              <button onClick={l.reload}>Refresh status</button>
+            </div>
+            {l.data?.sources.some((s: Row) => s.kind !== "faq") ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Source</th>
+                      <th>Index status</th>
+                      <th>Audience</th>
+                      <th>Article</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {l.data.sources
+                      .filter((s: Row) => s.kind !== "faq")
+                      .map((s: Row) => {
+                        const docs = l.data.documents.filter(
+                          (d: Row) => d.source_id === s.id && d.active,
+                        );
+                        const site =
+                          s.kind === "website" && s.metadata.scope === "site";
+                        const progress = s.metadata.crawl;
+                        return (
+                          <tr key={s.id}>
+                            <td>
+                              <strong>{s.title}</strong>
+                              <small>
+                                {site ? "Documentation site" : s.kind} ·{" "}
+                                {s.last_synced
+                                  ? new Date(s.last_synced).toLocaleString()
+                                  : "Not indexed yet"}
                               </small>
-                            ))}
-                          </details>
-                        )}
-                      </td>
-                      <td>
-                        {admin ? (
-                          <select
-                            aria-label={`Audience for ${s.title}`}
-                            value={s.visibility}
-                            onChange={(e) =>
-                              void a.run(async () => {
-                                await api(
-                                  ws,
-                                  `/sources/${s.id}/visibility`,
-                                  { visibility: e.target.value },
-                                  "PUT",
-                                );
-                                l.reload();
-                              })
-                            }
-                          >
-                            <option value="staff">Staff only</option>
-                            <option value="customer">Customer answers</option>
-                          </select>
-                        ) : (
-                          s.visibility
-                        )}
-                      </td>
-                      <td>
-                        {docs.length ? (
-                          <details open={!site}>
-                            <summary>
-                              {site
-                                ? `${docs.length} indexed pages`
-                                : "Article"}
-                            </summary>
-                            {docs.map((doc: Row) => (
-                              <div key={doc.id}>
-                                {site && (
-                                  <small>
-                                    <a
-                                      href={doc.locator}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                    >
-                                      {doc.title} ↗
-                                    </a>
-                                  </small>
-                                )}
-                                <button
-                                  className="link"
-                                  onClick={() =>
-                                    void a.run(async () =>
-                                      setPreview(
-                                        await api(ws, `/documents/${doc.id}`),
-                                      ),
-                                    )
+                              {s.error && (
+                                <small className="error-text">{s.error}</small>
+                              )}
+                            </td>
+                            <td>
+                              <Badge value={s.status} />
+                              {site && progress && (
+                                <small role="status">
+                                  {progress.phase === "complete"
+                                    ? `${progress.indexed} pages indexed`
+                                    : progress.phase === "discovering"
+                                      ? "Discovering pages…"
+                                      : progress.phase === "indexing"
+                                        ? `Indexing ${progress.indexed} of ${progress.scanned - progress.skipped.length} pages`
+                                        : `Scanned ${progress.scanned} of ${progress.discovered} discovered pages`}
+                                </small>
+                              )}
+                              {site && progress?.skipped.length > 0 && (
+                                <details>
+                                  <summary>
+                                    {progress.skipped.length} pages skipped
+                                  </summary>
+                                  {progress.skipped.map((item: Row) => (
+                                    <small key={item.url}>
+                                      {item.url}: {item.reason}
+                                    </small>
+                                  ))}
+                                </details>
+                              )}
+                            </td>
+                            <td>
+                              {admin ? (
+                                <select
+                                  aria-label={`Audience for ${s.title}`}
+                                  value={s.visibility}
+                                  onChange={(e) =>
+                                    void a.run(async () => {
+                                      await api(
+                                        ws,
+                                        `/sources/${s.id}/visibility`,
+                                        { visibility: e.target.value },
+                                        "PUT",
+                                      );
+                                      l.reload();
+                                    })
                                   }
                                 >
-                                  Preview v{doc.version}
-                                </button>
-                                {admin && (
+                                  <option value="staff">Staff only</option>
+                                  <option value="customer">
+                                    Customer answers
+                                  </option>
+                                </select>
+                              ) : (
+                                s.visibility
+                              )}
+                            </td>
+                            <td>
+                              {docs.length ? (
+                                <details open={!site}>
+                                  <summary>
+                                    {site
+                                      ? `${docs.length} indexed pages`
+                                      : "Article"}
+                                  </summary>
+                                  {docs.map((doc: Row) => (
+                                    <div key={doc.id}>
+                                      {site && (
+                                        <small>
+                                          <a
+                                            href={doc.locator}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                          >
+                                            {doc.title} ↗
+                                          </a>
+                                        </small>
+                                      )}
+                                      <button
+                                        className="link"
+                                        onClick={() =>
+                                          void a.run(async () =>
+                                            setPreview(
+                                              await api(
+                                                ws,
+                                                `/documents/${doc.id}`,
+                                              ),
+                                            ),
+                                          )
+                                        }
+                                      >
+                                        Preview v{doc.version}
+                                      </button>
+                                      {admin && (
+                                        <button
+                                          className="link"
+                                          disabled={
+                                            s.visibility !== "customer" ||
+                                            a.busy
+                                          }
+                                          onClick={() =>
+                                            void a.run(async () => {
+                                              await api(
+                                                ws,
+                                                `/documents/${doc.id}/publish`,
+                                                { published: !doc.published },
+                                              );
+                                              l.reload();
+                                            })
+                                          }
+                                        >
+                                          {doc.published
+                                            ? "Unpublish article"
+                                            : "Publish article"}
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </details>
+                              ) : (
+                                <span className="muted">—</span>
+                              )}
+                            </td>
+                            <td>
+                              {admin && (
+                                <div className="row-actions">
                                   <button
-                                    className="link"
-                                    disabled={
-                                      s.visibility !== "customer" || a.busy
-                                    }
+                                    title="Reindex"
                                     onClick={() =>
                                       void a.run(async () => {
                                         await api(
                                           ws,
-                                          `/documents/${doc.id}/publish`,
-                                          { published: !doc.published },
+                                          `/sources/${s.id}/refresh`,
+                                          {},
                                         );
                                         l.reload();
                                       })
                                     }
                                   >
-                                    {doc.published
-                                      ? "Unpublish article"
-                                      : "Publish article"}
+                                    ↻
                                   </button>
-                                )}
-                              </div>
-                            ))}
-                          </details>
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
-                      <td>
-                        {admin && (
-                          <div className="row-actions">
-                            <button
-                              title="Reindex"
-                              onClick={() =>
-                                void a.run(async () => {
-                                  await api(ws, `/sources/${s.id}/refresh`, {});
-                                  l.reload();
-                                })
-                              }
-                            >
-                              ↻
-                            </button>
-                            <button
-                              title="Delete source"
-                              onClick={() => {
-                                if (
-                                  confirm(
-                                    "Remove this source and all its indexed content?",
-                                  )
-                                )
-                                  void a.run(async () => {
-                                    await api(
-                                      ws,
-                                      `/sources/${s.id}`,
-                                      {},
-                                      "DELETE",
-                                    );
-                                    l.reload();
-                                  });
-                              }}
-                            >
-                              ×
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
+                                  <button
+                                    title="Delete source"
+                                    onClick={() => {
+                                      if (
+                                        confirm(
+                                          "Remove this source and all its indexed content?",
+                                        )
+                                      )
+                                        void a.run(async () => {
+                                          await api(
+                                            ws,
+                                            `/sources/${s.id}`,
+                                            {},
+                                            "DELETE",
+                                          );
+                                          l.reload();
+                                        });
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <Empty title="Give your agent something to work with">
+                Start with your help articles, policies, or product
+                documentation.
+              </Empty>
+            )}
+          </section>
+          {preview && (
+            <dialog open className="preview-dialog">
+              <header>
+                <h2>{preview.title}</h2>
+                <button
+                  onClick={() => setPreview(null)}
+                  aria-label="Close preview"
+                >
+                  ×
+                </button>
+              </header>
+              <div className="article-body">{preview.body}</div>
+            </dialog>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
+  const l = useLoad(async () => {
+    const [faqs, knowledge] = await Promise.all([
+      api(ws, "/faqs"),
+      api(ws, "/sources"),
+    ]);
+    return { ...faqs, ...knowledge };
+  }, [ws]);
+  const a = useAction(),
+    ai = useAction();
+  const [editing, setEditing] = useState<Row | null>(null),
+    [question, setQuestion] = useState(""),
+    [answer, setAnswer] = useState(""),
+    [sourceId, setSourceId] = useState(""),
+    [writing, setWriting] = useState("");
+  const editor = useRef<HTMLTextAreaElement>(null);
+  const processing = l.data?.faqs.some((f: Row) =>
+    ["queued", "processing"].includes(f.status),
+  );
+  useEffect(() => {
+    if (!processing) return;
+    const timer = setInterval(l.reload, 2000);
+    return () => clearInterval(timer);
+  }, [ws, processing]);
+  const busy = a.busy || ai.busy;
+  const reset = () => {
+    setEditing(null);
+    setQuestion("");
+    setAnswer("");
+    setWriting("");
+  };
+  return (
+    <>
+      <div className="knowledge-banner">
+        <p>
+          <strong>Answers you can stand behind.</strong> Write FAQs yourself or
+          use AI to draft them. Review and approve each FAQ for customer
+          answers; publishing it on your help center is a separate step.
+        </p>
+      </div>
+      <Alert>{l.error || a.error || ai.error}</Alert>
+      {(a.success || ai.success) && (
+        <p className="success" role="status">
+          {a.success || ai.success}
+        </p>
+      )}
+      {admin && (
+        <div className="faq-layout">
+          <section className="panel">
+            <div className="section-heading">
+              <h2>{editing ? "Edit FAQ" : "Write an FAQ"}</h2>
+              {editing && (
+                <button disabled={busy} onClick={reset}>
+                  New FAQ
+                </button>
+              )}
+            </div>
+            <form
+              className="faq-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void a.run(async () => {
+                  await api(
+                    ws,
+                    editing ? `/faqs/${editing.id}` : "/faqs",
+                    {
+                      question,
+                      answer,
+                      ...(editing ? { revision: editing.revision } : {}),
+                    },
+                    editing ? "PUT" : "POST",
                   );
-                })}
-              </tbody>
-            </table>
+                  reset();
+                  l.reload();
+                }, "FAQ saved as a private draft.");
+              }}
+            >
+              <Field label="FAQ question">
+                <textarea
+                  ref={editor}
+                  rows={2}
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  minLength={3}
+                  maxLength={200}
+                  required
+                  disabled={busy}
+                  placeholder="How do I reset my password?"
+                />
+              </Field>
+              <Field label="FAQ answer">
+                <textarea
+                  rows={7}
+                  value={answer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  minLength={3}
+                  maxLength={12000}
+                  required
+                  disabled={busy}
+                  placeholder="Write the answer customers should receive…"
+                />
+              </Field>
+              <Field label="Writing instructions (optional)">
+                <input
+                  value={writing}
+                  onChange={(e) => setWriting(e.target.value)}
+                  maxLength={2000}
+                  disabled={busy}
+                  placeholder="For example: keep it short and friendly"
+                />
+              </Field>
+              <div className="button-row">
+                <button className="primary" disabled={busy}>
+                  Save draft
+                </button>
+                <button
+                  type="button"
+                  disabled={busy || question.trim().length < 3}
+                  onClick={() =>
+                    void ai.run(async () => {
+                      const result = await api(ws, "/faqs/assist", {
+                        question,
+                        answer,
+                        instructions: writing,
+                        ...(sourceId ? { sourceId } : {}),
+                      });
+                      setQuestion(result.question);
+                      setAnswer(result.answer);
+                    }, "AI suggestion added to the editor. Review it, then save your draft.")
+                  }
+                >
+                  {ai.busy
+                    ? "Writing…"
+                    : answer.trim()
+                      ? "Improve with AI"
+                      : "Draft answer with AI"}
+                </button>
+                {editing && (
+                  <button type="button" disabled={busy} onClick={reset}>
+                    Cancel editing
+                  </button>
+                )}
+              </div>
+              <small className="muted">
+                Saving an edited FAQ returns it to a private draft and removes
+                its previous public answer until you approve it again.
+              </small>
+            </form>
+          </section>
+          <section className="panel">
+            <h2>Let AI draft your FAQs</h2>
+            <p className="muted">
+              Turn your customer-approved knowledge into questions and answers.
+              AI suggestions are saved as private drafts for you to review.
+            </p>
+            <form
+              className="faq-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = new FormData(e.currentTarget);
+                void ai.run(async () => {
+                  const result = await api(ws, "/faqs/generate", {
+                    count: Number(form.get("count")),
+                    instructions: String(form.get("focus") || ""),
+                    ...(sourceId ? { sourceId } : {}),
+                  });
+                  l.reload();
+                  if (result.faqs[0]) {
+                    const f = result.faqs[0];
+                    setEditing(f);
+                    setQuestion(f.title);
+                    setAnswer(f.metadata.answer);
+                    setWriting("");
+                  }
+                }, "AI drafts saved. Review them before approving customer answers.");
+              }}
+            >
+              <Field label="Knowledge to use">
+                <select
+                  value={sourceId}
+                  onChange={(e) => setSourceId(e.target.value)}
+                  disabled={busy}
+                >
+                  <option value="">All customer-approved knowledge</option>
+                  {l.data?.sources
+                    .filter(
+                      (s: Row) =>
+                        s.active &&
+                        s.status === "ready" &&
+                        s.visibility === "customer",
+                    )
+                    .map((s: Row) => (
+                      <option key={s.id} value={s.id}>
+                        {s.title}
+                      </option>
+                    ))}
+                </select>
+              </Field>
+              <Field label="FAQ focus (optional)">
+                <textarea
+                  name="focus"
+                  rows={3}
+                  maxLength={2000}
+                  disabled={busy}
+                  placeholder="For example: getting started, billing, and troubleshooting"
+                />
+              </Field>
+              <Field label="Number of FAQs">
+                <input
+                  type="number"
+                  name="count"
+                  min={1}
+                  max={8}
+                  defaultValue={5}
+                  required
+                  disabled={busy}
+                />
+              </Field>
+              <button disabled={busy}>
+                {ai.busy ? "Writing…" : "Generate FAQs"}
+              </button>
+              <small className="muted">
+                AI help uses your connected model and token budget. It uses the
+                selected knowledge; improving an existing answer can also use
+                the text you wrote.
+              </small>
+            </form>
+          </section>
+        </div>
+      )}
+      <section className="panel">
+        <div className="section-heading">
+          <h2>Your FAQs</h2>
+          <button onClick={l.reload}>Refresh FAQ status</button>
+        </div>
+        {l.data?.faqs.length ? (
+          <div className="faq-list">
+            {l.data.faqs.map((faq: Row) => {
+              const doc = l.data.documents.find(
+                (d: Row) => d.source_id === faq.id && d.active,
+              );
+              return (
+                <article key={faq.id} className="faq-card">
+                  <div className="section-heading">
+                    <h3>{faq.title}</h3>
+                    <Badge value={faq.status} />
+                  </div>
+                  <p className="faq-answer">{faq.metadata.answer}</p>
+                  <small className="muted">
+                    {faq.metadata.aiGenerated ? "AI-assisted · " : ""}
+                    {faq.visibility === "customer"
+                      ? faq.status === "ready"
+                        ? "Approved for customer answers"
+                        : "Approved · Not indexed yet"
+                      : "Private until approved"}
+                    {doc?.published ? " · Published in help center" : ""}
+                  </small>
+                  {faq.error && <Alert>{faq.error}</Alert>}
+                  {faq.metadata.evidence?.length > 0 && (
+                    <details>
+                      <summary>Draft references</summary>
+                      {faq.metadata.evidence.map((c: Row) => (
+                        <p key={c.id}>
+                          {c.url ? (
+                            <a href={c.url} target="_blank" rel="noreferrer">
+                              {c.title}
+                            </a>
+                          ) : (
+                            c.title
+                          )}{" "}
+                          · v{c.version}
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                  {admin && (
+                    <div className="button-row">
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          setEditing(faq);
+                          setQuestion(faq.title);
+                          setAnswer(faq.metadata.answer);
+                          setWriting("");
+                          editor.current?.focus();
+                          editor.current?.scrollIntoView({ block: "center" });
+                        }}
+                      >
+                        Edit FAQ
+                      </button>
+                      {!(
+                        faq.visibility === "customer" && faq.status === "ready"
+                      ) && (
+                        <button
+                          disabled={
+                            busy ||
+                            ["queued", "processing"].includes(faq.status)
+                          }
+                          onClick={() =>
+                            void a.run(async () => {
+                              await api(ws, `/faqs/${faq.id}/approve`, {
+                                revision: faq.revision,
+                              });
+                              l.reload();
+                              if (editing?.id === faq.id) reset();
+                            }, "FAQ approved and queued for indexing.")
+                          }
+                        >
+                          Approve for answers
+                        </button>
+                      )}
+                      {doc &&
+                        faq.visibility === "customer" &&
+                        faq.status === "ready" && (
+                          <button
+                            disabled={busy}
+                            onClick={() =>
+                              void a.run(async () => {
+                                await api(ws, `/documents/${doc.id}/publish`, {
+                                  published: !doc.published,
+                                });
+                                l.reload();
+                              })
+                            }
+                          >
+                            {doc.published ? "Unpublish FAQ" : "Publish FAQ"}
+                          </button>
+                        )}
+                      {faq.visibility === "customer" && (
+                        <button
+                          disabled={busy}
+                          onClick={() =>
+                            void a.run(async () => {
+                              await api(
+                                ws,
+                                `/faqs/${faq.id}`,
+                                {
+                                  question: faq.title,
+                                  answer: faq.metadata.answer,
+                                  revision: faq.revision,
+                                },
+                                "PUT",
+                              );
+                              if (editing?.id === faq.id) reset();
+                              l.reload();
+                            }, "FAQ is private and has been withdrawn from customer answers.")
+                          }
+                        >
+                          Make private
+                        </button>
+                      )}
+                      <button
+                        disabled={busy}
+                        onClick={() => {
+                          if (
+                            confirm(
+                              "Delete this FAQ and remove its indexed answer?",
+                            )
+                          )
+                            void a.run(async () => {
+                              await api(ws, `/faqs/${faq.id}`, {}, "DELETE");
+                              if (editing?.id === faq.id) reset();
+                              l.reload();
+                            }, "FAQ deleted.");
+                        }}
+                      >
+                        Delete FAQ
+                      </button>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
           </div>
         ) : (
-          <Empty title="Give your agent something to work with">
-            Start with your help articles, policies, or product documentation.
+          <Empty title="Start with your customers’ common questions">
+            Write your first FAQ, or let AI draft a set from your approved
+            knowledge.
           </Empty>
         )}
       </section>
-      {preview && (
-        <dialog open className="preview-dialog">
-          <header>
-            <h2>{preview.title}</h2>
-            <button onClick={() => setPreview(null)} aria-label="Close preview">
-              ×
-            </button>
-          </header>
-          <div className="article-body">{preview.body}</div>
-        </dialog>
-      )}
     </>
   );
 }

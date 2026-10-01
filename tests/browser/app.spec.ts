@@ -113,6 +113,76 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     path: "test-results/documentation-site.png",
     fullPage: true,
   });
+  await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "FAQ question", exact: true })
+    .fill("How do I reach support?");
+  await page
+    .getByRole("textbox", { name: "FAQ answer", exact: true })
+    .fill("Use the support portal to create a ticket.");
+  await page.getByRole("button", { name: "Improve with AI" }).click();
+  await expect(
+    page.getByRole("textbox", { name: "FAQ answer", exact: true }),
+  ).toHaveValue("Improved: Use the support portal to create a ticket.");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  const faq = page.locator("article.faq-card").filter({
+    has: page.getByRole("heading", {
+      name: "How do I reach support?",
+      exact: true,
+    }),
+  });
+  await expect(
+    faq.getByText("Private until approved", { exact: true }),
+  ).toBeVisible();
+  await faq.getByRole("button", { name: "Approve for answers" }).click();
+  await expect(
+    faq.getByText("Approved for customer answers", { exact: true }),
+  ).toBeVisible();
+  await faq.getByRole("button", { name: "Publish FAQ", exact: true }).click();
+  await expect(
+    faq.getByRole("button", { name: "Unpublish FAQ" }),
+  ).toBeVisible();
+  await faq.getByRole("button", { name: "Edit FAQ" }).click();
+  await page
+    .getByRole("textbox", { name: "FAQ answer", exact: true })
+    .fill("Use the help center contact form.");
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(
+    faq.getByText("Private until approved", { exact: true }),
+  ).toBeVisible();
+  await expect(faq.getByRole("button", { name: "Unpublish FAQ" })).toHaveCount(
+    0,
+  );
+  await page
+    .getByRole("button", { name: "Generate FAQs", exact: true })
+    .click();
+  const generated = page.locator("article.faq-card").filter({
+    has: page.getByRole("heading", {
+      name: "How long do I have to return an item?",
+      exact: true,
+    }),
+  });
+  await expect(
+    generated.getByText("AI-assisted · Private until approved", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/faqs.png", fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(
+    page.getByRole("button", { name: "Save draft", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/faqs-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByLabel("Reply behavior").selectOption("automatic");
   await page.getByRole("button", { name: "Save settings" }).click();

@@ -8,7 +8,13 @@ import type { Connections } from "./connections.js";
 import type { ModelPort } from "./model.js";
 import { HttpError, requireValue } from "./config.js";
 import { digest, externalURL } from "./security.js";
-import type { Citation } from "./contracts.js";
+import {
+  FaqInput,
+  FaqSuggestions,
+  Settings,
+  type Citation,
+  type FaqDraft,
+} from "./contracts.js";
 import { crawlWebsite, type CrawlProgress, type WebPage } from "./website.js";
 
 const MAX_BYTES = 20 * 1024 * 1024;
@@ -79,6 +85,210 @@ export class Knowledge {
     public connections: Connections,
     public model: ModelPort,
   ) {}
+  async createFaqs(
+    ws: string,
+    drafts: FaqDraft[],
+    generated = false,
+    evidence: Citation[] = [],
+  ) {
+    return this.db.tx(async (q) => {
+      if (evidence.length && !(await this.validEvidence(ws, evidence, q)))
+        throw new HttpError(
+          409,
+          "The source knowledge changed. Generate fresh FAQ drafts.",
+        );
+      const faqs = [];
+      for (const draft of drafts) {
+        const { question, answer } = FaqInput.parse({
+          question: draft.question,
+          answer: draft.answer,
+        });
+        const id = uid();
+        const metadata = {
+          answer,
+          aiGenerated: generated,
+          evidence: evidence.filter((e) => draft.citationIds.includes(e.id)),
+        };
+        faqs.push(
+          await this.db.one(
+            "INSERT INTO sources(id,workspace_id,kind,title,locator,status,metadata) VALUES($1,$2,'faq',$3,$1,'draft',$4) RETURNING *",
+            [id, ws, question, metadata],
+            q,
+          ),
+        );
+      }
+      await this.db.event(q, ws, "faq.created", {
+        count: faqs.length,
+        generated,
+      });
+      return faqs;
+    });
+  }
+  async updateFaq(
+    ws: string,
+    id: string,
+    input: { question: string; answer: string; revision: number },
+  ) {
+    return this.db.tx(async (q) => {
+      const source = requireValue(
+        await this.db.one(
+          "SELECT * FROM sources WHERE workspace_id=$1 AND id=$2 AND kind='faq' FOR UPDATE",
+          [ws, id],
+          q,
+        ),
+      );
+      if (source.revision !== input.revision)
+        throw new HttpError(
+          409,
+          "This FAQ was changed elsewhere. Reload it before saving.",
+        );
+      const content = FaqInput.parse({
+        question: input.question,
+        answer: input.answer,
+      });
+      const faq = await this.db.one(
+        "UPDATE sources SET title=$1,metadata=metadata||$2::jsonb,revision=revision+1,status='draft',visibility='staff',error=null WHERE id=$3 RETURNING *",
+        [content.question, JSON.stringify({ answer: content.answer }), id],
+        q,
+      );
+      await q.query(
+        "UPDATE documents SET active=false,published=false WHERE source_id=$1",
+        [id],
+      );
+      await this.db.event(q, ws, "faq.updated", { sourceId: id });
+      return faq;
+    });
+  }
+  async approveFaq(ws: string, id: string, revision: number) {
+    await this.db.connection(ws, "openai");
+    return this.db.tx(async (q) => {
+      const source = requireValue(
+        await this.db.one(
+          "SELECT * FROM sources WHERE workspace_id=$1 AND id=$2 AND kind='faq' FOR UPDATE",
+          [ws, id],
+          q,
+        ),
+      );
+      if (source.revision !== revision)
+        throw new HttpError(
+          409,
+          "This FAQ changed. Review its latest answer before approving.",
+        );
+      const faq = await this.db.one(
+        "UPDATE sources SET visibility='customer',status='queued',revision=revision+1,error=null WHERE id=$1 RETURNING *",
+        [id],
+        q,
+      );
+      await this.db.enqueue(q, "ingest", { workspaceId: ws, sourceId: id });
+      await this.db.event(q, ws, "faq.approved", { sourceId: id });
+      return faq;
+    });
+  }
+  async suggestFaqs(
+    ws: string,
+    input: {
+      count: number;
+      instructions: string;
+      sourceId?: string;
+      question?: string;
+      answer?: string;
+    },
+  ) {
+    if (input.sourceId)
+      requireValue(
+        await this.db.one(
+          "SELECT id FROM sources WHERE workspace_id=$1 AND id=$2 AND active AND visibility='customer' AND status='ready'",
+          [ws, input.sourceId],
+        ),
+        404,
+        "Choose available customer-approved knowledge",
+      );
+    const rows = await this.db.rows(
+      `WITH candidates AS (
+      SELECT c.id,c.document_id,d.source_id,d.title,d.version,c.body,d.locator,
+        ts_rank_cd(c.search,websearch_to_tsquery('english',$3)) score,
+        row_number() OVER (PARTITION BY d.id ORDER BY ts_rank_cd(c.search,websearch_to_tsquery('english',$3)) DESC,c.position) page_rank
+      FROM chunks c JOIN documents d ON d.id=c.document_id AND d.workspace_id=c.workspace_id JOIN sources s ON s.id=d.source_id AND s.workspace_id=d.workspace_id
+      WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' AND ($2::text IS NULL OR s.id=$2)
+    ) SELECT * FROM candidates ORDER BY page_rank,score DESC,document_id LIMIT 16`,
+      [ws, input.sourceId ?? null, input.question || input.instructions],
+    );
+    const evidence: Citation[] = rows.map((r) => ({
+      id: r.id,
+      documentId: r.document_id,
+      sourceId: r.source_id,
+      title: r.title,
+      version: r.version,
+      excerpt: r.body,
+      ...(r.locator ? { url: r.locator } : {}),
+    }));
+    if (!evidence.length && !input.answer?.trim())
+      throw new HttpError(
+        409,
+        "Add customer-approved knowledge or write an answer before asking AI for help.",
+      );
+    const settings = Settings.parse(
+      requireValue(
+        await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [ws]),
+      ).settings,
+    );
+    const existing = await this.db.rows(
+      "SELECT title FROM sources WHERE workspace_id=$1 AND kind='faq' ORDER BY id LIMIT 100",
+      [ws],
+    );
+    const drafts = FaqSuggestions.parse({
+      faqs: await this.model.faqs({
+        workspaceId: ws,
+        model: settings.model,
+        count: input.count,
+        instructions: input.instructions,
+        question: input.question ?? "",
+        answer: input.answer ?? "",
+        evidence,
+        existingQuestions: input.question ? [] : existing.map((s) => s.title),
+      }),
+    }).faqs;
+    if (!drafts.length)
+      throw new HttpError(
+        422,
+        "There is not enough relevant information to draft an FAQ. Add details or choose a different topic.",
+      );
+    if (
+      drafts.length > input.count ||
+      drafts.some(
+        (d) =>
+          (!input.answer?.trim() && !d.citationIds.length) ||
+          d.citationIds.some((id) => !evidence.some((e) => e.id === id)),
+      )
+    )
+      throw new HttpError(
+        502,
+        "AI returned unsupported FAQ drafts. No FAQs were saved.",
+      );
+    const used = evidence.filter((e) =>
+      drafts.some((d) => d.citationIds.includes(e.id)),
+    );
+    if (!(await this.validEvidence(ws, used)))
+      throw new HttpError(
+        409,
+        "The source knowledge changed. Generate fresh FAQ drafts.",
+      );
+    const seen = new Set(
+      input.question ? [] : existing.map((f) => f.title.trim().toLowerCase()),
+    );
+    const unique = drafts.filter((draft) => {
+      const question = draft.question.trim().toLowerCase();
+      if (seen.has(question)) return false;
+      seen.add(question);
+      return true;
+    });
+    if (!unique.length)
+      throw new HttpError(
+        422,
+        "Those FAQ questions already exist. Choose a different focus or edit the existing answers.",
+      );
+    return { drafts: unique, evidence: used };
+  }
   async upload(ws: string, name: string, data: Buffer) {
     if (!/\.(pdf|docx|md|txt)$/i.test(name))
       throw new HttpError(415, "Upload PDF, DOCX, Markdown or text");
@@ -167,6 +377,8 @@ export class Knowledge {
   }
   private async load(source: any): Promise<string> {
     const ws = source.workspace_id;
+    if (source.kind === "faq")
+      return `${source.title}\n\n${source.metadata.answer}`;
     if (source.kind === "file")
       return extract(
         await readFile(
@@ -299,6 +511,7 @@ export class Knowledge {
       [ws, id],
     );
     if (!source) return;
+    if (source.kind === "faq" && source.visibility !== "customer") return;
     await this.db.pool.query(
       "UPDATE sources SET status='processing',error=null,metadata=metadata-'crawl' WHERE id=$1",
       [id],
@@ -328,7 +541,7 @@ export class Knowledge {
         await report(progress);
       } else {
         const text = (await this.load(source)).replace(/\u0000/g, "").trim();
-        if (text.length < 10)
+        if (text.length < 10 && source.kind !== "faq")
           throw new Error("Source contains no readable text");
         if (text.length > 1500000) throw new Error("Source is too large");
         pages = [{ locator: "", title: source.title, text }];

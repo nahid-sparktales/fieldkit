@@ -62,6 +62,26 @@ export const SourceInput = z
     (input) => input.scope === "page" || input.kind === "website",
     "Only website sources support a full-site scan",
   );
+export const FaqInput = z
+  .object({
+    question: z.string().trim().min(3).max(200),
+    answer: z.string().trim().min(3).max(12000),
+  })
+  .strict();
+export const FaqGenerationInput = z
+  .object({
+    sourceId: z.string().min(1).max(200).optional(),
+    instructions: z.string().trim().max(2000).default(""),
+    count: z.number().int().min(1).max(8).default(5),
+  })
+  .strict();
+export const FaqSuggestion = FaqInput.extend({
+  citationIds: z.array(z.string()).max(12),
+});
+export const FaqSuggestions = z
+  .object({ faqs: z.array(FaqSuggestion).max(8) })
+  .strict();
+export type FaqDraft = z.infer<typeof FaqSuggestion>;
 export const ActionPolicy = z
   .object({
     mode: z.enum(["approval", "automatic"]).default("approval"),

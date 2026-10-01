@@ -122,7 +122,7 @@ export class Platform {
   }
   async maintenance() {
     for (const source of await this.db.rows(
-      "SELECT workspace_id,id FROM sources WHERE active AND kind<>'file' AND status<>'processing'",
+      "SELECT workspace_id,id FROM sources WHERE active AND kind NOT IN ('file','faq') AND status<>'processing'",
     ))
       await this.db.tx((q) =>
         this.db.enqueue(q, "ingest", {

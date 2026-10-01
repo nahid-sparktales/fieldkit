@@ -138,6 +138,9 @@ ALTER TABLE runs ADD COLUMN IF NOT EXISTS graph_version text NOT NULL DEFAULT 's
 ALTER TABLE documents ADD COLUMN IF NOT EXISTS locator text NOT NULL DEFAULT '';
 ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_source_id_version_key;
 CREATE UNIQUE INDEX IF NOT EXISTS document_page_version ON documents(source_id,locator,version);
+ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_kind_check;
+ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK(kind IN ('file','website','notion','google','zendesk','faq'));
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
+INSERT INTO app_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
 `;
