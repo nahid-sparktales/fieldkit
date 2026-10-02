@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LoadingState } from "./ui.js";
 import { api, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
 import { Field, Inspect, Notice, useQuality, type Row } from "./quality-ui.js";
@@ -120,9 +121,16 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
       )}
       <div className="quality-grid">
         <section className="panel">
-          <h2>Suites</h2>
+          <h2>Test suites</h2>
+          <p className="muted">
+            Group related customer scenarios so you can test them together.
+          </p>
+          {!suites.data && !suites.error && (
+            <LoadingState label="Loading suites…" />
+          )}
           {admin && (
             <button
+              className="primary"
               onClick={() =>
                 select({ name: "New suite", revision: 0, cases: [blank()] })
               }
@@ -134,6 +142,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
             <button
               className="quality-list-item"
               key={s.id}
+              aria-pressed={suite?.id === s.id}
               onClick={() => select(s)}
             >
               {s.name}
@@ -146,6 +155,38 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
             <p>No suites yet. Start with a question customers commonly ask.</p>
           )}
         </section>
+        {!suite && (
+          <section className="panel quality-onboarding">
+            <span className="eyebrow">HOW IT WORKS</span>
+            <h2>Confidence before you publish</h2>
+            <ol>
+              <li>
+                <strong>Write a customer scenario</strong>
+                <span>
+                  Add a question, follow-ups, and what a good answer should do.
+                </span>
+              </li>
+              <li>
+                <strong>Run it with a token limit</strong>
+                <span>
+                  Use your workflow or compare two models. Connected model usage
+                  is billed by your provider.
+                </span>
+              </li>
+              <li>
+                <strong>Review the evidence</strong>
+                <span>
+                  See answers, citations, rule checks, and optional AI
+                  assessments side by side.
+                </span>
+              </li>
+            </ol>
+            <p className="muted">
+              Tests use saved account and API fixtures. They never send customer
+              replies or execute business actions.
+            </p>
+          </section>
+        )}
         {suite && (
           <section className="panel quality-editor">
             <h2>Edit suite</h2>
@@ -600,7 +641,15 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
       </div>
       <section className="panel">
         <h2>Run history and comparisons</h2>
-        {runs.data?.length === 0 && <p>No test runs yet.</p>}
+        {!runs.data && !runs.error && (
+          <LoadingState label="Loading run history…" />
+        )}
+        {runs.data?.length === 0 && (
+          <p className="muted">
+            No test runs yet. Save a suite, then launch a run to start comparing
+            results.
+          </p>
+        )}
         {runs.data?.map((r: Row) => (
           <button
             className="quality-list-item"

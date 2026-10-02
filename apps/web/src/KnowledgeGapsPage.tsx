@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { LoadingState } from "./ui.js";
 import { api, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
 import {
@@ -43,6 +44,74 @@ export function KnowledgeGapsPage({
         missing documentation.
       </p>
       <Notice action={a} error={l.error || settings.error || jobs.error} />
+      <Field label="Gap status">
+        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+          {["all", "open", "in_progress", "resolved", "dismissed"].map((v) => (
+            <option key={v} value={v}>
+              {v.replace("_", " ")}
+            </option>
+          ))}
+        </select>
+      </Field>
+      <div
+        className={selected ? "quality-grid" : "quality-grid quality-single"}
+      >
+        <section className="panel">
+          <h3>Question groups</h3>
+          {!l.data && !l.error && (
+            <LoadingState label="Loading knowledge gaps…" />
+          )}
+          {l.data?.length > 0 &&
+            !l.data.some(
+              (g: Row) => status === "all" || g.status === status,
+            ) && (
+              <p className="muted">
+                No gaps with this status. Choose another filter to see your
+                question groups.
+              </p>
+            )}
+          {l.data
+            ?.filter((g: Row) => status === "all" || g.status === status)
+            .map((g: Row) => (
+              <button
+                className="quality-list-item"
+                key={g.id}
+                aria-pressed={selected === g.id}
+                onClick={() => setSelected(g.id)}
+              >
+                {g.title}
+                <small>
+                  {g.occurrences} occurrences ·{" "}
+                  {g.category.replaceAll("_", " ")} ·{" "}
+                  {g.status.replace("_", " ")}
+                  {g.last_occurrence
+                    ? ` · ${new Date(g.last_occurrence).toLocaleDateString()}`
+                    : ""}
+                </small>
+              </button>
+            ))}
+          {l.data?.length === 0 && (
+            <p>
+              No questions need review yet. Gaps appear when the agent lacks
+              evidence or a customer leaves negative feedback. You can also flag
+              a conversation in the inbox.
+            </p>
+          )}
+          {selected && (
+            <button onClick={() => setSelected("")}>Clear selection</button>
+          )}
+        </section>
+        {selected && (
+          <GapDetails
+            key={selected}
+            ws={ws}
+            id={selected}
+            admin={admin}
+            groups={l.data ?? []}
+            reload={l.reload}
+          />
+        )}
+      </div>
       {admin && (
         <section className="panel">
           <h3>Analyze new evidence</h3>
@@ -109,60 +178,14 @@ export function KnowledgeGapsPage({
           </button>
         </details>
       )}
-      <Field label="Gap status">
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
-          {["all", "open", "in_progress", "resolved", "dismissed"].map((v) => (
-            <option key={v} value={v}>
-              {v.replace("_", " ")}
-            </option>
-          ))}
-        </select>
-      </Field>
-      <div className="quality-grid">
-        <section className="panel">
-          <h3>Question groups</h3>
-          {l.data
-            ?.filter((g: Row) => status === "all" || g.status === status)
-            .map((g: Row) => (
-              <button
-                className="quality-list-item"
-                key={g.id}
-                onClick={() => setSelected(g.id)}
-              >
-                {g.title}
-                <small>
-                  {g.occurrences} occurrences ·{" "}
-                  {g.category.replaceAll("_", " ")} ·{" "}
-                  {g.status.replace("_", " ")}
-                  {g.last_occurrence
-                    ? ` · ${new Date(g.last_occurrence).toLocaleDateString()}`
-                    : ""}
-                </small>
-              </button>
-            ))}
-          {l.data?.length === 0 && (
-            <p>
-              No candidates yet. Flag a conversation in the inbox to start a
-              review.
-            </p>
-          )}
-          {selected && (
-            <button onClick={() => setSelected("")}>Clear selection</button>
-          )}
-        </section>
-        {selected && (
-          <GapDetails
-            key={selected}
-            ws={ws}
-            id={selected}
-            admin={admin}
-            groups={l.data ?? []}
-            reload={l.reload}
-          />
-        )}
-      </div>
       <section className="panel">
         <h3>Analysis history</h3>
+        {jobs.data?.length === 0 && (
+          <p className="muted">
+            No analysis runs yet. Analyze new evidence above when you have
+            questions to review.
+          </p>
+        )}
         {jobs.data?.map((j: Row) => (
           <button
             className="quality-list-item"

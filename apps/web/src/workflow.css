@@ -59,12 +59,12 @@
   border-bottom: 1px solid var(--line);
 }
 .wf-map-tools span {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
 }
 .wf-map-tools button {
   padding: 7px 10px;
-  font-size: 11px;
+  font-size: 12px;
 }
 .wf-canvas-scroll {
   height: 650px;
@@ -82,7 +82,7 @@
   position: absolute;
   inset: 0;
   pointer-events: none;
-  color: #8da89a;
+  color: var(--muted);
   overflow: visible;
 }
 .wf-lines > path {
@@ -130,10 +130,10 @@
   text-overflow: ellipsis;
 }
 .wf-node-title small {
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 1px;
-  color: #7a8e80;
+  color: var(--muted);
   margin-bottom: 6px;
 }
 .wf-node-title strong {
@@ -173,8 +173,8 @@
   align-items: center;
   border: 0;
   border-radius: 0;
-  font-size: 11px;
-  color: #648372;
+  font-size: 12px;
+  color: var(--muted);
   background: transparent;
 }
 .wf-ports button.connecting {
@@ -182,8 +182,8 @@
   color: #146b57;
 }
 .wf-terminal {
-  color: #84968a;
-  font-size: 11px;
+  color: var(--muted);
+  font-size: 12px;
   padding: 2px 16px 9px;
   margin: 0;
 }
@@ -253,7 +253,7 @@
 }
 .wf-checks small {
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   color: var(--muted);
 }
@@ -405,7 +405,7 @@
 .wf-variable {
   display: inline-block;
   margin: 3px;
-  font-size: 11px;
+  font-size: 12px;
   padding: 5px;
   overflow-wrap: anywhere;
   max-width: 100%;

@@ -53,10 +53,25 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await page.getByRole("button", { name: "Create workspace" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "A thoughtful start to better support.",
+      name: "Let’s get your agent ready.",
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/workspace.png", fullPage: true });
+  await expect(
+    page.getByRole("progressbar", { name: "Setup progress" }),
+  ).toHaveAttribute("max", "3");
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Inbox", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Inbox", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
+  await page.goBack();
+  await expect(
+    page.getByRole("heading", { name: "Let’s get your agent ready." }),
+  ).toBeVisible();
+
   await page.getByRole("button", { name: "Connections", exact: true }).click();
   await page
     .getByLabel("API key", { exact: true })
@@ -139,6 +154,31 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     page.getByRole("button", { name: "Unpublish article", exact: true }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/knowledge.png", fullPage: true });
+  await page.getByRole("button", { name: "Preview v1", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Preview v1", exact: true }),
+  ).toBeFocused();
+  await page.getByLabel("Search knowledge sources").fill("no matching source");
+  await expect(
+    page.getByRole("heading", { name: "No matching sources" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Clear filters", exact: true })
+    .click();
+  await page.getByLabel("Filter source audience").selectOption("staff");
+  await expect(
+    page.getByRole("heading", { name: "No matching sources" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Clear filters", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "＋ Connect source", exact: true })
+    .click();
+
   await page
     .getByRole("combobox", { name: "Source", exact: true })
     .selectOption("site");
@@ -222,6 +262,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/faqs.png", fullPage: true });
+  await page.locator(".faq-generation > summary").click();
   await page
     .getByRole("button", { name: "Review all documents and create FAQs" })
     .click();
@@ -809,8 +850,28 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     page.getByRole("heading", { name: "Satisfaction", exact: true }),
   ).toBeVisible();
   await page.getByLabel("Channel", { exact: true }).selectOption("portal");
+  const through = await page.getByLabel("Through (UTC)").inputValue();
+  await page.getByLabel("From (UTC)").fill("2099-01-01");
+  await expect(
+    page.getByText("The end date must be on or after the start date."),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Reset filters", exact: true })
+    .click();
+  await expect(page.getByLabel("Through (UTC)")).toHaveValue(through);
+  await expect(
+    page.getByRole("heading", { name: "Satisfaction", exact: true }),
+  ).toBeVisible();
+
   await page.screenshot({ path: "test-results/analytics.png", fullPage: true });
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByLabel("Search conversations").fill("no matching ticket");
+  await expect(
+    page.getByRole("heading", { name: "No matching conversations" }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Clear filters", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Flag knowledge gap", exact: true })
     .click();
@@ -842,6 +903,31 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     path: "test-results/custom-workflow-mobile.png",
     fullPage: true,
   });
+
+  await page
+    .getByRole("button", { name: "Toggle navigation", exact: true })
+    .click();
+  await expect(
+    page.getByRole("dialog", { name: "Workspace navigation" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Close navigation", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(
+    page.getByRole("button", { name: "Sign out", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    page.getByRole("button", { name: "Close navigation", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("button", { name: "Toggle navigation", exact: true }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "Inbox", exact: true }),
+  ).toHaveCount(0);
   for (const section of ["Test Lab", "Analytics"]) {
     await page
       .getByRole("button", { name: "Toggle navigation", exact: true })
@@ -862,4 +948,14 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   }
   expect(errors).toEqual([]);
   await customerContext.close();
+  await page
+    .getByRole("button", { name: "Toggle navigation", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Welcome back", exact: true }),
+  ).toBeVisible();
+  expect(await page.evaluate(() => document.body.style.overflow)).not.toBe(
+    "hidden",
+  );
 });

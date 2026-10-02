@@ -33,23 +33,42 @@ export const api = (
   bearer?: string,
 ) => request(`/v2/workspaces/${ws}${path}`, data, method, bearer);
 export function useLoad(fn: () => Promise<any>, keys: unknown[]) {
-  const [data, setData] = useState<any>(null),
-    [error, setError] = useState(""),
+  const [result, setResult] = useState<{
+      keys: unknown[];
+      data: any;
+      error: string;
+      loading: boolean;
+    }>({ keys, data: null, error: "", loading: true }),
     [version, setVersion] = useState(0);
+  const sameKeys = (previous: unknown[]) =>
+    previous.length === keys.length &&
+    previous.every((key, index) => Object.is(key, keys[index]));
   useEffect(() => {
     let live = true;
-    setError("");
+    setResult((old) => ({
+      keys,
+      data: sameKeys(old.keys) ? old.data : null,
+      error: "",
+      loading: true,
+    }));
     Promise.resolve()
       .then(fn)
       .then((v) => {
-        if (live) setData(v);
+        if (live) setResult({ keys, data: v, error: "", loading: false });
       })
       .catch((e) => {
-        if (live) setError(e.message);
+        if (live)
+          setResult((old) => ({ ...old, error: e.message, loading: false }));
       });
     return () => {
       live = false;
     };
   }, [...keys, version]);
-  return { data, error, reload: () => setVersion((v) => v + 1) };
+  const current = sameKeys(result.keys);
+  return {
+    data: current ? result.data : null,
+    error: current ? result.error : "",
+    loading: !current || result.loading,
+    reload: () => setVersion((v) => v + 1),
+  };
 }
