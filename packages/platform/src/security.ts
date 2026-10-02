@@ -166,8 +166,64 @@ export type Fetcher = (
 ) => Promise<Response>;
 export const safeFetch: Fetcher = async (raw, init = {}) => {
   const url = externalURL(raw);
+  return boundedFetch(url, init, true);
+};
+// Only operator-configured model bases may reach private HTTP services. Ingestion
+// and business actions continue to use safeFetch and cannot opt into this path.
+export function modelBaseURL(raw: string, trustedBases: string): string {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new HttpError(400, "Enter a valid model API base URL");
+  }
+  if (
+    !["https:", "http:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  )
+    throw new HttpError(
+      400,
+      "Model base URLs cannot contain credentials, a query, or a fragment",
+    );
+  const base = url.href.replace(/\/+$/, "");
+  if (
+    !trustedBases
+      .split(",")
+      .map((s) => s.trim().replace(/\/+$/, ""))
+      .includes(base)
+  )
+    externalURL(base);
+  return base;
+}
+export const modelFetch = async (
+  base: string,
+  path: string,
+  init: Parameters<Fetcher>[1],
+  trustedBases: string,
+) => {
+  const normalized = modelBaseURL(base, trustedBases);
+  if (
+    !/^\/(models(?:\/[^/?#]+)?|key|chat\/completions|messages|embeddings)$/.test(
+      path,
+    )
+  )
+    throw new HttpError(400, "Unsupported model API route");
+  const trusted = trustedBases
+    .split(",")
+    .map((s) => s.trim().replace(/\/+$/, ""))
+    .includes(normalized);
+  return boundedFetch(new URL(normalized + path), init ?? {}, !trusted);
+};
+async function boundedFetch(
+  url: URL,
+  init: NonNullable<Parameters<Fetcher>[1]>,
+  publicOnly: boolean,
+) {
   const response = await request(url, {
-    dispatcher,
+    ...(publicOnly ? { dispatcher } : {}),
     method: (init.method ?? "GET") as "GET",
     headers: init.headers,
     body: init.body,
@@ -193,4 +249,4 @@ export const safeFetch: Fetcher = async (raw, init = {}) => {
     response.statusCode === 204 ? null : Buffer.concat(chunks),
     { status: response.statusCode, headers },
   );
-};
+}

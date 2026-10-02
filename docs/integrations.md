@@ -2,9 +2,9 @@
 
 Use dedicated test accounts first. No credentials or approved vendor registrations are distributed in the repository or image. Connecting a key validates access; it does not prove every connector operation passed. Record the real flows in [verification](verification.md).
 
-## OpenAI
+## Model providers
 
-Connect a workspace-owned API key in Connections. FieldKit checks access to the selected response model and `text-embedding-3-small`. Defaults are `gpt-5.4-mini` and 1,000,000 total tokens per month. Settings controls the response model and budget; embeddings remain 1536-dimensional with the fixed embedding model. Real responses use structured outputs and `store:false`. Reservations remain charged conservatively if an outcome is uncertain. A model outage or insufficient evidence sends the conversation to staff.
+Connect OpenAI, Claude, Kimi, OpenRouter, DeepSeek, vLLM, or another OpenAI-compatible endpoint in Connections. Choose the response provider/model and a separate embedding provider/model in Settings. Every response is schema-validated, and usage is recorded against the workspace's shared token budget. Changing embedding configuration queues a full reindex. See [model providers](models.md) for setup, supported request formats, local server access, and verification limits.
 
 References: [response model](https://developers.openai.com/api/docs/models/gpt-5.4-mini), [embedding model](https://developers.openai.com/api/docs/models/text-embedding-3-small).
 

@@ -4,11 +4,11 @@ import { Platform } from "../packages/platform/src/platform.js";
 import { Settings, type Citation } from "../packages/platform/src/contracts.js";
 import { uid } from "../packages/platform/src/db.js";
 
-// Explicit opt-in: these evaluations consume the workspace's real OpenAI quota.
+// Explicit opt-in: these evaluations consume the workspace's configured model quota.
 const workspaceId = process.env.FIELDKIT_LIVE_WORKSPACE_ID;
 if (process.env.FIELDKIT_RUN_LIVE_EVALS !== "1" || !workspaceId) {
   console.error(
-    "BLOCKED: set FIELDKIT_RUN_LIVE_EVALS=1 and FIELDKIT_LIVE_WORKSPACE_ID for a dedicated test workspace with a real OpenAI connection. No simulated fallback is used.",
+    "BLOCKED: set FIELDKIT_RUN_LIVE_EVALS=1 and FIELDKIT_LIVE_WORKSPACE_ID for a dedicated test workspace with its selected real model connection. No simulated fallback is used.",
   );
   process.exit(2);
 }
@@ -153,6 +153,7 @@ try {
   const report = {
     kind: "live-model",
     at: new Date().toISOString(),
+    provider: settings.responseProvider,
     model: settings.model,
     results,
     providerWritesExecuted: 0,

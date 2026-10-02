@@ -11,6 +11,7 @@ import {
   type NodeType,
 } from "../../../packages/platform/src/workflow-definition.js";
 import "./workflow.css";
+import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
 
 type Row = Record<string, any>;
 const descriptions: Record<NodeType, string> = {
@@ -705,10 +706,25 @@ export function WorkflowPage({
                         }
                       />
                     </Field>
+                    <Field label="Response provider (optional)">
+                      <select
+                        value={node.data.provider ?? ""}
+                        onChange={(e) =>
+                          patch({ provider: e.target.value, model: "" })
+                        }
+                      >
+                        <option value="">Use workspace provider</option>
+                        {Object.entries(MODEL_PROVIDERS).map(([id, p]) => (
+                          <option key={id} value={id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
                     <Field label="Response model (optional)">
                       <input
                         value={node.data.model}
-                        maxLength={100}
+                        maxLength={200}
                         placeholder="Use workspace model"
                         onChange={(e) => patch({ model: e.target.value })}
                       />

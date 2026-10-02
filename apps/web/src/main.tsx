@@ -17,6 +17,11 @@ import { createRoot } from "react-dom/client";
 import { createAuthClient } from "better-auth/react";
 import "./style.css";
 import { WorkflowPage } from "./WorkflowPage.js";
+import {
+  MODEL_PROVIDERS,
+  EmbeddingProvider,
+  type ModelProviderId,
+} from "../../../packages/platform/src/model-providers.js";
 
 const auth = createAuthClient();
 type Row = Record<string, any>;
@@ -619,11 +624,21 @@ function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
   const tasks = [
     {
       title: "Connect your AI model",
-      text: "Use your own OpenAI account and set a usage budget.",
+      text: "Connect your response and embedding providers, then set a usage budget.",
       view: "Connections",
-      done: d?.connections.connections.some(
-        (c: Row) => c.provider === "openai" && c.status === "connected",
-      ),
+      done:
+        d?.connections.connections.some(
+          (c: Row) =>
+            c.provider ===
+              (d?.base.workspace.settings.responseProvider ?? "openai") &&
+            c.status === "connected",
+        ) &&
+        d?.connections.connections.some(
+          (c: Row) =>
+            c.provider ===
+              (d?.base.workspace.settings.embeddingProvider ?? "openai") &&
+            c.status === "connected",
+        ),
     },
     {
       title: "Give your agent the right knowledge",
@@ -2440,6 +2455,10 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
   const l = useLoad(() => api(ws, "/connections"), [ws]),
     a = useAction(),
     [selected, setSelected] = useState("openai");
+  const modelProvider = MODEL_PROVIDERS[selected as ModelProviderId];
+  const selectedConnection = l.data?.connections.find(
+    (r: Row) => r.provider === selected,
+  );
   return (
     <>
       <Heading
@@ -2453,13 +2472,12 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
       {a.success && <p className="success">{a.success}</p>}
       <div className="connection-grid">
         {[
-          {
-            id: "openai",
-            letter: "O",
-            name: "OpenAI",
-            description:
-              "Use your own model account for answers and knowledge retrieval.",
-          },
+          ...Object.entries(MODEL_PROVIDERS).map(([id, p]) => ({
+            id,
+            letter: p.name[0],
+            name: p.name,
+            description: p.description,
+          })),
           {
             id: "zendesk",
             letter: "Z",
@@ -2556,11 +2574,19 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
         </section>
       )}
       <section className="panel connection-settings">
-        <h2>Configure {selected === "google" ? "Google Drive" : selected}</h2>
-        {["openai", "stripe_test", "stripe_live", "notion"].includes(
-          selected,
-        ) && (
+        <h2>
+          Configure{" "}
+          {modelProvider?.name ??
+            (selected === "google" ? "Google Drive" : selected)}
+        </h2>
+        {[
+          ...Object.keys(MODEL_PROVIDERS),
+          "stripe_test",
+          "stripe_live",
+          "notion",
+        ].includes(selected) && (
           <form
+            key={selected}
             onSubmit={(e) => {
               e.preventDefault();
               const d = new FormData(e.currentTarget);
@@ -2568,6 +2594,17 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                 await api(ws, "/connections/key", {
                   provider: selected,
                   apiKey: d.get("key"),
+                  ...(modelProvider
+                    ? {
+                        ...(d.get("model") ? { model: d.get("model") } : {}),
+                        ...(d.get("baseUrl")
+                          ? { baseUrl: d.get("baseUrl") }
+                          : {}),
+                        ...(d.get("jsonMode")
+                          ? { jsonMode: d.get("jsonMode") }
+                          : {}),
+                      }
+                    : {}),
                 });
                 l.reload();
                 e.currentTarget?.reset();
@@ -2590,8 +2627,74 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                     : undefined
               }
             >
-              <input name="key" type="password" autoComplete="off" required />
+              <input
+                name="key"
+                type="password"
+                autoComplete="off"
+                required={!["vllm", "openai_compatible"].includes(selected)}
+              />
             </Field>
+            {modelProvider && (
+              <>
+                <Field
+                  label="Model ID to validate (optional)"
+                  hint="Use the exact provider model ID. After connecting, choose the active response and embedding providers in Settings."
+                >
+                  <input
+                    name="model"
+                    maxLength={200}
+                    defaultValue={
+                      selectedConnection?.metadata.model ??
+                      (selected === "openai" ? "gpt-5.4-mini" : "")
+                    }
+                    list="provider-model-list"
+                    placeholder="Model ID from your provider"
+                  />
+                  <datalist id="provider-model-list">
+                    {selectedConnection?.metadata.models?.map((m: string) => (
+                      <option key={m} value={m} />
+                    ))}
+                  </datalist>
+                </Field>
+                {["vllm", "openai_compatible"].includes(selected) && (
+                  <>
+                    <Field
+                      label="Model API base URL"
+                      hint="Include /v1 where required. Private HTTP servers must be explicitly listed in FIELDKIT_MODEL_ENDPOINTS on the server; API keys are optional for trusted local deployments."
+                    >
+                      <input
+                        name="baseUrl"
+                        type="url"
+                        required
+                        defaultValue={
+                          selectedConnection?.metadata.baseUrl ?? ""
+                        }
+                        placeholder="https://models.example.com/v1"
+                      />
+                    </Field>
+                    <Field
+                      label="Structured output format"
+                      hint="Choose the format your server supports. Every response is still validated against FieldKit’s schema."
+                    >
+                      <select
+                        name="jsonMode"
+                        defaultValue={
+                          selectedConnection?.metadata.jsonMode ?? "schema"
+                        }
+                      >
+                        <option value="schema">JSON schema</option>
+                        <option value="json">JSON object</option>
+                      </select>
+                    </Field>
+                  </>
+                )}
+                <p>
+                  Responses and embeddings can use different providers.
+                  Configure both in Settings. Connection checks read
+                  account/model metadata; test a question to verify generation.
+                </p>
+              </>
+            )}
             <button className="primary" disabled={a.busy}>
               Verify & connect
             </button>
@@ -3289,7 +3392,11 @@ function SettingsPage({ ws }: { ws: string }) {
                   "/settings",
                   {
                     ...settings,
+                    responseProvider: d.get("responseProvider"),
                     model: d.get("model"),
+                    embeddingProvider: d.get("embeddingProvider"),
+                    embeddingModel: d.get("embeddingModel"),
+                    embeddingDimensions: Number(d.get("embeddingDimensions")),
                     instructions: d.get("instructions"),
                     monthlyTokenBudget: Number(d.get("budget")),
                     retentionDays: Number(d.get("retention")),
@@ -3314,8 +3421,65 @@ function SettingsPage({ ws }: { ws: string }) {
               />
             </Field>
             <div className="form-grid">
+              <Field label="Response provider">
+                <select
+                  aria-label="Response provider"
+                  name="responseProvider"
+                  defaultValue={settings.responseProvider ?? "openai"}
+                >
+                  {Object.entries(MODEL_PROVIDERS).map(([id, p]) => (
+                    <option key={id} value={id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
               <Field label="Response model">
-                <input name="model" defaultValue={settings.model} required />
+                <input
+                  name="model"
+                  defaultValue={settings.model}
+                  required
+                  maxLength={200}
+                />
+              </Field>
+              <Field label="Embedding provider">
+                <select
+                  aria-label="Embedding provider"
+                  name="embeddingProvider"
+                  defaultValue={settings.embeddingProvider ?? "openai"}
+                >
+                  {EmbeddingProvider.options.map((id) => (
+                    <option key={id} value={id}>
+                      {MODEL_PROVIDERS[id].name}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field
+                label="Embedding model"
+                hint="Changing the provider, model, or dimensions queues a full knowledge reindex. Existing answers may hand off while indexing finishes."
+              >
+                <input
+                  name="embeddingModel"
+                  defaultValue={
+                    settings.embeddingModel ?? "text-embedding-3-small"
+                  }
+                  required
+                  maxLength={200}
+                />
+              </Field>
+              <Field
+                label="Embedding dimensions"
+                hint="Must match your embedding model’s output size (for example, 1536 for OpenAI text-embedding-3-small)."
+              >
+                <input
+                  name="embeddingDimensions"
+                  type="number"
+                  min={32}
+                  max={4096}
+                  defaultValue={settings.embeddingDimensions ?? 1536}
+                  required
+                />
               </Field>
               <Field label="Monthly token budget">
                 <input

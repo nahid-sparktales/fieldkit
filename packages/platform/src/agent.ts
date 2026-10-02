@@ -338,6 +338,7 @@ export class Agent {
           actionIds: gate?.type === "action" ? gate.data.actionIds : [],
           instructions: node.data.instructions,
           model: node.data.model,
+          provider: node.data.provider || undefined,
         });
       run.state.outcome =
         run.state.route === "handoff"
@@ -512,7 +513,12 @@ export class Agent {
   }
   async draft(
     run: any,
-    options?: { actionIds: string[]; instructions: string; model: string },
+    options?: {
+      actionIds: string[];
+      instructions: string;
+      model: string;
+      provider?: import("./model-providers.js").ModelProviderId;
+    },
   ) {
     if (run.state.route || !(await this.current(run))) return;
     try {
@@ -578,6 +584,7 @@ export class Agent {
             ? `\nWorkflow step guidance: ${options.instructions}`
             : ""),
         model: options?.model || settings.model,
+        provider: options?.provider,
       });
       if (draft.answer.length > 12000 || draft.reason.length > 2000)
         throw new Error("Model response exceeded limits");

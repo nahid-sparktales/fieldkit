@@ -293,7 +293,7 @@ test("manual FAQs need no model key, require exact approval, and edits withdraw 
   );
   await assert.rejects(
     app.knowledge.approveFaq(w.ws.id, faq.id, faq.revision),
-    /Connect openai/,
+    /Connect openai/i,
   );
   await app.connections.save(w.ws.id, "openai", { apiKey: "test" }, {});
   await assert.rejects(

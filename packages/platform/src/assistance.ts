@@ -50,7 +50,12 @@ export class Assistance {
         400,
         "Choose a conversation for a support workflow, or no conversation for a document review.",
       );
-    await this.db.connection(ws, "openai");
+    const settings = Settings.parse(
+      requireValue(
+        await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [ws]),
+      ).settings,
+    );
+    await this.db.connection(ws, settings.responseProvider);
     return this.db.tx(async (q) => {
       await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `assist-start:${ws}`,
@@ -407,16 +412,18 @@ export class Assistance {
       .slice(-3)
       .map((m) => m.body)
       .join(" ")} ${task.instructions}`.slice(0, 6000);
-    const [embedding] = await this.model.embed(ws, [query]);
+    const embeddingConfig =
+      await this.knowledge.connections.embeddingConfig(ws);
+    const [embedding] = await this.model.embed(ws, [query], embeddingConfig);
     const rows = await this.db.rows(
       `WITH ranked AS (
       SELECT c.*,d.source_id,d.title,d.version,d.locator,s.visibility,
       (1-(c.embedding<=>$3::vector))+ts_rank_cd(c.search,websearch_to_tsquery('english',$2)) score,
       row_number() OVER (PARTITION BY s.id ORDER BY (1-(c.embedding<=>$3::vector))+ts_rank_cd(c.search,websearch_to_tsquery('english',$2)) DESC) source_rank
       FROM chunks c JOIN documents d ON d.id=c.document_id JOIN sources s ON s.id=d.source_id
-      WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND ($4::boolean=false OR s.visibility='customer') AND c.embedding_model='text-embedding-3-small'
+      WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND ($4::boolean=false OR s.visibility='customer') AND c.embedding_model=$5
     ) SELECT * FROM ranked ORDER BY source_rank,score DESC,id LIMIT 24`,
-      [ws, query, JSON.stringify(embedding), customerSafe],
+      [ws, query, JSON.stringify(embedding), customerSafe, embeddingConfig.key],
     );
     const evidence = rows.map(citation);
     const coverage = await this.db.rows(

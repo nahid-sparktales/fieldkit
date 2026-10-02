@@ -162,7 +162,7 @@ export class Knowledge {
     });
   }
   async approveFaq(ws: string, id: string, revision: number) {
-    await this.db.connection(ws, "openai");
+    await this.connections.embeddingConfig(ws);
     return this.db.tx(async (q) => {
       const source = requireValue(
         await this.db.one(
@@ -532,6 +532,7 @@ export class Knowledge {
         throw new Error("Source changed during import; a new scan is required");
     };
     try {
+      const embeddingConfig = await this.connections.embeddingConfig(ws);
       let pages: WebPage[], progress: CrawlProgress | undefined;
       if (source.kind === "website" && source.metadata.scope === "site") {
         ({ pages, progress } = await crawlWebsite(
@@ -549,7 +550,7 @@ export class Knowledge {
         pages = [{ locator: "", title: source.title, text }];
       }
       const previous = await this.db.rows(
-        "SELECT DISTINCT ON (locator) * FROM documents WHERE workspace_id=$1 AND source_id=$2 ORDER BY locator,version DESC",
+        "SELECT DISTINCT ON (locator) d.*, (SELECT min(embedding_model) FROM chunks c WHERE c.document_id=d.id) embedding_model FROM documents d WHERE workspace_id=$1 AND source_id=$2 ORDER BY locator,version DESC",
         [ws, id],
       );
       const prepared: {
@@ -563,7 +564,10 @@ export class Knowledge {
       for (const page of pages) {
         const hash = digest(page.text);
         const old = previous.find((d) => d.locator === page.locator);
-        const unchanged = old?.hash === hash && old?.title === page.title;
+        const unchanged =
+          old?.hash === hash &&
+          old?.title === page.title &&
+          old?.embedding_model === embeddingConfig.key;
         const texts = unchanged ? [] : chunks(page.text),
           vectors: number[][] = [];
         for (let i = 0; i < texts.length; i += 24) {
@@ -571,12 +575,20 @@ export class Knowledge {
             throw new Error(
               "Indexing exceeded twenty minutes. Import smaller documentation sections.",
             );
-          vectors.push(...(await this.model.embed(ws, texts.slice(i, i + 24))));
+          vectors.push(
+            ...(await this.model.embed(
+              ws,
+              texts.slice(i, i + 24),
+              embeddingConfig,
+            )),
+          );
         }
         if (
           vectors.length !== texts.length ||
           vectors.some(
-            (v) => v.length !== 1536 || v.some((n) => !Number.isFinite(n)),
+            (v) =>
+              v.length !== embeddingConfig.dimensions ||
+              v.some((n) => !Number.isFinite(n)),
           )
         )
           throw new Error("Embedding response has invalid dimensions");
@@ -587,6 +599,14 @@ export class Knowledge {
         }
       }
       await this.db.tx(async (q) => {
+        if (
+          (await this.connections.embeddingConfig(ws, q)).key !==
+          embeddingConfig.key
+        )
+          throw new HttpError(
+            409,
+            "Embedding settings changed during indexing; refresh this source",
+          );
         const current = await this.db.one(
           "SELECT revision,active FROM sources WHERE id=$1 FOR UPDATE",
           [id],
@@ -606,7 +626,7 @@ export class Knowledge {
           const version = (old?.version ?? 0) + 1,
             documentId = uid();
           await q.query(
-            "INSERT INTO documents(id,workspace_id,source_id,version,title,body,hash,slug,locator) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)",
+            "INSERT INTO documents(id,workspace_id,source_id,version,title,body,hash,slug,locator,published) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)",
             [
               documentId,
               ws,
@@ -623,6 +643,12 @@ export class Knowledge {
                   60,
                 )}-${id.slice(0, 8)}${page.locator ? "-" + digest(page.locator).slice(0, 8) : ""}`,
               page.locator,
+              Boolean(
+                source.visibility === "customer" &&
+                  old?.published &&
+                  old?.hash === hash &&
+                  old?.title === page.title,
+              ),
             ],
           );
           for (let n = 0; n < texts.length; n++)
@@ -635,7 +661,7 @@ export class Knowledge {
                 n,
                 texts[n],
                 JSON.stringify(vectors[n]),
-                "text-embedding-3-small",
+                embeddingConfig.key,
               ],
             );
         }
@@ -685,13 +711,18 @@ export class Knowledge {
     query: string,
     options?: { sourceIds?: string[]; limit?: number },
   ): Promise<Citation[]> {
-    const [embedding] = await this.model.embed(ws, [query.slice(0, 6000)]);
+    const config = await this.connections.embeddingConfig(ws);
+    const [embedding] = await this.model.embed(
+      ws,
+      [query.slice(0, 6000)],
+      config,
+    );
     const rows = await this.db.rows(
       `SELECT c.id,c.document_id,d.source_id,d.title,d.version,c.body,
       COALESCE(NULLIF(d.locator,''),CASE WHEN s.kind='website' THEN s.locator END) url,
       (1-(c.embedding<=>$3::vector))+ts_rank_cd(c.search,websearch_to_tsquery('english',$2)) score
       FROM chunks c JOIN documents d ON d.id=c.document_id AND d.workspace_id=c.workspace_id JOIN sources s ON s.id=d.source_id AND s.workspace_id=d.workspace_id
-      WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' AND c.embedding_model='text-embedding-3-small'
+      WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' AND c.embedding_model=$6
       AND ($4::text[] IS NULL OR s.id=ANY($4::text[])) ORDER BY score DESC LIMIT $5`,
       [
         ws,
@@ -699,6 +730,7 @@ export class Knowledge {
         JSON.stringify(embedding),
         options?.sourceIds ?? null,
         options?.limit ?? 8,
+        config.key,
       ],
     );
     return rows.map((r) => ({

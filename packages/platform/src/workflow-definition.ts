@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelProvider } from "./model-providers.js";
 
 const base = {
   id: z
@@ -38,7 +39,8 @@ export const WorkflowNodeSchema = z.discriminatedUnion("type", [
     z
       .object({
         instructions: z.string().max(4000),
-        model: z.string().max(100),
+        provider: z.union([z.literal(""), ModelProvider]).default(""),
+        model: z.string().max(200),
       })
       .strict(),
   ),
@@ -123,7 +125,7 @@ export function newWorkflowNode(
     start: {},
     knowledge: { scope: "all", sourceIds: [], limit: 8 },
     customer: { profile: true, billing: true, modes: ["test", "live"] },
-    agent: { instructions: "", model: "" },
+    agent: { instructions: "", provider: "", model: "" },
     condition: { field: "verified", value: "" },
     action: { actionIds: [], approval: "always" },
     reply: { mode: "workspace" },
@@ -198,6 +200,10 @@ export function workflowProblems(def: Workflow): string[] {
       errors.push(`Invalid connection from ${from.title} (${e.port}).`);
   }
   for (const n of def.nodes) {
+    if (n.type === "agent" && n.data.provider && !n.data.model.trim())
+      errors.push(
+        `${n.title}: choose a model ID when overriding the response provider.`,
+      );
     for (const port of PORTS[n.type])
       if (
         def.edges.filter((e) => e.from === n.id && e.port === port).length !== 1

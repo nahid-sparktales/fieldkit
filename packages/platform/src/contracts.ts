@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ModelProvider, EmbeddingProvider } from "./model-providers.js";
 
 export const WorkspaceInput = z
   .object({
@@ -8,10 +9,16 @@ export const WorkspaceInput = z
   .strict();
 export const Settings = z
   .object({
-    model: z.string().min(1).max(100).default("gpt-5.4-mini"),
+    responseProvider: ModelProvider.default("openai"),
+    model: z.string().trim().min(1).max(200).default("gpt-5.4-mini"),
+    embeddingProvider: EmbeddingProvider.default("openai"),
     embeddingModel: z
-      .literal("text-embedding-3-small")
+      .string()
+      .trim()
+      .min(1)
+      .max(200)
       .default("text-embedding-3-small"),
+    embeddingDimensions: z.number().int().min(32).max(4096).default(1536),
     instructions: z
       .string()
       .max(6000)

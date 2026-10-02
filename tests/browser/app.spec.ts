@@ -63,6 +63,60 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .fill("test-key-placeholder");
   await page.getByRole("button", { name: "Verify & connect" }).click();
   await expect(page.getByText("Connection verified and saved.")).toBeVisible();
+  await page
+    .locator(".connection-card")
+    .filter({
+      has: page.getByRole("heading", {
+        name: "Claude / Anthropic",
+        exact: true,
+      }),
+    })
+    .click();
+  await page
+    .getByLabel("API key", { exact: true })
+    .fill("test-claude-placeholder");
+  await page.getByLabel("Model ID to validate (optional)").fill("test-chat");
+  await page.getByRole("button", { name: "Verify & connect" }).click();
+  await expect(
+    page
+      .locator(".connection-card.chosen")
+      .getByText("connected", { exact: true }),
+  ).toBeVisible();
+  await page
+    .locator(".connection-card")
+    .filter({ has: page.getByRole("heading", { name: "vLLM", exact: true }) })
+    .click();
+  await expect(page.getByLabel("Model API base URL")).toBeVisible();
+  await expect(page.getByLabel("API key", { exact: true })).not.toHaveAttribute(
+    "required",
+  );
+  await expect(page.getByLabel("Structured output format")).toHaveValue(
+    "schema",
+  );
+  await page.screenshot({
+    path: "test-results/model-connections.png",
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page
+    .getByLabel("Response provider", { exact: true })
+    .selectOption("anthropic");
+  await page.getByLabel("Response model", { exact: true }).fill("test-chat");
+  await expect(
+    page.getByLabel("Embedding provider", { exact: true }),
+  ).toHaveValue("openai");
+  await page
+    .getByRole("button", { name: "Save settings", exact: true })
+    .click();
+  await expect(page.getByText("Workspace settings saved.")).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByLabel("Response provider", { exact: true }),
+  ).toHaveValue("anthropic");
+  await page.screenshot({
+    path: "test-results/model-settings.png",
+    fullPage: true,
+  });
   await page.getByRole("button", { name: "Knowledge", exact: true }).click();
   await page.locator("input[type=file]").setInputFiles({
     name: "returns.txt",
@@ -201,6 +255,10 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     page.getByRole("heading", { name: "Design how your agent helps." }),
   ).toBeVisible();
   await page.getByLabel("Selected step").selectOption("agent");
+  await page
+    .getByLabel("Response provider (optional)")
+    .selectOption("anthropic");
+  await page.getByLabel("Response model (optional)").fill("test-chat");
   await page
     .getByLabel("Step instructions")
     .fill("Keep the answer to two clear sentences.");

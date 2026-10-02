@@ -446,10 +446,9 @@ export async function createApp(
         }
         if (suffix === "/settings" && method === "PUT") {
           requireAdmin(p);
-          const settings = Settings.parse(await body(req));
-          await app.db.pool.query(
-            "UPDATE workspaces SET settings=$1,revision=revision+1 WHERE id=$2",
-            [settings, ws],
+          const settings = await app.connections.updateSettings(
+            ws,
+            await body(req),
           );
           json(res, { settings });
           return;
@@ -1151,20 +1150,21 @@ export async function createApp(
           const d = z
             .object({
               provider: z.string().max(80),
-              apiKey: z.string().min(8).max(8000),
-              model: z.string().max(100).optional(),
+              apiKey: z.string().max(8000),
+              model: z.string().max(200).optional(),
+              baseUrl: z.string().max(2000).optional(),
+              jsonMode: z.enum(["schema", "json"]).optional(),
             })
             .strict()
             .parse(await body(req));
           if (d.provider.startsWith("custom:")) requireOwner(p);
           json(
             res,
-            await app.connections.connectKey(
-              ws,
-              d.provider,
-              d.apiKey,
-              d.model ? { model: d.model } : {},
-            ),
+            await app.connections.connectKey(ws, d.provider, d.apiKey, {
+              ...(d.model ? { model: d.model } : {}),
+              ...(d.baseUrl ? { baseUrl: d.baseUrl } : {}),
+              ...(d.jsonMode ? { jsonMode: d.jsonMode } : {}),
+            }),
           );
           return;
         }

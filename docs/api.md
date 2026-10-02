@@ -52,6 +52,12 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 
 Public routes under `/v2/public/:slug` expose only published configuration and articles. `/join` binds a verified portal account. `/widget/session` creates an anonymous or server-signed customer token for a published widget. Exact allowed origins are checked. `/v2/webhooks/zendesk/:workspaceId` accepts only provider-signed events. OAuth callbacks are `/v2/oauth/:provider/callback`.
 
+## Model configuration
+
+`POST /connections/key` accepts `provider`, `apiKey`, an optional exact `model` ID to validate, and (for `vllm` or `openai_compatible`) `baseUrl` and `jsonMode: "schema" | "json"`. Model provider IDs are `openai`, `anthropic`, `kimi`, `openrouter`, `deepseek`, `vllm`, and `openai_compatible`. Only the last two permit empty API keys. Private endpoints require the operator's exact `FIELDKIT_MODEL_ENDPOINTS` allowlist. Connections return metadata, never saved secrets.
+
+`PUT /settings` accepts the workspace Settings object, including `responseProvider`, `model`, `embeddingProvider`, `embeddingModel`, `embeddingDimensions`, and `monthlyTokenBudget`. Embedding providers are `openai`, `openrouter`, `vllm`, or `openai_compatible`. Use the current settings from `GET` at the workspace base and replace the desired fields. Changing embedding configuration invalidates retrieval from the old vectors and queues reindexing transactionally. Workflow agent nodes may set `data.provider` and `data.model`; an empty provider uses the workspace default. See [model setup](models.md).
+
 ## Documentation site imports
 
 Create a source with `{"kind":"website","scope":"site","title":"Product docs","locator":"https://docs.example.com/"}`. Omit `scope` or use `"page"` to import only one page. In the app, choose **Knowledge → Documentation site**. Use the documentation root to include the whole site, or a section URL to restrict the scan to that path.
@@ -66,7 +72,7 @@ FAQs are workspace-scoped knowledge sources (`kind: "faq"`). Create one with `{ 
 
 Approve with `{ "revision": 1 }` at `/faqs/:id/approve`. Approval requires a connected model for embedding and queues indexing in the same transaction. Once ready, the agent can cite the FAQ. Public help-center publication remains a separate `/documents/:id/publish` action. Draft FAQs are excluded from hourly ingestion and cannot be retrieved by customers.
 
-AI generation accepts `{ "count": 5, "instructions": "Focus on onboarding", "sourceId": "optional-approved-source-id" }` (1–8 FAQs). It uses a bounded selection of current customer-approved chunks, validates returned citations, rechecks source access, and saves private drafts only. `/faqs/assist` accepts `question`, optional `answer`, optional `instructions`, and optional `sourceId`; it returns one suggestion without modifying saved FAQs. Existing answer text can be rewritten without indexed knowledge. Both use the configured OpenAI model, workspace token budget, timeout, and actual usage accounting (`kind: "faq"`). No source access or publication permission is granted by model output.
+AI generation accepts `{ "count": 5, "instructions": "Focus on onboarding", "sourceId": "optional-approved-source-id" }` (1–8 FAQs). It uses a bounded selection of current customer-approved chunks, validates returned citations, rechecks source access, and saves private drafts only. `/faqs/assist` accepts `question`, optional `answer`, optional `instructions`, and optional `sourceId`; it returns one suggestion without modifying saved FAQs. Existing answer text can be rewritten without indexed knowledge. Both use the configured response provider and model, workspace token budget, timeout, and actual usage accounting (`kind: "faq"`). No source access or publication permission is granted by model output.
 
 ## Document review and support workflows
 

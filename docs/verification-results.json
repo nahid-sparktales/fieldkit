@@ -67,34 +67,50 @@
     "Notion shared-page lifecycle": "BLOCKED: dedicated credentials/account or vendor registration required",
     "Google Picker and revoked-access lifecycle": "BLOCKED: dedicated credentials/account or vendor registration required",
     "Stripe App test-mode writes": "BLOCKED: dedicated credentials/account or vendor registration required",
-    "Custom HTTPS test API": "BLOCKED: dedicated credentials/account or vendor registration required"
+    "Custom HTTPS test API": "BLOCKED: dedicated credentials/account or vendor registration required",
+    "Additional model providers": "BLOCKED: dedicated Claude, Kimi, OpenRouter, DeepSeek, vLLM and compatible model/embedding evaluations required"
   },
   "latest": {
-    "recorded_at": "2026-10-02T00:49:16.341Z",
-    "change": "Visual LangGraph workflow editor and public-source preparation",
+    "recorded_at": "2026-10-02T01:16:11.369959+00:00",
+    "change": "Multiple response/embedding providers and generated README branding",
     "typecheck": "passed",
     "production_build": "passed",
     "v2_database_tests": {
-      "passed": 59,
+      "passed": 65,
       "failed": 0,
       "provider_mode": "injected models/providers; real PostgreSQL and LangGraph"
     },
     "browser_journeys": {
       "passed": 1,
       "failed": 0,
-      "includes": "visual edit, publish, preview, customer conversation, desktop/mobile"
+      "includes": "provider connection/settings, workflow provider override, FAQ/inbox tasks, published customer conversation, desktop/mobile"
     },
     "archived_demo_tests": {
       "passed": 33,
       "failed": 0,
       "counts_toward_live_release": false
     },
-    "installation_schema": 6,
+    "installation_schema": 7,
     "installation_readiness": "passed",
     "secret_review": "History and source tree: no non-allowlisted findings; exact synthetic fixtures documented in .gitleaks.toml",
     "production_dependency_audit": {
       "known_vulnerabilities": 0
     },
-    "live_provider_verification": "Not run for this change; external release gates unchanged"
+    "live_provider_verification": "No live calls to new model providers; HTTP fixtures plus real local transport test. External release gates unchanged."
+  },
+  "workflow_release_ci": {
+    "status": "passed",
+    "commit": "8ab3609b6f0b5d8dc799d847e695e82edef344f5",
+    "workflow_url": "https://github.com/nahid-sparktales/fieldkit/actions/runs/36947903494",
+    "checks": [
+      "clean Node 24 install",
+      "59 v2 tests",
+      "33 archived demo tests",
+      "browser journey",
+      "Docker image",
+      "fresh Compose installation",
+      "migration repeat",
+      "worker restart/readiness"
+    ]
   }
 }

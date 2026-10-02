@@ -2,6 +2,14 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Model providers and README identity — 2026-10-01
+
+All 65 v2 tests, type checking, the production build, and the complete browser journey passed. Six new provider suites exercise the actual adapters with injected HTTP responses for Claude, Kimi, OpenRouter, DeepSeek, vLLM, and generic compatible servers. They cover connection validation, structured answers, FAQ/staff assistance, provider overrides, reported usage on invalid/truncated results, conservative reservations when usage is missing, budgets, exact embedding dimensions, reindexing, publication preservation, and rejection of incompatible vectors. A real local HTTP server verifies operator-approved private transport, blocked redirects, and isolation from document/action networking.
+
+The browser journey connects Claude, selects it for responses while keeping OpenAI embeddings, reloads saved settings, inspects vLLM setup, publishes a workflow with a provider/model override, and completes the FAQ and customer-support flows. Model/provider responses and email remain test doubles. The initial browser run exposed inaccessible exact labels on the new provider selects; explicit labels fixed it and the complete rerun passed. Desktop screenshots were inspected, and the journey retains its mobile overflow checks.
+
+The local installation was backed up, migrated to schema 7, and restarted with readiness passing. Existing model settings and vectors were preserved. The new logo and FieldKit wordmark banner are included in the README. The source-tree secret scan found no non-allowlisted findings. No live requests were sent to the newly supported model providers; their full test-account evaluations remain blocked below.
+
 ## Visual agent workflow and public-source preparation — 2026-10-01
 
 All 59 v2 tests, type checking, the production build, the complete browser journey, and 33 separate archived-demo regressions passed. Workflow coverage includes validation, resource/tenant/role boundaries, optimistic editing, immutable run versions, knowledge selection, verified account context, multi-step draft review, conditional branches, held replies, assigned/prioritized handoff, takeover, mapping changes, exact approvals, fresh-process checkpoint recovery, and revocation of action authority when a workflow is replaced. Previews execute the same LangGraph route while stopping before approvals, writes, or messages. Setup preview follows the published graph.
@@ -57,7 +65,7 @@ This consumes real model tokens within the workspace budget. It tests grounded a
 | Gate | Dedicated setup and required evidence |
 | --- | --- |
 | SMTP and accounts | Real domain/sender; deliver verification, invitation, reset; expire a session; prove the customer cannot read another customer's ticket |
-| OpenAI | Run live evaluation; record actual token totals; exceed a small test budget; unavailable model must hand off |
+| Models: OpenAI, Claude, Kimi, OpenRouter, DeepSeek, vLLM, compatible servers | Run live evaluation for each enabled provider/model; record actual token totals; verify embeddings and citations; exceed a small test budget; unavailable/unsupported models must hand off |
 | Native portal/widget | Actual SMTP/model/knowledge; anonymous answer, signed identity, customer history, follow-up, takeover/resume, keyboard and mobile navigation |
 | PDF/DOCX/text/web | Supported files plus image-only/unsupported files; mutate/delete source; prove fresh citations and failed extraction visibility |
 | Notion | Operator integration/shared page; import/update; revoke page sharing; inaccessible content must disappear |

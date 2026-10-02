@@ -9,8 +9,18 @@ import {
   tokenHash,
   safeFetch,
   externalURL,
+  modelBaseURL,
+  modelFetch,
+  digest,
   type Fetcher,
 } from "./security.js";
+import { Settings } from "./contracts.js";
+import {
+  MODEL_PROVIDERS,
+  ModelProvider,
+  type EmbeddingConfig,
+  type ModelProviderId,
+} from "./model-providers.js";
 
 type Secret = {
   apiKey?: string;
@@ -25,6 +35,125 @@ export class Connections {
     public db: Database,
     public fetch: Fetcher = safeFetch,
   ) {}
+  async embeddingConfig(ws: string, q?: Queryable): Promise<EmbeddingConfig> {
+    const settings = Settings.parse(
+      requireValue(
+        await this.db.one(
+          "SELECT settings FROM workspaces WHERE id=$1",
+          [ws],
+          q,
+        ),
+      ).settings,
+    );
+    const provider = settings.embeddingProvider;
+    const row = requireValue(
+      await this.db.one(
+        "SELECT metadata FROM connections WHERE workspace_id=$1 AND provider=$2 AND status='connected'",
+        [ws, provider],
+        q,
+      ),
+      409,
+      `Connect ${MODEL_PROVIDERS[provider].name} for knowledge embeddings first`,
+    );
+    const baseUrl = this.modelBase(provider, row.metadata);
+    const model = settings.embeddingModel,
+      dimensions = settings.embeddingDimensions;
+    const key =
+      provider === "openai" &&
+      model === "text-embedding-3-small" &&
+      dimensions === 1536
+        ? model
+        : "embedding:" + digest({ provider, model, dimensions, baseUrl });
+    return { provider, model, dimensions, key };
+  }
+  modelBase(provider: ModelProviderId, metadata: Record<string, unknown> = {}) {
+    const builtIn = MODEL_PROVIDERS[provider].baseUrl;
+    if (builtIn && metadata.baseUrl && metadata.baseUrl !== builtIn)
+      throw new HttpError(
+        400,
+        "Use the OpenAI-compatible option for a custom model endpoint",
+      );
+    return modelBaseURL(
+      builtIn || String(metadata.baseUrl ?? ""),
+      this.db.config.FIELDKIT_MODEL_ENDPOINTS,
+    );
+  }
+  async modelRequest(
+    provider: ModelProviderId,
+    apiKey: string,
+    metadata: Record<string, unknown>,
+    path: string,
+    data?: object,
+  ) {
+    const base = this.modelBase(provider, metadata);
+    const headers: Record<string, string> =
+      provider === "anthropic"
+        ? { "x-api-key": apiKey, "anthropic-version": "2023-06-01" }
+        : apiKey
+          ? { Authorization: `Bearer ${apiKey}` }
+          : {};
+    const init = {
+      method: data ? "POST" : "GET",
+      headers: { ...headers, "Content-Type": "application/json" },
+      ...(data ? { body: JSON.stringify(data) } : {}),
+      limit: 8 * 1024 * 1024,
+    };
+    const res =
+      this.fetch === safeFetch
+        ? await modelFetch(
+            base,
+            path,
+            init,
+            this.db.config.FIELDKIT_MODEL_ENDPOINTS,
+          )
+        : await this.fetch(base + path, init);
+    if (!res.ok)
+      throw new HttpError(
+        502,
+        `${MODEL_PROVIDERS[provider].name} rejected the request (HTTP ${res.status}). Check the API key, model ID, endpoint, and output-format support.`,
+      );
+    return res.json();
+  }
+  async updateSettings(ws: string, input: unknown) {
+    const settings = Settings.parse(input);
+    await this.db.tx(async (q) => {
+      const old = Settings.parse(
+        requireValue(
+          await this.db.one(
+            "SELECT settings FROM workspaces WHERE id=$1 FOR UPDATE",
+            [ws],
+            q,
+          ),
+        ).settings,
+      );
+      await q.query(
+        "UPDATE workspaces SET settings=$1,revision=revision+1 WHERE id=$2",
+        [settings, ws],
+      );
+      if (
+        old.embeddingProvider !== settings.embeddingProvider ||
+        old.embeddingModel !== settings.embeddingModel ||
+        old.embeddingDimensions !== settings.embeddingDimensions
+      )
+        await this.reindexKnowledge(ws, q);
+    });
+    return settings;
+  }
+  async reindexKnowledge(ws: string, q: Queryable) {
+    const sources = await this.db.rows(
+      "UPDATE sources SET status='queued',revision=revision+1,error=null WHERE workspace_id=$1 AND active AND NOT(kind='faq' AND visibility='staff') RETURNING id",
+      [ws],
+      q,
+    );
+    for (const source of sources)
+      await this.db.enqueue(q as import("pg").PoolClient, "ingest", {
+        workspaceId: ws,
+        sourceId: source.id,
+      });
+    await this.db.event(q, ws, "knowledge.reindex_queued", {
+      sources: sources.length,
+    });
+  }
   secret(row: any): Secret {
     return unseal(
       this.db.config.FIELDKIT_ENCRYPTION_KEY,
@@ -88,7 +217,68 @@ export class Connections {
     apiKey: string,
     metadata: Record<string, unknown> = {},
   ) {
+    const modelProvider = ModelProvider.safeParse(provider);
+    if (modelProvider.success && provider !== "openai") {
+      const id = modelProvider.data;
+      if (!apiKey && !["vllm", "openai_compatible"].includes(id))
+        throw new HttpError(400, "Enter an API key");
+      const baseUrl = this.modelBase(id, metadata);
+      const jsonMode = metadata.jsonMode ?? MODEL_PROVIDERS[id].format;
+      if (!["schema", "json"].includes(String(jsonMode)))
+        throw new HttpError(400, "Choose JSON schema or JSON object output");
+      if (id === "openrouter")
+        await this.modelRequest(id, apiKey, metadata, "/key");
+      const result = await this.modelRequest(id, apiKey, metadata, "/models");
+      if (
+        !Array.isArray(result.data) ||
+        !result.data.some((m: any) => typeof m.id === "string")
+      )
+        throw new HttpError(
+          400,
+          "Model endpoint did not return an OpenAI-compatible model list",
+        );
+      if (
+        metadata.model &&
+        !result.data.some((m: any) => m.id === metadata.model)
+      )
+        throw new HttpError(
+          400,
+          "Selected model is not available on this connection. Use an exact model ID from your provider.",
+        );
+      metadata = {
+        baseUrl,
+        jsonMode,
+        ...(metadata.model ? { model: metadata.model } : {}),
+        models: result.data
+          .slice(0, 500)
+          .map((m: any) => String(m.id).slice(0, 200)),
+      };
+      return this.db.tx(async (q) => {
+        const old = await this.db.one(
+          "SELECT metadata FROM connections WHERE workspace_id=$1 AND provider=$2 FOR UPDATE",
+          [ws, provider],
+          q,
+        );
+        const saved = await this.save(ws, provider, { apiKey }, metadata, q);
+        if (old && this.modelBase(id, old.metadata) !== baseUrl) {
+          const settings = Settings.parse(
+            requireValue(
+              await this.db.one(
+                "SELECT settings FROM workspaces WHERE id=$1",
+                [ws],
+                q,
+              ),
+            ).settings,
+          );
+          if (settings.embeddingProvider === provider)
+            await this.reindexKnowledge(ws, q);
+        }
+        return saved;
+      });
+    }
+    if (apiKey.length < 8) throw new HttpError(400, "Enter a valid API key");
     if (provider === "openai") {
+      this.modelBase("openai", metadata);
       const res = await this.fetch(
         "https://api.openai.com/v1/models/" +
           encodeURIComponent(String(metadata.model ?? "gpt-5.4-mini")),
@@ -98,15 +288,6 @@ export class Connections {
         throw new HttpError(
           400,
           "OpenAI credentials or selected model could not be validated",
-        );
-      const embedding = await this.fetch(
-        "https://api.openai.com/v1/models/text-embedding-3-small",
-        { headers: { Authorization: `Bearer ${apiKey}` } },
-      );
-      if (!embedding.ok)
-        throw new HttpError(
-          400,
-          "OpenAI key needs access to text-embedding-3-small",
         );
     } else if (["stripe_test", "stripe_live"].includes(provider)) {
       if (!/^rk_(test|live)_/.test(apiKey))

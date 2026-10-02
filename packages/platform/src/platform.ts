@@ -292,7 +292,15 @@ export class Platform {
           409,
           "Configure SMTP before publishing customer-facing channels",
         );
-      await this.db.connection(p.workspaceId, "openai");
+      const settings = Settings.parse(
+        requireValue(
+          await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [
+            p.workspaceId,
+          ]),
+        ).settings,
+      );
+      await this.db.connection(p.workspaceId, settings.responseProvider);
+      await this.connections.embeddingConfig(p.workspaceId);
       if (data.settings.handoff === "zendesk" || channel.kind === "zendesk") {
         const connection = await this.db.connection(p.workspaceId, "zendesk");
         requireValue(

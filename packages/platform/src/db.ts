@@ -166,9 +166,14 @@ CREATE TABLE IF NOT EXISTS workflows(workspace_id text PRIMARY KEY REFERENCES wo
 CREATE TABLE IF NOT EXISTS workflow_versions(workspace_id text REFERENCES workspaces ON DELETE CASCADE,version integer NOT NULL,title text NOT NULL,definition jsonb NOT NULL,created_by text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(workspace_id,version));
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS workflow_definition jsonb;
 ALTER TABLE runs ADD COLUMN IF NOT EXISTS workflow_version integer;
+DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM app_migrations WHERE version=7) THEN
+  ALTER TABLE chunks ALTER COLUMN embedding TYPE vector;
+  ALTER TABLE usage ADD COLUMN IF NOT EXISTS provider text NOT NULL DEFAULT 'openai';
+END IF; END $$;
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(6) ON CONFLICT DO NOTHING;
+INSERT INTO app_migrations(version) VALUES(7) ON CONFLICT DO NOTHING;
 `;
