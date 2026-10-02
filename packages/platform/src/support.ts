@@ -1,3 +1,4 @@
+import { Actions } from "./actions.js";
 import type { Database, Queryable } from "./db.js";
 import { uid } from "./db.js";
 import type { Connections } from "./connections.js";
@@ -319,6 +320,46 @@ export class Support {
       );
       return;
     }
+    if (delivery.payload.workflowRunId) {
+      try {
+        const run = requireValue(
+          await this.db.one(
+            "SELECT state,workflow_version FROM runs WHERE workspace_id=$1 AND id=$2",
+            [ws, delivery.payload.workflowRunId],
+            q,
+          ),
+        );
+        const workflow = await this.db.one(
+          "SELECT published_version FROM workflows WHERE workspace_id=$1",
+          [ws],
+          q,
+        );
+        if (workflow?.published_version !== run.workflow_version)
+          throw new Error("Workflow changed before publication");
+        if (run.state.accountContactRevision !== undefined) {
+          const contact = await this.db.one(
+            "SELECT id,verified,revision FROM contacts WHERE workspace_id=$1 AND id=$2",
+            [ws, conv.contact_id],
+            q,
+          );
+          if (
+            !contact?.verified ||
+            contact.id !== run.state.accountContactId ||
+            contact.revision !== run.state.accountContactRevision
+          )
+            throw new Error("Customer identity changed before publication");
+        }
+        const actions = new Actions(this.db, this.connections);
+        for (const proof of run.state.readProofs ?? [])
+          await actions.revalidate(ws, proof, q);
+      } catch (error) {
+        await this.db.pool.query(
+          "UPDATE deliveries SET status='cancelled',error=$2 WHERE id=$1",
+          [id, (error as Error).message],
+        );
+        return;
+      }
+    }
     if (delivery.payload.evidenceIds?.length) {
       const evidence = await this.db.rows(
         "SELECT c.id FROM chunks c JOIN documents d ON d.id=c.document_id JOIN sources s ON s.id=d.source_id WHERE c.workspace_id=$1 AND c.id=ANY($2::text[]) AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' FOR SHARE OF d,s",
@@ -563,7 +604,7 @@ export async function enqueueTurn(
 ) {
   const id = uid();
   const workflow = await db.one(
-    "SELECT v.version,v.definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
+    "SELECT v.version,COALESCE(v.compiled_definition,v.definition) definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
     [conv.workspace_id],
     q,
   );

@@ -23,6 +23,10 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      - name: Verify isolated Python and JavaScript execution
+        run: |
+          docker build -f runner/Dockerfile -t fieldkit-runner:local .
+          npm run test:runner
       - run: npm run test:demo
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser

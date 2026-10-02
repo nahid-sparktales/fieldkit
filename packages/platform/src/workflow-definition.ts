@@ -1,4 +1,12 @@
 import { z } from "zod";
+import {
+  Bindings,
+  JsonSchema,
+  EMPTY_SCHEMA,
+  OPERATORS,
+  validPath,
+  templatePaths,
+} from "./workflow-values.js";
 import { ModelProvider } from "./model-providers.js";
 
 const base = {
@@ -7,6 +15,9 @@ const base = {
     .regex(/^[a-z][a-z0-9_-]{0,47}$/)
     .refine((v) => !v.includes("__"), "Reserved node ID"),
   title: z.string().trim().min(1).max(80),
+  scope: z.string().max(48).optional(),
+  localId: z.string().max(48).optional(),
+  origin: z.string().max(48).optional(),
   x: z.number().finite().min(0).max(4000),
   y: z.number().finite().min(0).max(3000),
 };
@@ -48,8 +59,10 @@ export const WorkflowNodeSchema = z.discriminatedUnion("type", [
     "condition",
     z
       .object({
-        field: z.enum(["verified", "mapped", "channel", "evidence"]),
-        value: z.string().max(80),
+        field: z.enum(["verified", "mapped", "channel", "evidence", "value"]),
+        value: z.string().max(1000),
+        path: z.string().max(240).default(""),
+        operator: z.enum(OPERATORS).default("equals"),
       })
       .strict(),
   ),
@@ -62,7 +75,71 @@ export const WorkflowNodeSchema = z.discriminatedUnion("type", [
       })
       .strict(),
   ),
-  node("reply", z.object({ mode: z.enum(["workspace", "review"]) }).strict()),
+  node(
+    "reply",
+    z
+      .object({
+        mode: z.enum(["workspace", "review"]),
+        content: z.enum(["agent", "exact", "template"]).default("agent"),
+        text: z.string().max(12000).default(""),
+      })
+      .strict(),
+  ),
+  node(
+    "custom",
+    z
+      .object({
+        componentId: z.string().max(200),
+        version: z.number().int().min(1),
+        inputs: Bindings.default({}),
+      })
+      .strict(),
+  ),
+  node(
+    "subflow",
+    z
+      .object({
+        componentId: z.string().max(200),
+        version: z.number().int().min(1),
+        inputs: Bindings.default({}),
+      })
+      .strict(),
+  ),
+  node(
+    "return",
+    z
+      .object({
+        outcome: z.enum(["done", "failed"]),
+        outputs: Bindings.default({}),
+      })
+      .strict(),
+  ),
+  // These two node types are produced only by the server's component expander.
+  node(
+    "task",
+    z
+      .object({
+        definition: z.record(z.string(), z.unknown()),
+        inputs: Bindings,
+        componentId: z.string(),
+        version: z.number().int(),
+      })
+      .strict(),
+  ),
+  node(
+    "scope",
+    z
+      .object({
+        direction: z.enum(["enter", "exit"]),
+        targetScope: z.string(),
+        parentScope: z.string(),
+        outputId: z.string(),
+        bindings: Bindings,
+        schema: JsonSchema,
+        customerSafe: z.boolean().default(false),
+      })
+      .strict(),
+  ),
   node(
     "handoff",
     z
@@ -78,7 +155,7 @@ export const WorkflowDefinition = z
   .object({
     format: z.literal(1),
     title: z.string().trim().min(1).max(100),
-    nodes: z.array(WorkflowNodeSchema).min(2).max(24),
+    nodes: z.array(WorkflowNodeSchema).min(2).max(96),
     edges: z
       .array(
         z
@@ -89,7 +166,7 @@ export const WorkflowDefinition = z
           })
           .strict(),
       )
-      .max(80),
+      .max(300),
   })
   .strict();
 export type Workflow = z.infer<typeof WorkflowDefinition>;
@@ -104,6 +181,11 @@ export const NODE_LABELS: Record<NodeType, string> = {
   action: "Governed action",
   reply: "Reply to customer",
   handoff: "Human handoff",
+  custom: "Custom step",
+  subflow: "Subflow",
+  return: "Return from subflow",
+  task: "Custom step execution",
+  scope: "Subflow boundary",
 };
 export const PORTS: Record<NodeType, string[]> = {
   start: ["next"],
@@ -114,6 +196,11 @@ export const PORTS: Record<NodeType, string[]> = {
   action: ["done", "failed"],
   reply: [],
   handoff: [],
+  custom: ["done", "failed"],
+  subflow: ["done", "failed"],
+  return: [],
+  task: ["done", "failed"],
+  scope: ["next", "failed"],
 };
 export function newWorkflowNode(
   type: NodeType,
@@ -126,9 +213,21 @@ export function newWorkflowNode(
     knowledge: { scope: "all", sourceIds: [], limit: 8 },
     customer: { profile: true, billing: true, modes: ["test", "live"] },
     agent: { instructions: "", provider: "", model: "" },
-    condition: { field: "verified", value: "" },
+    condition: { field: "verified", value: "", path: "", operator: "equals" },
     action: { actionIds: [], approval: "always" },
-    reply: { mode: "workspace" },
+    reply: { mode: "workspace", content: "agent", text: "" },
+    custom: { componentId: "", version: 1, inputs: {} },
+    subflow: { componentId: "", version: 1, inputs: {} },
+    return: { outcome: "done", outputs: {} },
+    task: { definition: {}, inputs: {}, componentId: "", version: 1 },
+    scope: {
+      direction: "enter",
+      targetScope: "",
+      parentScope: "",
+      outputId: "",
+      bindings: {},
+      schema: EMPTY_SCHEMA,
+    },
     handoff: {
       message:
         "I’m passing this to the support team so they can help you further.",
@@ -179,8 +278,25 @@ export function defaultWorkflow(actionIds: string[] = []): Workflow {
     ],
   };
 }
-export function workflowProblems(def: Workflow): string[] {
+export function workflowProblems(
+  def: Workflow,
+  options: { expanded?: boolean; subflow?: boolean } = {},
+): string[] {
   const errors: string[] = [];
+  if (def.nodes.length > (options.expanded ? 96 : 24))
+    errors.push("Workflow exceeds its step limit.");
+  if (def.nodes.filter((n) => ["custom", "task"].includes(n.type)).length > 8)
+    errors.push("Use at most eight custom steps per turn.");
+  if (
+    !options.expanded &&
+    def.nodes.some(
+      (n) =>
+        ["task", "scope"].includes(n.type) || n.scope || n.origin || n.localId,
+    )
+  )
+    errors.push("Internal workflow nodes cannot be supplied by an editor.");
+  if (!options.subflow && def.nodes.some((n) => n.type === "return"))
+    errors.push("Return steps belong inside reusable subflows.");
   const byId = new Map(def.nodes.map((n) => [n.id, n]));
   if (byId.size !== def.nodes.length) errors.push("Node IDs must be unique.");
   const starts = def.nodes.filter((n) => n.type === "start");
@@ -200,6 +316,24 @@ export function workflowProblems(def: Workflow): string[] {
       errors.push(`Invalid connection from ${from.title} (${e.port}).`);
   }
   for (const n of def.nodes) {
+    if ((n.type === "custom" || n.type === "subflow") && !n.data.componentId)
+      errors.push(`${n.title}: choose a reusable component.`);
+    if (
+      n.type === "condition" &&
+      n.data.field === "value" &&
+      !validPath(n.data.path)
+    )
+      errors.push(`${n.title}: choose a valid workflow variable.`);
+    if (n.type === "reply" && n.data.content !== "agent") {
+      if (!n.data.text.trim())
+        errors.push(`${n.title}: enter the customer reply.`);
+      if (n.data.content === "template")
+        try {
+          templatePaths(n.data.text);
+        } catch (e) {
+          errors.push(`${n.title}: ${(e as Error).message}`);
+        }
+    }
     if (n.type === "agent" && n.data.provider && !n.data.model.trim())
       errors.push(
         `${n.title}: choose a model ID when overriding the response provider.`,
@@ -258,7 +392,12 @@ export function workflowProblems(def: Workflow): string[] {
       if (paths.has(key)) return;
       paths.add(key);
       const n = byId.get(id)!;
-      if ((n.type === "action" || n.type === "reply") && !agent)
+      if (
+        (n.type === "action" ||
+          (n.type === "reply" && n.data.content === "agent")) &&
+        !agent &&
+        !options.subflow
+      )
         errors.push(
           `${n.title} needs an agent decision on every incoming path.`,
         );

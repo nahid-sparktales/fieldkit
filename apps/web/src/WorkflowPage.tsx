@@ -1,3 +1,12 @@
+import {
+  WorkflowLibrary,
+  MappingFields,
+  SchemaFields,
+} from "./WorkflowLibrary.js";
+import {
+  EMPTY_SCHEMA,
+  OPERATORS,
+} from "../../../packages/platform/src/workflow-values.js";
 import React, { useEffect, useId, useRef, useState } from "react";
 import {
   WorkflowDefinition,
@@ -29,6 +38,13 @@ const descriptions: Record<NodeType, string> = {
     "Choose the actions this workflow can propose. Execution always rechecks identity, provider ownership, policies, and approval.",
   reply:
     "Send the answer or confirmed action receipt. Missing evidence or an unexecuted action goes to staff.",
+  custom:
+    "Run a saved Python, JavaScript, or read-only API step with mapped inputs.",
+  subflow:
+    "Reuse a saved group of steps with explicit inputs and done/failed outcomes.",
+  return: "Return mapped values to the calling workflow.",
+  task: "Pinned custom step execution.",
+  scope: "Subflow boundary.",
   handoff:
     "Stop automatic processing and pass the conversation to your team through the channel’s configured handoff destination.",
 };
@@ -117,6 +133,45 @@ export function WorkflowPage({
     [customer, setCustomer] = useState(""),
     [channel, setChannel] = useState("portal"),
     [historyVersion, setHistoryVersion] = useState("");
+  const [editingSubflow, setEditingSubflow] = useState<Row | null>(null),
+    [subflowInput, setSubflowInput] = useState(
+      JSON.stringify(EMPTY_SCHEMA, null, 2),
+    ),
+    [subflowOutput, setSubflowOutput] = useState(
+      JSON.stringify(EMPTY_SCHEMA, null, 2),
+    ),
+    [subflowSafe, setSubflowSafe] = useState(false),
+    [subflowDescription, setSubflowDescription] = useState(""),
+    [testInputs, setTestInputs] = useState("{}"),
+    [componentVersions, setComponentVersions] = useState<Row>({});
+  const mainDraft = useRef<Row | null>(null);
+  const selectedNode = definition?.nodes.find((n) => n.id === selected);
+  const componentRef =
+    selectedNode &&
+    (selectedNode.type === "custom" || selectedNode.type === "subflow")
+      ? selectedNode.data
+      : null;
+  useEffect(() => {
+    if (!componentRef?.componentId) return;
+    let live = true;
+    request(
+      `/workflow/components/${componentRef.componentId}/versions/${componentRef.version}`,
+    )
+      .then((r) => {
+        if (live)
+          setComponentVersions((old) => ({
+            ...old,
+            [`${componentRef.componentId}:${componentRef.version}`]:
+              r.definition,
+          }));
+      })
+      .catch((e) => {
+        if (live) setError(e.message);
+      });
+    return () => {
+      live = false;
+    };
+  }, [ws, componentRef?.componentId, componentRef?.version]);
   const drag = useRef<{
       id: string;
       x: number;
@@ -171,9 +226,9 @@ export function WorkflowPage({
     );
   const def = definition,
     resources = loaded.resources,
-    dirty = JSON.stringify(def) !== saved,
+    dirty = Boolean(editingSubflow) || JSON.stringify(def) !== saved,
     node = def.nodes.find((n) => n.id === selected),
-    problems = workflowProblems(def);
+    problems = workflowProblems(def, { subflow: Boolean(editingSubflow) });
   const replace = (next: Workflow, remember = true) => {
     if (remember) setPast([...past.slice(-29), def]);
     setFuture([]);
@@ -209,16 +264,122 @@ export function WorkflowPage({
     test?.trace.map((s: Row) => `${s.nodeId}:${s.outcome}`) ?? [],
   );
   const canEdit = admin && !busy;
+  const refreshResources = async () => {
+    const data = await request("/workflow");
+    setLoaded((old) => (old ? { ...old, resources: data.resources } : data));
+  };
+  const subflowDefinition = () => ({
+    kind: "subflow",
+    name: def.title,
+    description: subflowDescription,
+    inputSchema: JSON.parse(subflowInput),
+    outputSchema: JSON.parse(subflowOutput),
+    customerSafe: subflowSafe,
+    workflow: def,
+  });
+  const returnToMain = () => {
+    const prior = mainDraft.current;
+    if (prior) {
+      setDefinition(prior.definition);
+      setSaved(prior.saved);
+      setPast(prior.past);
+      setFuture(prior.future);
+      setSelected(prior.selected);
+    }
+    setEditingSubflow(null);
+    setTest(null);
+    setLink(null);
+  };
+  const editSubflow = (component: Row | null) => {
+    if (editingSubflow && !confirm("Discard unsaved subflow edits?")) return;
+    if (!editingSubflow)
+      mainDraft.current = { definition: def, saved, past, future, selected };
+    const d = component?.definition;
+    setEditingSubflow(component ?? { id: null, revision: 0 });
+    setSubflowInput(JSON.stringify(d?.inputSchema ?? EMPTY_SCHEMA, null, 2));
+    setSubflowOutput(JSON.stringify(d?.outputSchema ?? EMPTY_SCHEMA, null, 2));
+    setSubflowDescription(d?.description ?? "");
+    setSubflowSafe(d?.customerSafe ?? false);
+    setTestInputs("{}");
+    setDefinition(
+      d?.workflow ?? {
+        format: 1,
+        title: "New subflow",
+        nodes: [
+          newWorkflowNode("start", "start", 80, 40),
+          newWorkflowNode("return", "result", 420, 260),
+        ],
+        edges: [{ from: "start", port: "next", to: "result" }],
+      },
+    );
+    setSelected("start");
+    setPast([]);
+    setFuture([]);
+    setTest(null);
+    setLink(null);
+  };
   const save = () =>
-    act(async () => {
-      accept(
-        await request(
-          "/workflow",
-          { revision: loaded.revision, definition: def },
-          "PUT",
-        ),
-      );
-    }, "Draft saved. Publish it to use it for new conversations.");
+    act(
+      async () => {
+        if (editingSubflow) {
+          await request(
+            `/workflow/components${editingSubflow.id ? `/${editingSubflow.id}` : ""}`,
+            {
+              revision: editingSubflow.revision,
+              definition: subflowDefinition(),
+            },
+            editingSubflow.id ? "PUT" : "POST",
+          );
+          await refreshResources();
+          returnToMain();
+        } else
+          accept(
+            await request(
+              "/workflow",
+              { revision: loaded.revision, definition: def },
+              "PUT",
+            ),
+          );
+      },
+      editingSubflow
+        ? "Subflow version saved. Select it in a Subflow step and publish the main workflow."
+        : "Draft saved. Publish it to use it for new conversations.",
+    );
+  const activeComponent = componentRef
+    ? componentVersions[`${componentRef.componentId}:${componentRef.version}`]
+    : null;
+  const variablePaths = [
+    "customer.name",
+    "customer.email",
+    "customer.id",
+    "customer.verified",
+    "account.billing",
+    "ticket.id",
+    "ticket.subject",
+    "ticket.category",
+    "ticket.priority",
+    "ticket.status",
+    "message.text",
+    "channel.kind",
+    "agent.intent",
+    "action.reference",
+  ];
+  for (const n of def.nodes) {
+    if (n.type !== "custom" && n.type !== "subflow") continue;
+    const c =
+      componentVersions[`${n.data.componentId}:${n.data.version}`] ??
+      resources.components?.find(
+        (c: Row) =>
+          c.id === n.data.componentId && c.revision === n.data.version,
+      )?.definition;
+    for (const key of Object.keys(c?.outputSchema?.properties ?? {}))
+      variablePaths.push(`steps.${n.id}.output.${key}`);
+  }
+  if (editingSubflow)
+    try {
+      for (const key of Object.keys(JSON.parse(subflowInput).properties ?? {}))
+        variablePaths.push(`inputs.${key}`);
+    } catch {}
   return (
     <div className="workflow-page">
       <div className="page-heading">
@@ -234,9 +395,11 @@ export function WorkflowPage({
       <div className="wf-toolbar">
         <div>
           <strong>
-            {loaded.publishedVersion
-              ? `Published version ${loaded.publishedVersion}`
-              : "Built-in workflow is active"}
+            {editingSubflow
+              ? `Editing reusable subflow${editingSubflow.revision ? ` · version ${editingSubflow.revision}` : ""}`
+              : loaded.publishedVersion
+                ? `Published version ${loaded.publishedVersion}`
+                : "Built-in workflow is active"}
           </strong>
           <small>
             {dirty
@@ -249,7 +412,7 @@ export function WorkflowPage({
         </div>
         <div className="button-row">
           <button
-            disabled={busy}
+            disabled={busy || Boolean(editingSubflow)}
             onClick={() =>
               void act(async () => {
                 if (dirty && !confirm("Discard unsaved workflow changes?"))
@@ -266,12 +429,16 @@ export function WorkflowPage({
                 disabled={busy || (!dirty && loaded.revision > 0)}
                 onClick={() => void save()}
               >
-                Save draft
+                {editingSubflow ? "Save subflow version" : "Save draft"}
               </button>
               <button
                 className="primary"
                 disabled={
-                  busy || dirty || !loaded.revision || !!problems.length
+                  busy ||
+                  Boolean(editingSubflow) ||
+                  dirty ||
+                  !loaded.revision ||
+                  !!problems.length
                 }
                 onClick={() =>
                   void act(async () => {
@@ -299,9 +466,67 @@ export function WorkflowPage({
           {success}
         </p>
       )}
+      {!editingSubflow && (
+        <WorkflowLibrary
+          resources={resources}
+          admin={admin}
+          request={request}
+          onChanged={refreshResources}
+          onSubflow={editSubflow}
+        />
+      )}
+      {editingSubflow && (
+        <section className="panel">
+          <div className="button-row">
+            <h2>Reusable subflow</h2>
+            <button
+              onClick={() => {
+                if (
+                  confirm(
+                    "Return to the main workflow? Unsaved subflow edits will be discarded.",
+                  )
+                )
+                  returnToMain();
+              }}
+            >
+              Back to main workflow
+            </button>
+          </div>
+          <p>
+            Connect a Return step to finish with done or failed and map the
+            values returned to the caller. Reply and handoff steps finish the
+            entire customer turn.
+          </p>
+          <Field label="Subflow description">
+            <input
+              value={subflowDescription}
+              onChange={(e) => setSubflowDescription(e.target.value)}
+              maxLength={1000}
+            />
+          </Field>
+          <SchemaFields
+            input={subflowInput}
+            output={subflowOutput}
+            onInput={setSubflowInput}
+            onOutput={setSubflowOutput}
+          />
+          <label className="wf-check">
+            <input
+              type="checkbox"
+              checked={subflowSafe}
+              onChange={(e) => setSubflowSafe(e.target.checked)}
+            />{" "}
+            Allow returned values in customer reply templates
+          </label>
+        </section>
+      )}
       <div className="wf-palette" aria-label="Workflow step palette">
         {(Object.keys(NODE_LABELS) as NodeType[])
-          .filter((t) => t !== "start")
+          .filter(
+            (t) =>
+              !["start", "task", "scope"].includes(t) &&
+              (t !== "return" || editingSubflow),
+          )
           .map((type) => (
             <button
               key={type}
@@ -762,8 +987,53 @@ export function WorkflowPage({
                           Message came from a channel
                         </option>
                         <option value="evidence">Knowledge was found</option>
+                        <option value="value">
+                          Compare a workflow variable
+                        </option>
                       </select>
                     </Field>
+                    {node.data.field === "value" && (
+                      <>
+                        <Field label="Variable to compare">
+                          <input
+                            value={node.data.path}
+                            list="condition-variables"
+                            onChange={(e) => patch({ path: e.target.value })}
+                            placeholder="steps.lookup.output.plan"
+                          />
+                        </Field>
+                        <datalist id="condition-variables">
+                          {variablePaths.map((path) => (
+                            <option key={path} value={path} />
+                          ))}
+                        </datalist>
+                        <Field label="Comparison">
+                          <select
+                            value={node.data.operator}
+                            onChange={(e) =>
+                              patch({ operator: e.target.value })
+                            }
+                          >
+                            {OPERATORS.map((op) => (
+                              <option key={op} value={op}>
+                                {op.replaceAll("_", " ")}
+                              </option>
+                            ))}
+                          </select>
+                        </Field>
+                        {!["exists", "is_true"].includes(
+                          node.data.operator,
+                        ) && (
+                          <Field label="Compare with">
+                            <input
+                              value={node.data.value}
+                              onChange={(e) => patch({ value: e.target.value })}
+                              placeholder="Text, 123, or true"
+                            />
+                          </Field>
+                        )}
+                      </>
+                    )}
                     {node.data.field === "mapped" && (
                       <Field label="Provider mapping key">
                         <input
@@ -818,20 +1088,193 @@ export function WorkflowPage({
                     </p>
                   </>
                 )}
+                {(node.type === "custom" || node.type === "subflow") && (
+                  <>
+                    <Field label="Reusable component">
+                      <select
+                        value={node.data.componentId}
+                        onChange={(e) => {
+                          const c = resources.components.find(
+                            (c: Row) => c.id === e.target.value,
+                          );
+                          if (c)
+                            replace({
+                              ...def,
+                              nodes: def.nodes.map((n) =>
+                                n.id === node.id
+                                  ? ({
+                                      ...n,
+                                      title: c.name,
+                                      data: {
+                                        componentId: c.id,
+                                        version: c.revision,
+                                        inputs: {},
+                                      },
+                                    } as WorkflowNode)
+                                  : n,
+                              ),
+                            });
+                        }}
+                      >
+                        <option value="">
+                          Choose a saved{" "}
+                          {node.type === "subflow" ? "subflow" : "step"}
+                        </option>
+                        {resources.components
+                          ?.filter(
+                            (c: Row) =>
+                              (node.type === "subflow") ===
+                              (c.kind === "subflow"),
+                          )
+                          .map((c: Row) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name} · latest v{c.revision}
+                            </option>
+                          ))}
+                      </select>
+                    </Field>
+                    <p>
+                      Using version {node.data.version}. Updates are explicit;
+                      published runs keep their snapshot.
+                    </p>
+                    {resources.components?.some(
+                      (c: Row) =>
+                        c.id === node.data.componentId &&
+                        c.revision !== node.data.version,
+                    ) && (
+                      <button
+                        onClick={() =>
+                          patch({
+                            version: resources.components.find(
+                              (c: Row) => c.id === node.data.componentId,
+                            ).revision,
+                          })
+                        }
+                      >
+                        Use latest component version
+                      </button>
+                    )}
+                    {activeComponent && (
+                      <>
+                        <p>{activeComponent.description}</p>
+                        <MappingFields
+                          schema={activeComponent.inputSchema}
+                          values={node.data.inputs}
+                          onChange={(inputs) => patch({ inputs })}
+                          paths={variablePaths}
+                        />
+                        <details>
+                          <summary>Output fields</summary>
+                          <pre>
+                            {JSON.stringify(
+                              activeComponent.outputSchema,
+                              null,
+                              2,
+                            )}
+                          </pre>
+                          <p>
+                            Read results as{" "}
+                            <code>steps.{node.id}.output.field</code>.
+                          </p>
+                        </details>
+                      </>
+                    )}
+                  </>
+                )}
+                {node.type === "return" && (
+                  <>
+                    <Field label="Return outcome">
+                      <select
+                        value={node.data.outcome}
+                        onChange={(e) => patch({ outcome: e.target.value })}
+                      >
+                        <option value="done">done</option>
+                        <option value="failed">failed</option>
+                      </select>
+                    </Field>
+                    <MappingFields
+                      schema={(() => {
+                        try {
+                          return JSON.parse(subflowOutput);
+                        } catch {
+                          return EMPTY_SCHEMA;
+                        }
+                      })()}
+                      values={node.data.outputs}
+                      onChange={(outputs) => patch({ outputs })}
+                      label="Output"
+                      paths={variablePaths}
+                    />
+                  </>
+                )}
                 {node.type === "reply" && (
-                  <Field label="Reply behavior">
-                    <select
-                      value={node.data.mode}
-                      onChange={(e) => patch({ mode: e.target.value })}
-                    >
-                      <option value="workspace">
-                        Follow workspace reply setting
-                      </option>
-                      <option value="review">
-                        Always save a draft for staff review
-                      </option>
-                    </select>
-                  </Field>
+                  <>
+                    <Field label="Reply content">
+                      <select
+                        value={node.data.content}
+                        onChange={(e) => patch({ content: e.target.value })}
+                      >
+                        <option value="agent">
+                          AI answer or confirmed action receipt
+                        </option>
+                        <option value="exact">Exact reply (no AI)</option>
+                        <option value="template">Reply template (no AI)</option>
+                      </select>
+                    </Field>
+                    {node.data.content !== "agent" && (
+                      <>
+                        <Field label="Customer reply">
+                          <textarea
+                            rows={6}
+                            value={node.data.text}
+                            maxLength={12000}
+                            onChange={(e) => patch({ text: e.target.value })}
+                            placeholder={
+                              node.data.content === "template"
+                                ? "Hi {{customer.name}}, your ticket is {{ticket.id}}."
+                                : "Your approved customer reply"
+                            }
+                          />
+                        </Field>
+                        {node.data.content === "template" && (
+                          <details>
+                            <summary>Available reply variables</summary>
+                            {variablePaths
+                              .filter((p) => p !== "message.text")
+                              .map((path) => (
+                                <button
+                                  key={path}
+                                  className="wf-variable"
+                                  onClick={() =>
+                                    patch({
+                                      text: node.data.text + `{{${path}}}`,
+                                    })
+                                  }
+                                >{`{{${path}}}`}</button>
+                              ))}
+                            <p>
+                              Only verified customer values and
+                              customer-approved step outputs can be inserted.
+                              Missing values cause a handoff.
+                            </p>
+                          </details>
+                        )}
+                      </>
+                    )}
+                    <Field label="Reply behavior">
+                      <select
+                        value={node.data.mode}
+                        onChange={(e) => patch({ mode: e.target.value })}
+                      >
+                        <option value="workspace">
+                          Follow workspace reply setting
+                        </option>
+                        <option value="review">
+                          Always save a draft for staff review
+                        </option>
+                      </select>
+                    </Field>
+                  </>
                 )}
                 {node.type === "handoff" && (
                   <>
@@ -948,30 +1391,45 @@ export function WorkflowPage({
         <section className="panel">
           <h2>Test the draft</h2>
           <p>
-            Follow the actual LangGraph route with a sample question. Uses your
-            model and, if selected, reads the verified customer’s account. Stops
-            before action execution, approvals, replies, or ticket changes.
+            Follow the actual route with a sample question. Code and API reads
+            run during tests. Model steps use your model quota. No account
+            changes, approvals, messages, or ticket updates are made.
           </p>
           <form
             onSubmit={(e) => {
               e.preventDefault();
               void act(async () => {
                 setTest(
-                  await request("/workflow/test", {
-                    definition: def,
-                    question,
-                    ...(customer ? { contactId: customer } : {}),
-                    channel,
-                  }),
+                  editingSubflow
+                    ? await request("/workflow/components/test", {
+                        definition: subflowDefinition(),
+                        input: JSON.parse(testInputs),
+                        ...(customer ? { contactId: customer } : {}),
+                      })
+                    : await request("/workflow/test", {
+                        definition: def,
+                        question,
+                        ...(customer ? { contactId: customer } : {}),
+                        channel,
+                      }),
                 );
-              }, "Preview complete. No action was executed or message sent.");
+              }, "Preview complete. No account changes or messages were sent.");
             }}
           >
             <fieldset disabled={!canEdit}>
+              {editingSubflow && (
+                <Field label="Subflow test input JSON">
+                  <textarea
+                    value={testInputs}
+                    onChange={(e) => setTestInputs(e.target.value)}
+                    rows={4}
+                  />
+                </Field>
+              )}
               <Field label="Test question">
                 <textarea
                   value={question}
-                  required
+                  required={!editingSubflow}
                   maxLength={12000}
                   rows={3}
                   onChange={(e) => setQuestion(e.target.value)}
@@ -1005,7 +1463,9 @@ export function WorkflowPage({
               </Field>
               <button
                 className="primary"
-                disabled={!!problems.length || !question.trim()}
+                disabled={
+                  !!problems.length || (!editingSubflow && !question.trim())
+                }
               >
                 Test workflow
               </button>
@@ -1030,6 +1490,18 @@ export function WorkflowPage({
                     </button>{" "}
                     → {step.outcome}
                     {step.error && <p className="error-text">{step.error}</p>}
+                    {step.output && (
+                      <details>
+                        <summary>Step output</summary>
+                        <pre>{JSON.stringify(step.output, null, 2)}</pre>
+                      </details>
+                    )}
+                    {step.logs && (
+                      <details>
+                        <summary>Step logs</summary>
+                        <pre>{step.logs}</pre>
+                      </details>
+                    )}
                     <small>
                       {step.evidenceCount} cited passages available
                       {step.hasAccount ? " · verified account loaded" : ""}
@@ -1037,7 +1509,7 @@ export function WorkflowPage({
                   </li>
                 ))}
               </ol>
-              {!!test.citations.length && (
+              {!!test.citations?.length && (
                 <details>
                   <summary>Answer sources</summary>
                   {test.citations.map((c: Row) => (
@@ -1076,7 +1548,7 @@ export function WorkflowPage({
             </select>
           </Field>
           <button
-            disabled={!canEdit || !historyVersion}
+            disabled={!canEdit || Boolean(editingSubflow) || !historyVersion}
             onClick={() =>
               void act(async () => {
                 const version = await request(
@@ -1219,8 +1691,8 @@ export function WorkflowPage({
           </details>
           <p className="wf-note">
             Publishing changes new turns and invalidates pending action
-            approvals. Existing runs keep their saved graph version. No
-            arbitrary scripts, URLs, or credentials are embedded in a workflow.
+            approvals. Existing runs keep their saved graph and component
+            versions.
           </p>
         </section>
       </div>

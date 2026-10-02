@@ -25,7 +25,7 @@ Runs use per-conversation PostgreSQL advisory locks and revision checks. Turns w
 
 `workflows` stores the editable draft and optimistic revision; `workflow_versions` stores immutable published definitions. Message enqueue snapshots the active version and definition onto the run in the same transaction as the job. The runtime compiles that definition into LangGraph nodes and conditional edges, expanding governed actions into approval interrupt, revalidation, and execution. PostgreSQL checkpoints resume the exact saved graph after restart. Older `support-v2` runs retain their original graph; configured runs use `support-v3`.
 
-Publishing changes new turns and invalidates pending approvals. At the effect boundary the worker also checks that the run's workflow version is still active, including legacy runs created before the first publication. The graph cannot introduce arbitrary code, remote destinations, or customer identities. Preview uses the same configured graph but stops before action execution and does not persist conversations or approvals. See [workflows](workflows.md) for steps, roles, and bounds.
+Publishing changes new turns and invalidates pending approvals. At the effect boundary the worker also checks that the run's workflow version is still active, including legacy runs created before the first publication. Custom code executes only in the optional isolated Docker runner. API reads use fixed public endpoints or existing customer-bound read actions; graphs cannot select arbitrary destinations or establish customer identities. Preview uses the same configured graph, including isolated computation and API reads, but stops before account-changing action execution and does not persist conversations or approvals. See [workflows](workflows.md) for steps, roles, and bounds.
 
 ## Durable effects
 
@@ -45,4 +45,14 @@ Credentials use AES-256-GCM with workspace/provider scope as authenticated data.
 
 ## Deliberate deployment limits
 
-One server, persistent local uploads, one agent per workspace, and invited business customers. Large document import/history limits produce visible errors rather than partial silent ingestion. There is no SaaS billing, bundled model allowance, OCR, arbitrary code execution, or multi-region deployment. Provider registrations, DNS, TLS, SMTP, backups, and access governance remain operator responsibilities.
+One server, persistent local uploads, one agent per workspace, and invited business customers. Large document import/history limits produce visible errors rather than partial silent ingestion. There is no SaaS billing, bundled model allowance, OCR, unrestricted host code execution, or multi-region deployment. Provider registrations, DNS, TLS, SMTP, backups, and access governance remain operator responsibilities.
+
+## Reusable workflow components
+
+`workflow_components` stores the active library head and `workflow_component_versions` stores immutable schemas, code/API configuration, or subflow definitions. Publishing resolves workspace-scoped component references into `workflow_versions.compiled_definition`. Subflows expand into namespaced LangGraph nodes with input/output boundaries, preserving per-node checkpoints and action approval interrupts. Older published definitions without compiled snapshots continue unchanged.
+
+`workflow_step_results` records bounded outputs, logs, failures, and input hashes independently of checkpoints. A recovered node reuses its completed result only for identical inputs and still-valid customer/action/connection proofs. Code is pure computation; API steps are reads. Those operations can repeat if a crash occurs before their result is recorded. Write effects remain in the existing governed operation ledger.
+
+Step output is private by default. Explicit customer-safe output can supply template variables and cited AI evidence. Subflow inputs retain source visibility. Templates cannot execute code or interpolate secrets, and verified identity is rechecked before account data is published. Queued Zendesk replies additionally revalidate the pinned workflow, identity, and read proofs before delivery.
+
+The optional runner accepts operator-authenticated requests and launches a disposable non-root Docker container per execution. It alone holds the host Docker socket; child containers have no socket, app files, credentials, network, or capabilities. Runtime images are fixed by the operator. See [runner setup and limits](workflow-components.md#enable-the-optional-runner).

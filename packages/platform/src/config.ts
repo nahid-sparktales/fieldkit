@@ -9,6 +9,8 @@ const Schema = z.object({
   FIELDKIT_PORT: z.coerce.number().int().min(1).max(65535).default(4317),
   FIELDKIT_HOST: z.string().default("127.0.0.1"),
   FIELDKIT_DATA: z.string().default(".fieldkit/v2"),
+  FIELDKIT_RUNNER_URL: z.string().default(""),
+  FIELDKIT_RUNNER_TOKEN: z.string().default(""),
   FIELDKIT_MODEL_ENDPOINTS: z.string().default(""),
   FIELDKIT_ENCRYPTION_KEY: z
     .string()

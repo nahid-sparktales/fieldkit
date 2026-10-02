@@ -15,6 +15,7 @@
     "migrate": "tsx scripts/migrate.ts",
     "setup": "tsx scripts/setup.ts",
     "test": "tsx --test --test-concurrency=1 tests/*.test.ts",
+    "test:runner": "tsx scripts/verify-runner.ts",
     "test:browser": "playwright test",
     "test:live": "tsx scripts/verify-live.ts",
     "test:demo": "cd examples/demo && tsx --test --test-concurrency=1 tests/*.test.ts",

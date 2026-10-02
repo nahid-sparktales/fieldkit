@@ -10,6 +10,9 @@ FIELDKIT_DATA=.fieldkit/v2
 FIELDKIT_ENCRYPTION_KEY=${randomBytes(32).toString("base64")}
 BETTER_AUTH_SECRET=${randomBytes(32).toString("base64url")}
 FIELDKIT_SETUP_TOKEN=${randomBytes(32).toString("base64url")}
+# Optional isolated code runner: docker compose --profile code up --build -d
+# FIELDKIT_RUNNER_URL=http://runner:4319
+FIELDKIT_RUNNER_TOKEN=${randomBytes(32).toString("base64url")}
 # Configure SMTP before creating verified accounts or publishing support.
 SMTP_URL=
 SMTP_FROM=FieldKit <support@example.com>

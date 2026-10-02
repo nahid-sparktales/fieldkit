@@ -339,3 +339,86 @@
     font-size: 25px;
   }
 }
+
+.wf-library {
+  margin-bottom: 20px;
+}
+.wf-library > summary {
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+}
+.wf-library summary small {
+  margin-left: 12px;
+  font-weight: 400;
+}
+.wf-library-items {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+.wf-library-items article {
+  border: 1px solid var(--line, #dce5df);
+  border-radius: 12px;
+  padding: 16px;
+  min-width: 0;
+}
+.wf-library-items article small {
+  display: block;
+  margin-top: 5px;
+}
+.wf-library pre,
+.wf-test-result pre,
+.wf-inspector pre {
+  max-height: 300px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: #f2f5f1;
+  padding: 12px;
+  border-radius: 8px;
+}
+.wf-component-editor {
+  border-top: 1px solid var(--line, #dce5df);
+  padding-top: 16px;
+  margin-top: 20px;
+}
+.wf-code {
+  font-family: ui-monospace, SFMono-Regular, monospace;
+  font-size: 13px;
+  tab-size: 4;
+}
+.wf-mappings fieldset {
+  border: 1px solid #dce5df;
+  border-radius: 8px;
+  padding: 10px;
+  margin: 10px 0;
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.wf-mappings legend {
+  font-size: 13px;
+  font-weight: 600;
+}
+.wf-variable {
+  display: inline-block;
+  margin: 3px;
+  font-size: 11px;
+  padding: 5px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.wf-node.custom,
+.wf-node.subflow {
+  border-top-color: #84629f;
+}
+.wf-node.return {
+  border-top-color: #4c7f96;
+}
+.wf-run-list details {
+  padding: 12px 0;
+  border-bottom: 1px solid #dce5df;
+  overflow-wrap: anywhere;
+}

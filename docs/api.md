@@ -4,51 +4,56 @@ All resource endpoints live under `/v2`. Better Auth uses `/api/auth`. Staff and
 
 The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are the primary routes; inspect `apps/api/server.ts` for input validation and the complete contract.
 
-| Route suffix | Methods | Access and purpose |
-| --- | --- | --- |
-| empty | GET | Workspace settings, channels, usage |
-| `/settings` | PUT | Admin settings |
-| `/members`, `/invitations` | GET / POST | Staff list / admin invitations |
-| `/contacts`, `/contacts/:id/mapping` | GET / PUT | Staff identities / reviewed admin mapping |
-| `/agent/test` | POST | Admin answer preview with no account actions |
-| `/workflow` | GET / PUT | Staff graph/resources/version list / admin draft save with current revision |
-| `/workflow/publish` | POST | Admin publish of the exact saved draft revision |
-| `/workflow/test` | POST | Admin route preview with no action execution or ticket changes |
-| `/workflow/versions/:version` | GET | Staff read of an immutable published definition in this workspace |
-| `/conversations` | GET, POST | Staff inbox or own customer tickets |
-| `/conversations/:id` | GET, DELETE | Authorized history; admin deletion guards unresolved operations |
-| `/conversations/:id/messages` | POST | Customer message or staff reply; `body`, unique `requestKey` |
-| `/conversations/:id/notes` | POST | Staff-only internal note |
-| `/conversations/:id/control` | POST | Staff takeover/resume, assignment, status, Zendesk tags/assignee |
-| `/conversations/:id/events` | GET | SSE with repeated authorization checks |
-| `/sources` | GET | Staff knowledge library |
-| `/sources`, `/sources/upload` | POST | Admin selected import / multipart file upload |
-| `/sources/:id/refresh` | POST | Admin asynchronous refresh |
-| `/sources/:id/visibility` | PUT | Admin customer-answer approval |
-| `/documents/:id/publish` | PUT | Separate public article publication |
-| `/sources/:id` | DELETE | Admin source removal |
-| `/faqs` | GET / POST | Staff FAQ library / admin private draft creation |
-| `/faqs/:id` | PUT / DELETE | Admin edit with revision / remove FAQ |
-| `/faqs/:id/approve` | POST | Admin approval of the exact revision; queues indexing |
-| `/faqs/generate` | POST | Admin AI generation of private drafts from approved knowledge |
-| `/assistance` | GET / POST | Staff workflow history / queue a workflow; FAQ review and article creation require admin |
-| `/assistance/:id/cancel` | POST | Cancel queued or running work; already-created drafts stay private |
-| `/assistance/:id/retry` | POST | Retry a failed workflow from its saved progress |
-| `/assistance/:id/compose` | POST | Revalidate a reply/report and return text for the staff composer; does not send |
-| `/assistance/:id/apply` | POST | Apply reviewed triage or save a reviewed private article |
-| `/faqs/assist` | POST | Admin AI suggestion for the editor; does not save or publish |
-| `/connections` | GET | Admin metadata, no stored secrets |
-| `/connections/key` | POST | Validated key connection |
-| `/connections/:provider/oauth` | POST | Session-bound OAuth start |
-| `/connections/:provider` | DELETE | Disconnect and invalidate affected knowledge |
-| `/actions`, `/actions/:id` | GET, POST / PUT | Staff list / owner definitions and policies |
-| `/approvals/:id/decision` | POST | Owner/admin exact-hash approve/reject |
-| `/operations`, `/operations/jobs` | GET | Audit/recovery views |
-| `/operations/:id/reconcile`, `/jobs/:id/retry` | POST | Admin bounded recovery, no bypass |
-| `/identity-key` | POST | Owner widget identity-key rotation |
-| `/credentials`, `/credentials/:id` | GET, POST / DELETE | Owner scoped service-token issue/list/revoke |
-| `/identities` | POST | Trusted service establishes existing website customer identity |
-| `/requests`, `/requests/:id`, `/requests/:id/messages` | POST / GET / POST | Scoped service support request/status |
+| Route suffix                                           | Methods            | Access and purpose                                                                       |
+| ------------------------------------------------------ | ------------------ | ---------------------------------------------------------------------------------------- |
+| empty                                                  | GET                | Workspace settings, channels, usage                                                      |
+| `/settings`                                            | PUT                | Admin settings                                                                           |
+| `/members`, `/invitations`                             | GET / POST         | Staff list / admin invitations                                                           |
+| `/contacts`, `/contacts/:id/mapping`                   | GET / PUT          | Staff identities / reviewed admin mapping                                                |
+| `/agent/test`                                          | POST               | Admin answer preview with no account actions                                             |
+| `/workflow`                                            | GET / PUT          | Staff graph/resources/version list / admin draft save with current revision              |
+| `/workflow/publish`                                    | POST               | Admin publish of the exact saved draft revision                                          |
+| `/workflow/test`                                       | POST               | Admin route preview; code and reads run, with no account writes or ticket changes        |
+| `/workflow/components`                                 | POST               | Admin creates a reusable component version                                               |
+| `/workflow/components/:id`                             | PUT / DELETE       | Admin saves a new immutable version / archives from new selection                        |
+| `/workflow/components/:id/versions/:version`           | GET                | Staff reads an active component’s saved version in this workspace                        |
+| `/workflow/components/test`                            | POST               | Admin tests code/API/subflow with explicit JSON inputs; no writes                        |
+| `/workflow/step-results`                               | GET                | Staff reads the latest 30 custom executions, output, logs, and errors                    |
+| `/workflow/versions/:version`                          | GET                | Staff read of an immutable published definition in this workspace                        |
+| `/conversations`                                       | GET, POST          | Staff inbox or own customer tickets                                                      |
+| `/conversations/:id`                                   | GET, DELETE        | Authorized history; admin deletion guards unresolved operations                          |
+| `/conversations/:id/messages`                          | POST               | Customer message or staff reply; `body`, unique `requestKey`                             |
+| `/conversations/:id/notes`                             | POST               | Staff-only internal note                                                                 |
+| `/conversations/:id/control`                           | POST               | Staff takeover/resume, assignment, status, Zendesk tags/assignee                         |
+| `/conversations/:id/events`                            | GET                | SSE with repeated authorization checks                                                   |
+| `/sources`                                             | GET                | Staff knowledge library                                                                  |
+| `/sources`, `/sources/upload`                          | POST               | Admin selected import / multipart file upload                                            |
+| `/sources/:id/refresh`                                 | POST               | Admin asynchronous refresh                                                               |
+| `/sources/:id/visibility`                              | PUT                | Admin customer-answer approval                                                           |
+| `/documents/:id/publish`                               | PUT                | Separate public article publication                                                      |
+| `/sources/:id`                                         | DELETE             | Admin source removal                                                                     |
+| `/faqs`                                                | GET / POST         | Staff FAQ library / admin private draft creation                                         |
+| `/faqs/:id`                                            | PUT / DELETE       | Admin edit with revision / remove FAQ                                                    |
+| `/faqs/:id/approve`                                    | POST               | Admin approval of the exact revision; queues indexing                                    |
+| `/faqs/generate`                                       | POST               | Admin AI generation of private drafts from approved knowledge                            |
+| `/assistance`                                          | GET / POST         | Staff workflow history / queue a workflow; FAQ review and article creation require admin |
+| `/assistance/:id/cancel`                               | POST               | Cancel queued or running work; already-created drafts stay private                       |
+| `/assistance/:id/retry`                                | POST               | Retry a failed workflow from its saved progress                                          |
+| `/assistance/:id/compose`                              | POST               | Revalidate a reply/report and return text for the staff composer; does not send          |
+| `/assistance/:id/apply`                                | POST               | Apply reviewed triage or save a reviewed private article                                 |
+| `/faqs/assist`                                         | POST               | Admin AI suggestion for the editor; does not save or publish                             |
+| `/connections`                                         | GET                | Admin metadata, no stored secrets                                                        |
+| `/connections/key`                                     | POST               | Validated key connection                                                                 |
+| `/connections/:provider/oauth`                         | POST               | Session-bound OAuth start                                                                |
+| `/connections/:provider`                               | DELETE             | Disconnect and invalidate affected knowledge                                             |
+| `/actions`, `/actions/:id`                             | GET, POST / PUT    | Staff list / owner definitions and policies                                              |
+| `/approvals/:id/decision`                              | POST               | Owner/admin exact-hash approve/reject                                                    |
+| `/operations`, `/operations/jobs`                      | GET                | Audit/recovery views                                                                     |
+| `/operations/:id/reconcile`, `/jobs/:id/retry`         | POST               | Admin bounded recovery, no bypass                                                        |
+| `/identity-key`                                        | POST               | Owner widget identity-key rotation                                                       |
+| `/credentials`, `/credentials/:id`                     | GET, POST / DELETE | Owner scoped service-token issue/list/revoke                                             |
+| `/identities`                                          | POST               | Trusted service establishes existing website customer identity                           |
+| `/requests`, `/requests/:id`, `/requests/:id/messages` | POST / GET / POST  | Scoped service support request/status                                                    |
 
 Public routes under `/v2/public/:slug` expose only published configuration and articles. `/join` binds a verified portal account. `/widget/session` creates an anonymous or server-signed customer token for a published widget. Exact allowed origins are checked. `/v2/webhooks/zendesk/:workspaceId` accepts only provider-signed events. OAuth callbacks are `/v2/oauth/:provider/callback`.
 
@@ -99,17 +104,20 @@ Publish with `{ "revision": 1 }`. Both saving and publishing increment the draft
 `packages/sdk/src/index.ts` is a server-side TypeScript client. Keep its service token on your trusted server. `identify` asserts ownership, so call it only from your authenticated account system; never expose it as a model tool.
 
 ```ts
-import { FieldKitClient } from './packages/sdk/src/index.js';
+import { FieldKitClient } from "./packages/sdk/src/index.js";
 const client = new FieldKitClient({
   url: process.env.FIELDKIT_URL!,
   workspaceId: process.env.FIELDKIT_WORKSPACE!,
   token: process.env.FIELDKIT_TOKEN!,
   customerId: authenticatedUser.id,
 });
-await client.identify({ externalCustomerId: authenticatedUser.id, name: authenticatedUser.name });
+await client.identify({
+  externalCustomerId: authenticatedUser.id,
+  name: authenticatedUser.name,
+});
 const ticket = await client.request({
   externalCustomerId: authenticatedUser.id,
-  body: 'I need help with my order.',
+  body: "I need help with my order.",
   requestKey: crypto.randomUUID(),
 });
 const state = await client.status(ticket.id);
@@ -128,3 +136,9 @@ npm run fieldkit -- status CONVERSATION_ID
 ```
 
 Run `npm run mcp` as a stdio server with those variables plus `FIELDKIT_CUSTOMER` fixed by the trusted MCP host. It exposes exactly `request_support` and `support_status`. The model cannot choose a different customer, create mappings, approve actions, or directly execute tools. Approvals stay in the authenticated staff interface/API. Do not give a customer-facing model the installation `.env`, database credentials, a staff session, or an unrestricted CLI environment.
+
+### Reusable components and reply templates
+
+See [component contracts and examples](workflow-components.md). `POST /workflow/components` takes `{ "revision": 0, "definition": { ... } }`; updating `/:id` uses the last returned revision. Definitions are `kind: "code"` (Python/JavaScript), `"api"` (fixed `public_get` or existing `customer_action`), or `"subflow"` (an editable workflow). All have a name, description, closed input/output JSON schemas, and `customerSafe` (default false). Code additionally has `language` and `code`; API has `source`, `endpoint` or `actionId`; subflows have `workflow`. Tests take `{ "definition": { ... }, "input": { ... }, "contactId": "optional-verified-contact" }` and return output and trace. The optional runner is required only for code.
+
+Custom/subflow nodes reference `componentId`, immutable `version`, and `inputs`, keyed by schema field: `{ "type": "path", "path": "customer.id" }` or `{ "type": "value", "value": 40 }`. A Return node has `outcome: "done" | "failed"` and `outputs` using the same mapping format. Compiled `task`/`scope` nodes and their execution metadata are server-only and rejected in editor definitions. Reply nodes select `content: "agent" | "exact" | "template"` and `text`; value conditions use `field: "value"`, a variable `path`, comparison `operator`, and a string `value` parsed as JSON when applicable. Existing format-1 graphs receive default AI reply behavior.

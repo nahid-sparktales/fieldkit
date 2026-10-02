@@ -1,3 +1,4 @@
+import type { CodeRunner } from "./code-runner.js";
 import type { Config } from "./config.js";
 import { Database, uid } from "./db.js";
 import {
@@ -42,7 +43,12 @@ export class Platform {
   workflows: Workflows;
   constructor(
     public config: Config,
-    options: { mailer?: Mailer; fetch?: Fetcher; model?: ModelPort } = {},
+    options: {
+      mailer?: Mailer;
+      fetch?: Fetcher;
+      model?: ModelPort;
+      runner?: CodeRunner;
+    } = {},
   ) {
     this.db = new Database(config);
     this.auth = createAuth(this.db, options.mailer);
@@ -63,6 +69,7 @@ export class Platform {
       this.model,
       this.actions,
       this.support,
+      options.runner,
     );
     this.workflows = new Workflows(this.db, this.agent);
   }

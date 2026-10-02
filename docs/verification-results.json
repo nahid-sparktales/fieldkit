@@ -112,5 +112,29 @@
       "migration repeat",
       "worker restart/readiness"
     ]
+  },
+  "workflow_customization": {
+    "recorded_at": "2026-10-02T03:00:59.026828+00:00",
+    "typecheck": "passed",
+    "production_build": "passed",
+    "v2_database_tests": {
+      "passed": 78,
+      "failed": 0,
+      "provider_mode": "injected model/providers/code runner; real PostgreSQL and LangGraph"
+    },
+    "browser_journeys": {
+      "passed": 1,
+      "failed": 0,
+      "scope": "onboarding, knowledge, customer portal, takeover, reusable API/Python library, subflow input/output mapping, template reply, publish, desktop/mobile",
+      "provider_mode": "injected model/HTTP providers; code execution unavailable locally and visibly reported"
+    },
+    "installation_schema": 8,
+    "installation_readiness": "passed",
+    "secret_review": "Current source and full Git history: no findings",
+    "production_dependency_audit": {
+      "known_vulnerabilities": 0
+    },
+    "docker_code_execution": "Not run locally: Docker unavailable; dedicated real-Docker CI check added",
+    "live_provider_verification": "No live model or provider account calls; external release gates unchanged"
   }
 }

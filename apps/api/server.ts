@@ -1,3 +1,4 @@
+import { WorkflowDefinition } from "../../packages/platform/src/workflow-definition.js";
 import {
   createServer,
   type IncomingMessage,
@@ -453,6 +454,54 @@ export async function createApp(
           json(res, { settings });
           return;
         }
+        if (suffix === "/workflow/components" && method === "POST") {
+          json(res, await app.workflows.components.save(p, await body(req)));
+          return;
+        }
+        if (suffix === "/workflow/components/test" && method === "POST") {
+          json(res, await app.workflows.testComponent(p, await body(req)));
+          return;
+        }
+        const componentVersion = suffix.match(
+          /^\/workflow\/components\/([^/]+)\/versions\/(\d+)$/,
+        );
+        if (componentVersion && method === "GET") {
+          requireStaff(p);
+          json(res, {
+            definition: await app.workflows.components.version(
+              ws,
+              componentVersion[1],
+              Number(componentVersion[2]),
+            ),
+          });
+          return;
+        }
+        const component = suffix.match(/^\/workflow\/components\/([^/]+)$/);
+        if (component && method === "PUT") {
+          json(
+            res,
+            await app.workflows.components.save(
+              p,
+              await body(req),
+              component[1],
+            ),
+          );
+          return;
+        }
+        if (component && method === "DELETE") {
+          json(res, await app.workflows.components.archive(p, component[1]));
+          return;
+        }
+        if (suffix === "/workflow/step-results" && method === "GET") {
+          requireStaff(p);
+          json(res, {
+            steps: await app.db.rows(
+              "SELECT run_id,node_id,status,output,logs,error,created_at,finished_at FROM workflow_step_results WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 30",
+              [ws],
+            ),
+          });
+          return;
+        }
         if (suffix === "/workflow" && method === "GET") {
           json(res, await app.workflows.get(p));
           return;
@@ -575,16 +624,19 @@ export async function createApp(
             .strict()
             .parse(await body(req));
           const workflow = await app.db.one(
-            "SELECT v.definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
+            "SELECT COALESCE(v.compiled_definition,v.definition) definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
             [ws],
           );
           if (workflow) {
             json(
               res,
-              await app.workflows.preview(p, {
-                definition: workflow.definition,
-                question: d.question,
-              }),
+              await app.agent.previewWorkflow(
+                ws,
+                WorkflowDefinition.parse(workflow.definition),
+                d.question,
+                { id: "anonymous-preview", verified: false, mappings: {} },
+                "portal",
+              ),
             );
             return;
           }

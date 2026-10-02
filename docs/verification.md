@@ -2,6 +2,14 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Workflow customization verification — 2026-10-02
+
+All 78 v2 tests, type checking, the production build, and the expanded browser journey passed locally. Thirteen customization tests cover exact/template replies without model usage, variable validation, typed conditions, customer visibility, schema failures, immutable components/subflows, cached-result recovery, tenant/role boundaries, fixed API destinations, verified customer reads, takeover, changed identity, nested action approvals, AI citations, and revoked read authority before Zendesk delivery. Existing process-restart approval regressions still pass.
+
+The browser journey creates and tests a public API step, saves a Python component, verifies the unavailable-runner error, builds a subflow with mapped inputs/outputs, uses its result in a reply template, and publishes the graph. Desktop/mobile layout checks passed. Provider and model responses are injected test fixtures; this does not verify live vendor accounts. Local schema 8 migration and app/worker readiness passed after a database backup. Secret scans found no findings and the production dependency audit reported zero known vulnerabilities.
+
+Docker is unavailable on the development Mac. The dedicated CI check builds the real runner image and tests actual Python/JavaScript execution, authentication, network/filesystem/credential isolation, output/log bounds, timeout, and cleanup. See the repository's current CI run for that check's result; local adapter doubles are not evidence of container execution. Operator setup is documented in [customization and runner setup](workflow-components.md).
+
 ## Model providers and README identity — 2026-10-01
 
 All 65 v2 tests, type checking, the production build, and the complete browser journey passed. Six new provider suites exercise the actual adapters with injected HTTP responses for Claude, Kimi, OpenRouter, DeepSeek, vLLM, and generic compatible servers. They cover connection validation, structured answers, FAQ/staff assistance, provider overrides, reported usage on invalid/truncated results, conservative reservations when usage is missing, budgets, exact embedding dimensions, reindexing, publication preservation, and rejection of incompatible vectors. A real local HTTP server verifies operator-approved private transport, blocked redirects, and isolation from document/action networking.

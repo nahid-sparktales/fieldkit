@@ -19,7 +19,7 @@ Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of t
 - **Inbox support assistant:** triage and prioritize a ticket, research across indexed sources, draft a customer response, package an engineering escalation, and turn a resolved ticket into a private knowledge-base article. Review and edit outputs with evidence before applying them. Internal research can use staff-only knowledge; customer replies cannot. Type `/customer-support` in a staff reply box to open the assistant.
 - PDF, DOCX, Markdown, text, individual website pages or entire public documentation sites (Docusaurus/GitBook), selected Notion pages, Google Picker files, and Zendesk help-center articles. Background ingestion, extraction errors, per-page versions and citations, manual refresh, and hourly synchronization. Imported knowledge starts staff-only; approval for customer answers and public article publication are separate controls.
 - Multiple model providers inside LangGraph, separate response and embedding settings, PostgreSQL checkpoints, tenant-scoped pgvector/keyword retrieval, citations, provider-reported token usage, and workspace budgets. Claude uses its native Messages API; OpenAI uses Responses; other providers use compatible Chat Completions. Every result is schema-validated. See [model setup](docs/models.md).
-- **Workflow:** visually edit the agent's actual LangGraph with draggable steps, outcome connections, customer-account lookup, selected knowledge/FAQs, model instructions, conditions, existing actions, approvals, replies, and staff handoff. Save drafts, test routes without executing actions, publish immutable versions, and restore an earlier version as a new draft. See the [workflow guide](docs/workflows.md).
+- **Workflow:** visually edit the agent's actual LangGraph with draggable steps, outcome connections, customer-account lookup, selected knowledge/FAQs, model instructions, conditions, existing actions, approvals, exact replies, variable templates, and staff handoff. Reuse versioned subflows and Python/JavaScript/API steps with mapped inputs, outputs, and run logs. Save drafts, test routes without executing actions, publish immutable versions, and restore an earlier version as a new draft. See the [workflow guide](docs/workflows.md).
 - Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.
 - Separate Stripe test/live connections, purchase/subscription retrieval, full or partial refunds, and selected-subscription cancellation at period end. Fixed-destination custom APIs with schemas, reviewed customer mappings, exact approvals, automatic limits, durable operation IDs, and outcome lookup.
 - A `/v2` API, event streams, authenticated SDK/CLI/MCP, durable PostgreSQL jobs, a separate worker, health checks, and Docker Compose packaging.
@@ -46,7 +46,7 @@ Proxy the public domain to `127.0.0.1:4317` with streaming enabled. PostgreSQL i
 
 Open the app, register, verify your email, and create the first workspace with `FIELDKIT_SETUP_TOKEN` from `.env`. Invite staff from Team. Connect your model providers in **Connections**, select response and embedding models in **Settings**, add knowledge, approve customer-safe sources, configure actions, and test the agent. Use **Workflow** to customize and publish its graph, then publish a portal/widget or connect Zendesk. Replies initially require staff review; automatic replies are an explicit workspace setting. Account-changing actions initially require approval independently of reply mode.
 
-In **Workflow**, select a step to choose its knowledge, account data, model instructions, or allowed actions. Drag steps and connect their outcomes, save a draft, test its route, and publish a version when ready. Tests use your model quota and can read a selected verified customer's account, but never execute actions or send replies. [Full workflow guide →](docs/workflows.md)
+In **Workflow**, select a step to choose its knowledge, account data, model instructions, or allowed actions. Drag steps and connect their outcomes, save a draft, test its route, and publish a version when ready. Only routes reaching model/embedding steps use model quota. Previews can read a selected verified customer's account and run isolated code, but never perform account writes or send replies. [Full workflow guide →](docs/workflows.md)
 
 ## Verification status
 
@@ -70,6 +70,7 @@ For local development, configure PostgreSQL 17 with pgvector, run `npm run migra
 ## Guides
 
 - [Visual LangGraph workflow editor](docs/workflows.md)
+- [Custom replies, Python/JavaScript/API steps, subflows, and runner setup](docs/workflow-components.md)
 - [Model providers and self-hosted vLLM](docs/models.md)
 - [Integrations, identities, and custom actions](docs/integrations.md)
 - [Installation and operations](docs/operations.md)
@@ -79,4 +80,4 @@ For local development, configure PostgreSQL 17 with pgvector, run `npm run migra
 - [Contributing and local development](CONTRIBUTING.md)
 - [Reporting a security vulnerability](SECURITY.md)
 
-One installation on one server and one agent configuration per workspace are the initial deployment boundaries. Paid hosting, subscriptions, included model credits, OCR, arbitrary scripts, and unrestricted agent HTTP access are outside this release.
+One installation on one server and one agent configuration per workspace are the initial deployment boundaries. Paid hosting, subscriptions, included model credits, OCR, unrestricted host scripts, and unrestricted agent HTTP access are outside this release.

@@ -17,9 +17,11 @@ const app = await createApp(c, {
   workers: true,
   model: new TestModel(),
   fetch: (url, init) =>
-    new URL(url).origin === docs.origin
-      ? docs.fetch(url, init)
-      : providers.fetch(url, init),
+    url === "https://status.example.com/api"
+      ? Promise.resolve(Response.json({ status: "operational" }))
+      : new URL(url).origin === docs.origin
+        ? docs.fetch(url, init)
+        : providers.fetch(url, init),
   mailer: async (to, _subject, text) => {
     await writeFile(
       ".fieldkit/browser/" + to.replace(/[^a-zA-Z0-9]/g, "_") + ".txt",

@@ -21,6 +21,14 @@ import type { Actions } from "./actions.js";
 import type { Support } from "./support.js";
 import { HttpError, requireValue } from "./config.js";
 import { digest } from "./security.js";
+import { WorkflowExecution } from "./workflow-execution.js";
+import type { CodeRunner } from "./code-runner.js";
+import {
+  bindValues,
+  valueAt,
+  matches,
+  renderReply,
+} from "./workflow-values.js";
 import { compileWorkflow, WorkflowState } from "./workflow-graph.js";
 import {
   WorkflowDefinition,
@@ -48,13 +56,16 @@ type RunState = {
 };
 export class Agent {
   graph;
+  execution: WorkflowExecution;
   constructor(
     public db: Database,
     public knowledge: Knowledge,
     public model: ModelPort,
     public actions: Actions,
     public support: Support,
+    runner?: CodeRunner,
   ) {
+    this.execution = new WorkflowExecution(db, actions, runner);
     const step =
       (name: string, fn: (run: any) => Promise<void>) =>
       async (s: typeof State.State) => {
@@ -160,7 +171,7 @@ export class Agent {
       );
   }
   private configuredGraph(def: Workflow) {
-    const problems = workflowProblems(def);
+    const problems = workflowProblems(def, { expanded: true });
     if (problems.length) throw new HttpError(409, problems.join("\n"));
     const step =
       (operation: "node" | "approve" | "execute") =>
@@ -236,8 +247,27 @@ export class Agent {
       )?.body ??
       "";
     run.status = "running";
+    if (node.type === "scope") {
+      await this.execution.boundary(run, node);
+      return;
+    }
+    if (node.type === "task") {
+      await this.execution.task(run, node);
+      return;
+    }
+    if (node.type === "return") {
+      run.state.previewOutput = bindValues(
+        node.data.outputs,
+        await this.execution.context(run, node),
+      );
+      run.state.outcome = node.data.outcome;
+      run.state.response = JSON.stringify(run.state.previewOutput, null, 2);
+      run.status = "completed";
+      return;
+    }
     if (node.type === "start") {
       run.state.evidence = [];
+      run.state.stepEvidence = [];
       run.state.outcome = "next";
       return;
     }
@@ -287,7 +317,17 @@ export class Agent {
     }
     if (node.type === "condition") {
       let yes = false;
-      if (node.data.field === "evidence")
+      if (node.data.field === "value") {
+        try {
+          yes = matches(
+            valueAt(await this.execution.context(run, node), node.data.path),
+            node.data.operator,
+            node.data.value,
+          );
+        } catch (e) {
+          this.handoff(run, (e as Error).message);
+        }
+      } else if (node.data.field === "evidence")
         yes = Boolean(run.state.evidence?.length);
       else if (node.data.field === "channel")
         yes =
@@ -384,7 +424,26 @@ export class Agent {
       return;
     }
     if (node.type === "reply") {
-      if (!run.state.receipt && run.state.route !== "handoff") {
+      if (node.data.content !== "agent" && run.state.route !== "handoff") {
+        try {
+          if (run.state.draft?.intent === "action" && !run.state.receipt)
+            throw new Error(
+              "An account action must complete its governed action step before a custom reply",
+            );
+          await this.execution.validate(run);
+          run.state.response =
+            node.data.content === "template"
+              ? renderReply(
+                  node.data.text,
+                  await this.execution.context(run, node, true),
+                )
+              : node.data.text;
+          run.state.route = "respond";
+          if (run.state.draft) run.state.draft.citationIds = [];
+        } catch (e) {
+          this.handoff(run, (e as Error).message);
+        }
+      } else if (!run.state.receipt && run.state.route !== "handoff") {
         if (["answer", "clarify"].includes(run.state.draft?.intent)) {
           run.state.response = run.state.draft.answer;
           run.state.route = "respond";
@@ -404,12 +463,17 @@ export class Agent {
     question: string,
     contact: any,
     channel: string,
+    inputs: Record<string, unknown> = {},
   ) {
     const run: any = {
       id: `preview-${uid()}`,
       workspace_id: ws,
       revision: 0,
-      state: { evidence: [] },
+      state: {
+        evidence: [],
+        inputs: { "": inputs },
+        safeInputs: { "": inputs },
+      },
       status: "running",
       preview: true,
       previewContact: contact,
@@ -426,19 +490,24 @@ export class Agent {
     const graph = compileWorkflow(def, async (node) => {
       await this.workflowStep(run, node, def);
       trace.push({
-        nodeId: node.id,
+        nodeId: node.origin || node.id,
+        executionId: node.id,
         title: node.title,
         type: node.type,
         outcome: run.state.outcome ?? run.state.route,
         error: run.state.error ?? null,
         evidenceCount: run.state.evidence?.length ?? 0,
         hasAccount: !!run.state.account,
+        output:
+          run.state.outputs?.[node.scope ?? ""]?.[node.localId ?? node.id]
+            ?.output ?? null,
+        logs: node.type === "task" ? (run.state.lastStepLogs ?? "") : "",
       });
       return { outcome: run.state.outcome ?? "", route: run.state.route ?? "" };
     });
     await graph.invoke(
       { workspaceId: ws, runId: run.id },
-      { recursionLimit: 80 },
+      { recursionLimit: 240 },
     );
     if (!(await this.knowledge.validEvidence(ws, run.state.evidence ?? [])))
       throw new HttpError(
@@ -459,14 +528,17 @@ export class Agent {
           "The customer identity changed during preview.",
         );
     }
+    await this.execution.validate(run);
     return {
       trace,
+      output: run.state.previewOutput ?? null,
       answer: run.state.response ?? "",
       intent: run.state.route ?? run.state.draft?.intent,
       action: run.state.previewAction ?? null,
-      citations: (run.state.evidence ?? []).filter((e: Citation) =>
-        run.state.draft?.citationIds.includes(e.id),
-      ),
+      citations: [
+        ...(run.state.evidence ?? []),
+        ...(run.state.stepEvidence ?? []),
+      ].filter((e: Citation) => run.state.draft?.citationIds.includes(e.id)),
       actionsExecuted: false,
     };
   }
@@ -522,6 +594,7 @@ export class Agent {
   ) {
     if (run.state.route || !(await this.current(run))) return;
     try {
+      await this.execution.validate(run);
       const workspace = requireValue(
           await this.db.one("SELECT * FROM workspaces WHERE id=$1", [
             run.workspace_id,
@@ -565,7 +638,10 @@ export class Agent {
                 },
               ]
             : messages,
-        evidence: run.state.evidence ?? [],
+        evidence: [
+          ...(run.state.evidence ?? []),
+          ...(run.state.stepEvidence ?? []),
+        ],
         actions: actions.map((a) => ({
           name: a.name,
           description:
@@ -588,7 +664,10 @@ export class Agent {
       });
       if (draft.answer.length > 12000 || draft.reason.length > 2000)
         throw new Error("Model response exceeded limits");
-      const evidence = (run.state.evidence ?? []) as Citation[];
+      const evidence = [
+        ...(run.state.evidence ?? []),
+        ...(run.state.stepEvidence ?? []),
+      ] as Citation[];
       if (draft.citationIds.some((id) => !evidence.some((e) => e.id === id)))
         throw new Error("The model cited evidence that was not retrieved");
       if (draft.intent === "answer" && !draft.citationIds.length)
@@ -639,7 +718,7 @@ export class Agent {
         contact,
         action,
         d.parameters,
-        digest(s.evidence),
+        digest([...(s.evidence ?? []), ...(run.state.stepEvidence ?? [])]),
         d.reason,
       );
       const validated = await this.actions.revalidate(
@@ -762,6 +841,7 @@ export class Agent {
           run.workspace_id,
         ]);
         await this.workflowAuthority(run, q);
+        await this.execution.validate(run, q);
         const { action, identity, connection } = await this.actions.revalidate(
           run.workspace_id,
           p,
@@ -901,6 +981,11 @@ export class Agent {
             "Customer identity changed before the response was published.",
           );
       }
+      try {
+        await this.execution.validate(run, q);
+      } catch (e) {
+        this.handoff(run, (e as Error).message);
+      }
       const settings = Settings.parse(
         requireValue(
           await this.db.one(
@@ -915,7 +1000,10 @@ export class Agent {
           options?.forceReview ||
             (settings.replies === "review" && !run.state.receipt),
         ) && run.state.route !== "handoff";
-      const citations = (run.state.evidence ?? []).filter((e: Citation) =>
+      const citations = [
+        ...(run.state.evidence ?? []),
+        ...(run.state.stepEvidence ?? []),
+      ].filter((e: Citation) =>
         (run.state.draft?.citationIds ?? []).includes(e.id),
       );
       const body =
@@ -945,7 +1033,10 @@ export class Agent {
             ...(!review && run.state.route !== "handoff"
               ? {
                   guardRevision: run.revision,
-                  evidenceIds: citations.map((e: Citation) => e.id),
+                  evidenceIds: citations
+                    .filter((e: Citation) => !e.id.startsWith("step:"))
+                    .map((e: Citation) => e.id),
+                  workflowRunId: run.workflow_version ? run.id : undefined,
                 }
               : {}),
           },
@@ -1051,7 +1142,7 @@ export class Agent {
           : this.graph;
       const config = {
         configurable: { thread_id: `${ws}:${id}` },
-        recursionLimit: 80,
+        recursionLimit: 240,
         durability: "sync" as const,
       };
       const saved = await graph.getState(config);

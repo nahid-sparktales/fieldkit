@@ -632,6 +632,38 @@ test("workflow HTTP editing, previews and version history enforce current worksp
     cookie,
   );
   assert.equal(setupPreview.json.answer, preview.json.answer);
+  const componentDefinition = {
+    kind: "code",
+    name: "Pure calculation",
+    language: "python",
+    code: "def run(input):\n    return {}",
+  };
+  const component = await call(
+    `${path}/components`,
+    { revision: 0, definition: componentDefinition },
+    cookie,
+  );
+  assert.equal(component.response.status, 200, JSON.stringify(component.json));
+  const componentPath = `${path}/components/${component.json.id}`;
+  assert.equal(
+    (await call(componentPath + "/versions/1", undefined, cookie)).response
+      .status,
+    200,
+  );
+  assert.equal(
+    (await call(`${path}/step-results`, undefined, cookie)).response.status,
+    200,
+  );
+  assert.equal(
+    (
+      await call(
+        `/v2/workspaces/${other.ws.id}/workflow/components/${component.json.id}/versions/1`,
+        undefined,
+        cookie,
+      )
+    ).response.status,
+    403,
+  );
   assert.equal(
     (
       await call(
@@ -655,6 +687,18 @@ test("workflow HTTP editing, previews and version history enforce current worksp
     ["", { revision: published.json.revision, definition }, "PUT"],
     ["/publish", { revision: published.json.revision }, "POST"],
     ["/test", { definition, question: "Hello" }, "POST"],
+    ["/components", { revision: 0, definition: componentDefinition }, "POST"],
+    [
+      "/components/test",
+      { definition: componentDefinition, input: {} },
+      "POST",
+    ],
+    [`/components/${component.json.id}`, {}, "DELETE"],
+    [
+      `/components/${component.json.id}`,
+      { revision: 1, definition: componentDefinition },
+      "PUT",
+    ],
   ] as const)
     assert.equal(
       (await call(path + suffix, data, cookie, method)).response.status,

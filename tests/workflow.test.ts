@@ -195,7 +195,10 @@ test("published workflows pin a graph version and apply source selection, accoun
   );
   assert.equal(result.run.graph_version, "support-v3");
   assert.equal(result.run.workflow_version, 1);
-  assert.deepEqual(result.run.workflow_definition, def);
+  assert.deepEqual(
+    result.run.workflow_definition,
+    await app.workflows.components.expand(w.ws.id, def),
+  );
   const events = await app.db.rows(
     "SELECT data FROM events WHERE conversation_id=$1 AND kind='agent.step'",
     [result.conv.id],
@@ -324,7 +327,10 @@ test("publishing a new workflow revokes pending approvals and keeps old run snap
   await app.agent.advance(w.ws.id, run.id);
   assert.equal(providers.writes, 0);
   const saved = (await app.db.one("SELECT * FROM runs WHERE id=$1", [run.id]))!;
-  assert.deepEqual(saved.workflow_definition, def);
+  assert.deepEqual(
+    saved.workflow_definition,
+    await app.workflows.components.expand(w.ws.id, def),
+  );
   assert.equal(saved.status, "handed_off");
   const next = await turn(w, "refund please");
   assert.equal(next.run.workflow_version, 2);

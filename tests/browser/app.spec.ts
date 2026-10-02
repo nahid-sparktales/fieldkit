@@ -530,6 +530,164 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await page.getByRole("button", { name: "Workflow", exact: true }).click();
+  const library = page.locator(".wf-library");
+  await library.locator("summary").first().click();
+  await library
+    .getByRole("button", { name: "New API step", exact: true })
+    .click();
+  await page
+    .getByLabel("Component name", { exact: true })
+    .fill("Service status");
+  await page
+    .getByLabel("Public API URL")
+    .fill("https://status.example.com/api");
+  const statusSchema = JSON.stringify({
+    type: "object",
+    properties: { status: { type: "string" } },
+    required: ["status"],
+    additionalProperties: false,
+  });
+  await page
+    .getByLabel("Output JSON schema", { exact: true })
+    .fill(statusSchema);
+  await page
+    .getByRole("checkbox", {
+      name: "Allow this step’s output in customer replies and AI answers",
+    })
+    .check();
+  await library.getByText("Test this step", { exact: true }).click();
+  await library
+    .getByRole("button", { name: "Test component", exact: true })
+    .click();
+  await expect(page.getByLabel("Component test output")).toContainText(
+    '"status": "operational"',
+  );
+  await library
+    .getByRole("button", { name: "Save component version", exact: true })
+    .click();
+  await expect(
+    library.getByRole("button", { name: "Edit Service status", exact: true }),
+  ).toBeVisible();
+  await library
+    .getByRole("button", { name: "New Python step", exact: true })
+    .click();
+  await page
+    .getByLabel("Component name", { exact: true })
+    .fill("Calculate eligibility");
+  await library.getByText("Test this step", { exact: true }).click();
+  await library
+    .getByRole("button", { name: "Test component", exact: true })
+    .click();
+  await expect(library.getByRole("alert")).toContainText(
+    "runner is not configured",
+  );
+  await library
+    .getByRole("button", { name: "Save component version", exact: true })
+    .click();
+  await expect(
+    library.getByRole("button", {
+      name: "Edit Calculate eligibility",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await library
+    .getByRole("button", { name: "New subflow", exact: true })
+    .click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Return service status");
+  await page
+    .getByLabel("Input JSON schema", { exact: true })
+    .fill(statusSchema);
+  await page
+    .getByLabel("Output JSON schema", { exact: true })
+    .fill(statusSchema);
+  await page
+    .getByRole("checkbox", {
+      name: "Allow returned values in customer reply templates",
+    })
+    .check();
+  await page.getByLabel("Selected step").selectOption("result");
+  await page.getByLabel("Output status source").selectOption("path");
+  await page.getByLabel("Output status variable").fill("inputs.status");
+  await page
+    .getByLabel("Subflow test input JSON")
+    .fill('{"status":"operational"}');
+  await page
+    .getByRole("button", { name: "Test workflow", exact: true })
+    .click();
+  await expect(page.getByLabel("Workflow test result")).toContainText(
+    '"status": "operational"',
+  );
+  await page
+    .getByRole("button", { name: "Save subflow version", exact: true })
+    .click();
+  await expect(
+    page.getByText("Published version 1", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "＋ Custom step", exact: true })
+    .click();
+  const customId = await page.getByLabel("Selected step").inputValue();
+  await page
+    .getByLabel("Reusable component")
+    .selectOption({ label: "Service status · latest v1" });
+  await page
+    .getByLabel("Route failed", { exact: true })
+    .selectOption("handoff");
+  await page.getByRole("button", { name: "＋ Subflow", exact: true }).click();
+  const subflowId = await page.getByLabel("Selected step").inputValue();
+  await page
+    .getByLabel("Reusable component")
+    .selectOption({ label: "Return service status · latest v1" });
+  await page.getByLabel("Input status source").selectOption("path");
+  await page
+    .getByLabel("Input status variable")
+    .fill(`steps.${customId}.output.status`);
+  await page.getByLabel("Route done", { exact: true }).selectOption("customer");
+  await page
+    .getByLabel("Route failed", { exact: true })
+    .selectOption("handoff");
+  await page.getByLabel("Selected step").selectOption(customId);
+  await page.getByLabel("Route done", { exact: true }).selectOption(subflowId);
+  await page.getByLabel("Selected step").selectOption("start");
+  await page.getByLabel("Route next", { exact: true }).selectOption(customId);
+  await page.getByLabel("Selected step").selectOption("reply");
+  await page.getByLabel("Reply content").selectOption("template");
+  await page
+    .getByLabel("Customer reply", { exact: true })
+    .fill(`Service: {{steps.${subflowId}.output.status}}`);
+  await page
+    .getByLabel("Test question", { exact: true })
+    .fill("What is your return policy?");
+  await page
+    .getByRole("button", { name: "Test workflow", exact: true })
+    .click();
+  await expect(page.getByLabel("Workflow test result")).toContainText(
+    "Service: operational",
+  );
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Publish workflow", exact: true })
+    .click();
+  await expect(
+    page.getByText("Published version 2", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/custom-workflow.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/custom-workflow-mobile.png",
+    fullPage: true,
+  });
   expect(errors).toEqual([]);
   await customerContext.close();
 });

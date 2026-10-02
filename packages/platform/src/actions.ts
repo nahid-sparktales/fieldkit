@@ -224,6 +224,47 @@ export class Actions {
         );
     }
   }
+  async readForWorkflow(
+    ws: string,
+    run: any,
+    contact: any,
+    actionId: string,
+    parameters: Record<string, unknown>,
+    operationId: string,
+  ) {
+    const action = requireValue(
+      await this.db.one<ActionDefinition>(
+        "SELECT * FROM actions WHERE workspace_id=$1 AND id=$2 AND enabled AND kind='custom_read'",
+        [ws, actionId],
+      ),
+      409,
+      "Choose an enabled custom read action",
+    );
+    const proof = await this.prepare(
+      ws,
+      run,
+      contact,
+      action,
+      parameters,
+      "",
+      "Configured workflow lookup",
+    );
+    const { identity } = await this.revalidate(ws, proof);
+    const result = await this.custom(
+      action,
+      ws,
+      { operationId, customerId: identity, parameters },
+      false,
+    );
+    const validate = ajv.compile(requireValue(action.config.outputSchema));
+    if (("$async" in validate && validate.$async) || !validate(result))
+      throw new HttpError(
+        502,
+        "Lookup output does not match the action schema",
+      );
+    await this.revalidate(ws, proof);
+    return { result, proof };
+  }
   async automatic(ws: string, action: ActionDefinition, p: Proposal) {
     if (action.kind === "custom_read") return true;
     if (action.policy.mode !== "automatic") return false;

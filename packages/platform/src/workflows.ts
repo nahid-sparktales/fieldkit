@@ -1,3 +1,9 @@
+import {
+  WorkflowComponents,
+  ComponentDefinition,
+  validateObject,
+} from "./workflow-components.js";
+import { newWorkflowNode } from "./workflow-definition.js";
 import { z } from "zod";
 import type { Database, Queryable } from "./db.js";
 import { HttpError, requireValue } from "./config.js";
@@ -11,15 +17,18 @@ import {
 import type { Agent } from "./agent.js";
 
 export class Workflows {
+  components: WorkflowComponents;
   constructor(
     public db: Database,
     public agent: Agent,
-  ) {}
+  ) {
+    this.components = new WorkflowComponents(db);
+  }
   async resources(ws: string) {
     const [actions, sources, members, contacts, channels, connections] =
       await Promise.all([
         this.db.rows(
-          "SELECT id,name,description,kind,enabled,policy,config->>'mappingKey' mapping_key,config->>'stripeMode' stripe_mode FROM actions WHERE workspace_id=$1 ORDER BY name",
+          "SELECT id,name,description,kind,enabled,policy,config->>'mappingKey' mapping_key,config->>'stripeMode' stripe_mode,config->'inputSchema' input_schema,config->'outputSchema' output_schema FROM actions WHERE workspace_id=$1 ORDER BY name",
           [ws],
         ),
         this.db.rows(
@@ -43,11 +52,30 @@ export class Workflows {
           [ws],
         ),
       ]);
-    return { actions, sources, members, contacts, channels, connections };
+    return {
+      actions,
+      sources,
+      members,
+      contacts,
+      channels,
+      connections,
+      components: await this.components.list(ws),
+      runnerConfigured: Boolean(
+        this.db.config.FIELDKIT_RUNNER_URL &&
+          this.db.config.FIELDKIT_RUNNER_TOKEN.length >= 32,
+      ),
+    };
   }
   async problems(ws: string, definition: Workflow, q?: Queryable) {
     const errors = workflowProblems(definition);
-    for (const n of definition.nodes) {
+    let expanded = definition;
+    if (!errors.length)
+      try {
+        expanded = await this.components.expand(ws, definition, q);
+      } catch (e) {
+        errors.push((e as Error).message);
+      }
+    for (const n of expanded.nodes) {
       if (n.type === "action" && n.data.actionIds.length) {
         const found = await this.db.rows(
           "SELECT id FROM actions WHERE workspace_id=$1 AND id=ANY($2::text[]) AND enabled",
@@ -172,10 +200,11 @@ export class Workflows {
       const def = WorkflowDefinition.parse(row.draft),
         problems = await this.problems(p.workspaceId, def, q);
       if (problems.length) throw new HttpError(400, problems.join("\n"));
+      const compiled = await this.components.expand(p.workspaceId, def, q);
       const version = (row.published_version ?? 0) + 1;
       await q.query(
-        "INSERT INTO workflow_versions(workspace_id,version,title,definition,created_by) VALUES($1,$2,$3,$4,$5)",
-        [p.workspaceId, version, def.title, def, p.userId],
+        "INSERT INTO workflow_versions(workspace_id,version,title,definition,created_by,compiled_definition) VALUES($1,$2,$3,$4,$5,$6)",
+        [p.workspaceId, version, def.title, def, p.userId, compiled],
       );
       await q.query(
         "UPDATE workflows SET published_version=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE workspace_id=$1",
@@ -205,6 +234,95 @@ export class Workflows {
     });
     return this.get(p);
   }
+  async testComponent(p: Principal, raw: unknown) {
+    requireAdmin(p);
+    const d = z
+      .object({
+        definition: ComponentDefinition,
+        input: z.record(z.string(), z.unknown()).default({}),
+        contactId: z.string().optional(),
+      })
+      .strict()
+      .parse(raw);
+    validateObject(d.definition.inputSchema, d.input, "Component input");
+    if (d.definition.kind === "subflow") {
+      const errors = workflowProblems(d.definition.workflow, { subflow: true });
+      if (errors.length) throw new HttpError(400, errors.join("\n"));
+    }
+    const contact = d.contactId
+      ? requireValue(
+          await this.db.one(
+            "SELECT * FROM contacts WHERE workspace_id=$1 AND id=$2 AND verified",
+            [p.workspaceId, d.contactId],
+          ),
+        )
+      : { id: "anonymous-preview", verified: false, mappings: {} };
+    let def: Workflow;
+    if (d.definition.kind === "subflow")
+      def = await this.components.expand(
+        p.workspaceId,
+        d.definition.workflow,
+        undefined,
+        true,
+      );
+    else {
+      def = WorkflowDefinition.parse({
+        format: 1,
+        title: d.definition.name,
+        nodes: [
+          newWorkflowNode("start", "start"),
+          {
+            ...newWorkflowNode("task", "test"),
+            data: {
+              definition: d.definition,
+              inputs: Object.fromEntries(
+                Object.entries(d.input).map(([k, value]) => [
+                  k,
+                  { type: "value", value },
+                ]),
+              ),
+              componentId: "preview",
+              version: 1,
+            },
+          },
+          {
+            ...newWorkflowNode("return", "result"),
+            data: {
+              outcome: "done",
+              outputs: { value: { type: "path", path: "steps.test.output" } },
+            },
+          },
+        ],
+        edges: [
+          { from: "start", port: "next", to: "test" },
+          { from: "test", port: "done", to: "result" },
+          { from: "test", port: "failed", to: "result" },
+        ],
+      });
+    }
+    const result = await this.agent.previewWorkflow(
+      p.workspaceId,
+      def,
+      "Component test",
+      contact,
+      "portal",
+      d.input,
+    );
+    const output =
+      d.definition.kind === "subflow" ? result.output : result.output?.value;
+    const failure = result.trace.find(
+      (s) => s.type === "task" && s.outcome === "failed",
+    );
+    if (failure)
+      throw new HttpError(400, failure.error ?? "Component test failed");
+    // A reply or handoff inside a subflow deliberately ends the whole turn.
+    if (
+      (output !== null && output !== undefined) ||
+      d.definition.kind !== "subflow"
+    )
+      validateObject(d.definition.outputSchema, output, "Component output");
+    return { ...result, output };
+  }
   async preview(p: Principal, raw: unknown) {
     requireAdmin(p);
     const d = z
@@ -228,7 +346,7 @@ export class Workflows {
       : { id: "anonymous-preview", verified: false, mappings: {} };
     return this.agent.previewWorkflow(
       p.workspaceId,
-      d.definition,
+      await this.components.expand(p.workspaceId, d.definition),
       d.question,
       contact,
       d.channel,
