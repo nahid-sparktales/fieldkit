@@ -827,6 +827,40 @@ export async function createApp(
             return;
           }
         }
+        if (suffix === "/assistance" && method === "GET") {
+          requireStaff(p);
+          const conversationId = url.searchParams.get("conversationId");
+          if (conversationId) await conversation(app.db, p, conversationId);
+          json(res, {
+            tasks: await app.db.rows(
+              "SELECT * FROM assistance_tasks WHERE workspace_id=$1 AND conversation_id IS NOT DISTINCT FROM $2 ORDER BY created_at DESC LIMIT 30",
+              [ws, conversationId],
+            ),
+          });
+          return;
+        }
+        if (suffix === "/assistance" && method === "POST") {
+          json(res, await app.assistance.start(p, await body(req)), 202);
+          return;
+        }
+        m = suffix.match(
+          /^\/assistance\/([^/]+)\/(cancel|retry|apply|compose)$/,
+        );
+        if (m && method === "POST") {
+          json(
+            res,
+            m[2] === "compose"
+              ? await app.assistance.compose(p, m[1], await body(req))
+              : m[2] === "apply"
+                ? await app.assistance.apply(p, m[1], await body(req))
+                : await app.assistance.control(
+                    p,
+                    m[1],
+                    m[2] as "cancel" | "retry",
+                  ),
+          );
+          return;
+        }
         if (suffix === "/faqs" && method === "GET") {
           requireStaff(p);
           json(res, {

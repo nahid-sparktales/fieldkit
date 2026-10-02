@@ -35,6 +35,7 @@ const c = testConfig(),
   emails: { to: string; text: string }[] = [];
 let server: Awaited<ReturnType<typeof createApp>>,
   app: ReturnType<typeof Object>;
+let staffTestCookie = "";
 before(async () => {
   await resetDatabase(c.DATABASE_URL);
   server = await createApp(c, {
@@ -472,6 +473,7 @@ test("FAQ APIs enforce staff roles, tenant boundaries, input limits and draft-on
     .map((v) => v.split(";")[0])
     .join("; ");
   const path = `/v2/workspaces/${w.ws.id}/faqs`;
+  staffTestCookie = cookie;
   const created = await call(
     path,
     {
@@ -507,6 +509,69 @@ test("FAQ APIs enforce staff roles, tenant boundaries, input limits and draft-on
       (await call(path + suffix, body, cookie, method)).response.status,
       403,
     );
+});
+test("assistance HTTP endpoints require staff sessions and keep jobs scoped to their workspace", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  const user = await app.db.one(
+    'SELECT id,email FROM "user" WHERE "emailVerified"=true LIMIT 1',
+  );
+  await app.db.pool.query("INSERT INTO memberships VALUES($1,$2,'owner')", [
+    w.ws.id,
+    user.id,
+  ]);
+  const cookie = staffTestCookie;
+  assert.ok(cookie);
+  await knowledge(app, w.ws.id);
+  const path = `/v2/workspaces/${w.ws.id}/assistance`;
+  assert.equal((await call(path)).response.status, 401);
+  const started = await call(path, { kind: "faq_review" }, cookie);
+  assert.equal(started.response.status, 202, JSON.stringify(started.json));
+  assert.equal(
+    (await call(path, undefined, cookie)).json.tasks[0].id,
+    started.json.id,
+  );
+  assert.equal(
+    (await call(`/v2/workspaces/${other.ws.id}/assistance`, undefined, cookie))
+      .response.status,
+    403,
+  );
+  const foreign = await app.assistance.start(other.owner, {
+    kind: "research",
+    conversationId: (
+      await app.newConversation(other.customer, {
+        body: "Help",
+        requestKey: uid(),
+      })
+    ).id,
+  });
+  assert.equal(
+    (await call(`${path}/${foreign.id}/cancel`, {}, cookie)).response.status,
+    404,
+  );
+  assert.equal(
+    (await call(path, { kind: "research" }, cookie)).response.status,
+    400,
+  );
+  await app.db.pool.query(
+    "UPDATE memberships SET role='agent' WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, user.id],
+  );
+  assert.equal((await call(path, undefined, cookie)).response.status, 200);
+  assert.equal(
+    (await call(`${path}/${started.json.id}/cancel`, {}, cookie)).response
+      .status,
+    403,
+  );
+  assert.equal(
+    (await call(path, { kind: "faq_review" }, cookie)).response.status,
+    403,
+  );
+  await app.db.pool.query(
+    "DELETE FROM memberships WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, user.id],
+  );
+  assert.equal((await call(path, undefined, cookie)).response.status, 403);
 });
 test("live model adapter removes transport-only JSON before strict draft validation and records actual usage", async () => {
   const w = await workspace(app),
@@ -619,6 +684,7 @@ test("documentation sites index separate cited pages, refresh versions and remov
   let embedded = 0;
   const knowledge = new Knowledge(app.db, new Connections(app.db, f.fetch), {
     faqs: (input) => model.faqs(input),
+    assist: (input) => model.assist(input),
     answer: (input) => model.answer(input),
     embed: (ws, texts) => {
       embedded += texts.length;

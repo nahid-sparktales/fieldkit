@@ -182,6 +182,11 @@ export class Support {
         );
       let changed = false,
         lastRole = "";
+      if (["low", "normal", "high", "urgent"].includes(ticket.priority))
+        await q.query("UPDATE conversations SET priority=$2 WHERE id=$1", [
+          conv.id,
+          ticket.priority,
+        ]);
       for (const comment of comments) {
         if (ownComments.has(String(comment.id))) continue;
         const role =
@@ -494,6 +499,7 @@ export class Support {
       }
     }
     if (payload.status) ticket.status = payload.status;
+    if (payload.priority) ticket.priority = payload.priority;
     if (payload.tags) ticket.additional_tags = payload.tags;
     if (payload.assigneeId) ticket.assignee_id = Number(payload.assigneeId);
     await this.db.pool.query(

@@ -84,7 +84,14 @@ export class Database {
     await this.pool.query(SCHEMA);
     await this.saver.setup();
     await this.boss.start();
-    for (const name of ["turn", "ingest", "sync", "delivery", "maintenance"])
+    for (const name of [
+      "turn",
+      "ingest",
+      "sync",
+      "delivery",
+      "maintenance",
+      "assist",
+    ])
       await this.boss.createQueue(name, {
         retryLimit: 4,
         retryDelay: 5,
@@ -139,8 +146,24 @@ ALTER TABLE documents ADD COLUMN IF NOT EXISTS locator text NOT NULL DEFAULT '';
 ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_source_id_version_key;
 CREATE UNIQUE INDEX IF NOT EXISTS document_page_version ON documents(source_id,locator,version);
 ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_kind_check;
-ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK(kind IN ('file','website','notion','google','zendesk','faq'));
+ALTER TABLE sources ADD CONSTRAINT sources_kind_check CHECK(kind IN ('file','website','notion','google','zendesk','faq','article'));
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS priority text NOT NULL DEFAULT 'normal';
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS category text NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS assistance_tasks(
+ id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE,
+ conversation_id text, conversation_revision integer, created_by text NOT NULL,
+ kind text NOT NULL, status text NOT NULL DEFAULT 'queued', instructions text NOT NULL DEFAULT '',
+ completed integer NOT NULL DEFAULT 0, total integer NOT NULL DEFAULT 1, document_count integer NOT NULL DEFAULT 0,
+ output jsonb NOT NULL DEFAULT '{}', error text, created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
+ FOREIGN KEY(workspace_id,conversation_id) REFERENCES conversations(workspace_id,id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS assistance_workspace ON assistance_tasks(workspace_id,created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS one_faq_review ON assistance_tasks(workspace_id) WHERE kind='faq_review' AND status IN ('queued','running');
+CREATE TABLE IF NOT EXISTS assistance_batches(
+ task_id text NOT NULL REFERENCES assistance_tasks ON DELETE CASCADE, position integer NOT NULL,
+ document_id text NOT NULL, source_revision integer NOT NULL, chunk_ids text[] NOT NULL,
+ done boolean NOT NULL DEFAULT false, PRIMARY KEY(task_id,position));
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
+INSERT INTO app_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
 `;

@@ -2,6 +2,12 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Whole-library FAQ agent and inbox workflows — 2026-10-01
+
+All 48 v2 regressions, type checking, the production build, and the browser journey passed. The regression suite now includes whole-library chunk coverage beyond the old 16-passage selection, saved batch progress, competing workers, cancellation, explicit retry, role revocation, source changes, tenant-scoped HTTP access, all five support workflows, private-note exclusion from customer replies, stale-result rejection, source revalidation before composing, private article creation, idempotent application, and queued Zendesk priority updates. Model/provider responses in these tests are injected. The browser journey exercises the full FAQ review, all five workflows, the `/customer-support` shortcut, reviewed triage, composer handoff, private article saving, and desktop/mobile layouts.
+
+A live OpenAI escalation request on synthetic ticket text returned a cited summary with reported environment, reproduction, expected/actual outcome, attempted troubleshooting, and missing details. Actual usage was 318 input and 218 output tokens. No real conversation, FAQ, article, external note, or engineering issue was created by that check. This is a live adapter smoke check; it does not establish broad workflow quality or a successful live Zendesk write. Existing external-account release blockers remain unchanged.
+
 ## FAQ authoring and AI assistance — 2026-10-01
 
 All 40 v2 regressions, type checking, the production build, and the browser journey passed. FAQ tests cover private drafts, tenant and role boundaries, exact-revision approvals, concurrent approval, withdrawal after editing, deletion, customer-approved AI context, revoked evidence, unsupported citations, duplicate suggestions, structured model output, token accounting, and budget enforcement. The browser journey creates and improves an FAQ, approves and publishes it, edits it back into a private draft, generates another private FAQ, and checks desktop and mobile layouts. These automated journeys use injected model responses.

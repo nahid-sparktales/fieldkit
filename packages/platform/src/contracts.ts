@@ -82,6 +82,33 @@ export const FaqSuggestions = z
   .object({ faqs: z.array(FaqSuggestion).max(8) })
   .strict();
 export type FaqDraft = z.infer<typeof FaqSuggestion>;
+export const AssistanceKind = z.enum([
+  "faq_review",
+  "triage",
+  "research",
+  "response",
+  "escalation",
+  "article",
+]);
+export const AssistanceInput = z
+  .object({
+    kind: AssistanceKind,
+    conversationId: z.string().min(1).max(200).optional(),
+    instructions: z.string().trim().max(2000).default(""),
+  })
+  .strict();
+export const SupportSuggestion = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    body: z.string().trim().min(1).max(12000),
+    priority: z.enum(["low", "normal", "high", "urgent"]),
+    category: z.string().trim().max(80),
+    reason: z.string().max(2000),
+    citationIds: z.array(z.string()).max(24),
+    gaps: z.array(z.string().max(500)).max(12),
+  })
+  .strict();
+export type SupportDraft = z.infer<typeof SupportSuggestion>;
 export const ActionPolicy = z
   .object({
     mode: z.enum(["approval", "automatic"]).default("approval"),

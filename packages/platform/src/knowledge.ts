@@ -90,8 +90,9 @@ export class Knowledge {
     drafts: FaqDraft[],
     generated = false,
     evidence: Citation[] = [],
+    transaction?: import("pg").PoolClient,
   ) {
-    return this.db.tx(async (q) => {
+    const save = async (q: import("pg").PoolClient) => {
       if (evidence.length && !(await this.validEvidence(ws, evidence, q)))
         throw new HttpError(
           409,
@@ -122,7 +123,8 @@ export class Knowledge {
         generated,
       });
       return faqs;
-    });
+    };
+    return transaction ? save(transaction) : this.db.tx(save);
   }
   async updateFaq(
     ws: string,
@@ -377,7 +379,7 @@ export class Knowledge {
   }
   private async load(source: any): Promise<string> {
     const ws = source.workspace_id;
-    if (source.kind === "faq")
+    if (["faq", "article"].includes(source.kind))
       return `${source.title}\n\n${source.metadata.answer}`;
     if (source.kind === "file")
       return extract(
@@ -703,11 +705,12 @@ export class Knowledge {
     ws: string,
     evidence: Citation[],
     q?: import("./db.js").Queryable,
+    staffAccess = false,
   ) {
     if (!evidence.length) return true;
     const rows = await this.db.rows(
-      `SELECT c.id FROM chunks c JOIN documents d ON d.id=c.document_id JOIN sources s ON s.id=d.source_id WHERE c.workspace_id=$1 AND c.id=ANY($2::text[]) AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' ${q ? "FOR SHARE OF d,s" : ""}`,
-      [ws, evidence.map((e) => e.id)],
+      `SELECT c.id FROM chunks c JOIN documents d ON d.id=c.document_id JOIN sources s ON s.id=d.source_id WHERE c.workspace_id=$1 AND c.id=ANY($2::text[]) AND d.active AND s.active AND s.status='ready' AND ($3::boolean OR s.visibility='customer') ${q ? "FOR SHARE OF d,s" : ""}`,
+      [ws, evidence.map((e) => e.id), staffAccess],
       q,
     );
     return rows.length === evidence.length;

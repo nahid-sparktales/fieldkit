@@ -16,6 +16,7 @@ import { Knowledge } from "./knowledge.js";
 import { Actions } from "./actions.js";
 import { Support, enqueueTurn } from "./support.js";
 import { Agent } from "./agent.js";
+import { Assistance } from "./assistance.js";
 import { HttpError, requireValue, log } from "./config.js";
 import {
   Settings,
@@ -36,6 +37,7 @@ export class Platform {
   actions: Actions;
   support: Support;
   agent: Agent;
+  assistance: Assistance;
   constructor(
     public config: Config,
     options: { mailer?: Mailer; fetch?: Fetcher; model?: ModelPort } = {},
@@ -47,6 +49,12 @@ export class Platform {
     this.knowledge = new Knowledge(this.db, this.connections, this.model);
     this.actions = new Actions(this.db, this.connections);
     this.support = new Support(this.db, this.connections);
+    this.assistance = new Assistance(
+      this.db,
+      this.knowledge,
+      this.model,
+      this.support,
+    );
     this.agent = new Agent(
       this.db,
       this.knowledge,
@@ -72,6 +80,14 @@ export class Platform {
         .catch((e) => log("worker.heartbeat_failed", { message: e.message }));
     await heartbeat();
     this.heartbeat = setInterval(() => void heartbeat(), 15000);
+    await this.db.boss.work<{ workspaceId: string; taskId: string }>(
+      "assist",
+      { batchSize: 1, localConcurrency: 2 },
+      async (jobs) => {
+        for (const job of jobs)
+          await this.assistance.advance(job.data.workspaceId, job.data.taskId);
+      },
+    );
     await this.db.boss.work<{ workspaceId: string; runId: string }>(
       "turn",
       { batchSize: 1, localConcurrency: 3 },
@@ -122,7 +138,7 @@ export class Platform {
   }
   async maintenance() {
     for (const source of await this.db.rows(
-      "SELECT workspace_id,id FROM sources WHERE active AND kind NOT IN ('file','faq') AND status<>'processing'",
+      "SELECT workspace_id,id FROM sources WHERE active AND kind NOT IN ('file','faq','article') AND status<>'processing'",
     ))
       await this.db.tx((q) =>
         this.db.enqueue(q, "ingest", {

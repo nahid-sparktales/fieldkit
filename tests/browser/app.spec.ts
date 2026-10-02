@@ -168,6 +168,19 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/faqs.png", fullPage: true });
+  await page
+    .getByRole("button", { name: "Review all documents and create FAQs" })
+    .click();
+  await expect(
+    page.locator(".faq-review").getByText("completed", { exact: true }),
+  ).toBeVisible({ timeout: 20000 });
+  await expect(
+    page.getByRole("heading", {
+      name: "What should I know about returns.txt?",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/faq-agent.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("button", { name: "Save draft", exact: true }),
@@ -254,6 +267,100 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(
     customer.getByText("I’m here to help with your return."),
   ).toBeVisible({ timeout: 10000 });
+  await page.getByLabel("Reply", { exact: true }).fill("/customer-support");
+  await page.getByLabel("Reply", { exact: true }).press("Enter");
+  await expect(page.getByLabel("Reply", { exact: true })).toHaveValue("");
+  const assistant = page.locator(".support-assistant");
+  await assistant
+    .getByRole("button", { name: "Triage and prioritize", exact: true })
+    .click();
+  await expect(
+    assistant.getByRole("button", { name: "Apply triage", exact: true }),
+  ).toBeEnabled({ timeout: 20000 });
+  await assistant
+    .getByRole("button", { name: "Apply triage", exact: true })
+    .click();
+  await expect(
+    page.getByText("Priority: high · returns", { exact: true }),
+  ).toBeVisible();
+  await assistant
+    .getByRole("button", { name: "Research across all sources", exact: true })
+    .click();
+  await expect(
+    assistant.getByRole("button", {
+      name: "Use as internal note",
+      exact: true,
+    }),
+  ).toBeEnabled({ timeout: 20000 });
+  await assistant
+    .getByRole("button", { name: "Use as internal note", exact: true })
+    .click();
+  await expect(page.getByLabel("Internal note", { exact: true })).toBeChecked();
+  await assistant
+    .getByRole("button", { name: "Draft a customer response", exact: true })
+    .click();
+  await expect(
+    assistant.getByRole("button", { name: "Use in reply", exact: true }),
+  ).toBeEnabled({ timeout: 20000 });
+  await assistant
+    .getByRole("button", { name: "Use in reply", exact: true })
+    .click();
+  await expect(
+    page.getByLabel("Internal note", { exact: true }),
+  ).not.toBeChecked();
+  await expect(page.getByLabel("Reply", { exact: true })).toHaveValue(
+    /Unused items/,
+  );
+  await assistant
+    .getByRole("button", {
+      name: "Package an engineering escalation",
+      exact: true,
+    })
+    .click();
+  await expect(
+    assistant.getByRole("button", {
+      name: "Use as internal note",
+      exact: true,
+    }),
+  ).toBeEnabled({ timeout: 20000 });
+  await page.screenshot({
+    path: "test-results/support-assistant.png",
+    fullPage: true,
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.screenshot({
+    path: "test-results/support-assistant-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Resolve", exact: true }).click();
+  await assistant
+    .getByRole("button", {
+      name: "Turn resolved ticket into an article",
+      exact: true,
+    })
+    .click();
+  await expect(
+    assistant.getByRole("button", {
+      name: "Save private article",
+      exact: true,
+    }),
+  ).toBeEnabled({ timeout: 20000 });
+  await assistant
+    .getByRole("button", { name: "Save private article", exact: true })
+    .click();
+  await expect(
+    page.getByText(
+      "Private article saved in Knowledge → Sources. Review it before approving or publishing.",
+      { exact: true },
+    ),
+  ).toBeVisible();
   await page.screenshot({ path: "test-results/inbox.png", fullPage: true });
   await customer.reload();
   await expect(

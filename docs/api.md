@@ -27,6 +27,11 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | `/faqs/:id` | PUT / DELETE | Admin edit with revision / remove FAQ |
 | `/faqs/:id/approve` | POST | Admin approval of the exact revision; queues indexing |
 | `/faqs/generate` | POST | Admin AI generation of private drafts from approved knowledge |
+| `/assistance` | GET / POST | Staff workflow history / queue a workflow; FAQ review and article creation require admin |
+| `/assistance/:id/cancel` | POST | Cancel queued or running work; already-created drafts stay private |
+| `/assistance/:id/retry` | POST | Retry a failed workflow from its saved progress |
+| `/assistance/:id/compose` | POST | Revalidate a reply/report and return text for the staff composer; does not send |
+| `/assistance/:id/apply` | POST | Apply reviewed triage or save a reviewed private article |
 | `/faqs/assist` | POST | Admin AI suggestion for the editor; does not save or publish |
 | `/connections` | GET | Admin metadata, no stored secrets |
 | `/connections/key` | POST | Validated key connection |
@@ -58,6 +63,18 @@ FAQs are workspace-scoped knowledge sources (`kind: "faq"`). Create one with `{ 
 Approve with `{ "revision": 1 }` at `/faqs/:id/approve`. Approval requires a connected model for embedding and queues indexing in the same transaction. Once ready, the agent can cite the FAQ. Public help-center publication remains a separate `/documents/:id/publish` action. Draft FAQs are excluded from hourly ingestion and cannot be retrieved by customers.
 
 AI generation accepts `{ "count": 5, "instructions": "Focus on onboarding", "sourceId": "optional-approved-source-id" }` (1–8 FAQs). It uses a bounded selection of current customer-approved chunks, validates returned citations, rechecks source access, and saves private drafts only. `/faqs/assist` accepts `question`, optional `answer`, optional `instructions`, and optional `sourceId`; it returns one suggestion without modifying saved FAQs. Existing answer text can be rewritten without indexed knowledge. Both use the configured OpenAI model, workspace token budget, timeout, and actual usage accounting (`kind: "faq"`). No source access or publication permission is granted by model output.
+
+## Document review and support workflows
+
+Queue a full FAQ review with `{ "kind": "faq_review", "instructions": "Optional topic or style" }` at `/assistance`. It snapshots every chunk of every active, ready, customer-approved document except existing FAQs. Each durable job reads at most eight passages and may create up to three private FAQs. All snapshot passages are visited; this differs from the small selection used by `/faqs/generate`. Saved FAQ drafts and the next job commit in the same transaction as progress. Case-insensitive duplicate questions are skipped. Cancellation stops further saves; an in-flight model request may still incur usage. A worker retry resumes from saved progress and cannot duplicate committed drafts. If source revisions or permissions change, cancel the old run and start a fresh one. New documents require a new run.
+
+For ticket workflows, POST `{ "kind": "triage|research|response|escalation|article", "conversationId": "...", "instructions": "Optional focus" }`. Use the literal kind, not the pipe-separated list. All workflows require staff sessions; article creation additionally requires an administrator and a resolved conversation. List history with `GET /assistance?conversationId=...`; without a conversation, the list contains FAQ reviews. Responses include status, progress, errors, and completed drafts with citations, missing information, and source coverage. The web app polls this endpoint while work is pending.
+
+Research, triage, escalation, and article drafting search all ready indexed sources in the workspace, including staff-only material, using keyword/vector retrieval with up to 24 passages balanced across sources. This searches the indexed library; it does not fetch unimported vendor content or read every passage as the FAQ agent does. Customer response drafting excludes private notes and staff-only sources. Ticket history is preserved in full up to a 100 KB input limit; larger histories fail explicitly instead of silently omitting messages. Model outputs have closed schemas and must cite supplied knowledge or conversation evidence. No workflow invokes business actions.
+
+`/compose` accepts `{ "body": "Reviewed text" }`, checks that the conversation and source access are still current, and returns `{ body, internal }`. It never sends a message. Staff explicitly send through the existing message/note endpoints. `/apply` accepts `{ "title": "Reviewed title", "body": "Reviewed content", "priority": "low|normal|high|urgent", "category": "Reviewed category" }`. For triage it updates local priority/category and queues the priority change for Zendesk-owned tickets. For an article it creates a staff-only `article` source and queues indexing; customer approval and publication remain separate source/document operations. Apply is idempotent per task and rejects changed conversation revisions or revoked evidence. User-supplied titles and text remain subject to ordinary size limits. Escalation outputs can be copied with citations or put into an internal-note draft; no engineering issue is filed automatically.
+
+The `/customer-support` shortcut is local to FieldKit's staff conversation composer. These internal workflows are not exposed through customer-scoped SDK, CLI, widget, or MCP credentials.
 
 ## SDK
 

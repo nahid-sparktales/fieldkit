@@ -815,6 +815,22 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
   const a = useAction(),
     members = useLoad(() => api(ws, "/members"), [ws]);
   const [note, setNote] = useState(false);
+  const [reply, setReply] = useState("");
+  const assistantPanel = useRef<HTMLDetailsElement>(null);
+  const openAssistant = () => {
+    setReply("");
+    if (assistantPanel.current) {
+      assistantPanel.current.open = true;
+      assistantPanel.current.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+  };
+  useEffect(() => {
+    setReply("");
+    setNote(false);
+  }, [selected]);
   useConversationEvents(ws, selected, () => {
     detail.reload();
     l.reload();
@@ -864,6 +880,7 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                 </div>
                 <h3>{c.subject}</h3>
                 <Badge value={c.status} />
+                {c.priority !== "normal" && <Badge value={c.priority} />}
               </button>
             ))
           ) : (
@@ -892,6 +909,12 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
               />
             </header>
             <div className="conversation-controls">
+              <span className="ticket-priority">
+                Priority: {detail.data.conversation.priority}
+                {detail.data.conversation.category
+                  ? ` · ${detail.data.conversation.category}`
+                  : ""}
+              </span>
               <select
                 aria-label="Assign conversation"
                 value={detail.data.conversation.assigned_to ?? ""}
@@ -935,6 +958,21 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                   : "Resolve"}
               </button>
             </div>
+            <SupportAssistant
+              panelRef={assistantPanel}
+              key={selected}
+              ws={ws}
+              conversation={detail.data.conversation}
+              admin={role !== "agent"}
+              onChange={() => {
+                detail.reload();
+                l.reload();
+              }}
+              onCompose={(body, internal) => {
+                setReply(body);
+                setNote(internal);
+              }}
+            />
             <div className="messages">
               <MessageList messages={detail.data.messages} />
               {detail.data.approvals
@@ -995,6 +1033,10 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                 e.preventDefault();
                 const form = e.currentTarget;
                 const body = new FormData(form).get("body");
+                if (String(body).trim() === "/customer-support") {
+                  openAssistant();
+                  return;
+                }
                 void a.run(async () => {
                   await api(
                     ws,
@@ -1002,6 +1044,7 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                     { body, requestKey: crypto.randomUUID() },
                   );
                   form.reset();
+                  setReply("");
                   detail.reload();
                   l.reload();
                 });
@@ -1010,6 +1053,18 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
               <textarea
                 aria-label="Reply"
                 name="body"
+                value={reply}
+                onChange={(e) => setReply(e.target.value)}
+                onKeyDown={(e) => {
+                  if (
+                    e.key === "Enter" &&
+                    !e.shiftKey &&
+                    reply.trim() === "/customer-support"
+                  ) {
+                    e.preventDefault();
+                    openAssistant();
+                  }
+                }}
                 required
                 placeholder={
                   note
@@ -1017,6 +1072,10 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                     : "Write a reply to the customer…"
                 }
               />
+              <small>
+                Type /customer-support and press Enter to open the support
+                assistant.
+              </small>
               <div>
                 <label className="checkbox">
                   <input
@@ -1066,6 +1125,425 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
         )}
       </div>
     </>
+  );
+}
+const assistanceLabels: Record<string, string> = {
+  faq_review: "Review all documents",
+  triage: "Triage and prioritize",
+  research: "Research across all sources",
+  response: "Draft a customer response",
+  escalation: "Package an engineering escalation",
+  article: "Turn resolved ticket into an article",
+};
+function useAssistance(ws: string, conversationId?: string) {
+  const l = useLoad(
+    () =>
+      api(
+        ws,
+        "/assistance" +
+          (conversationId
+            ? `?conversationId=${encodeURIComponent(conversationId)}`
+            : ""),
+      ),
+    [ws, conversationId],
+  );
+  const running = l.data?.tasks.some((t: Row) =>
+    ["queued", "running"].includes(t.status),
+  );
+  useEffect(() => {
+    if (!running) return;
+    const timer = setInterval(l.reload, 1500);
+    return () => clearInterval(timer);
+  }, [ws, conversationId, running]);
+  return l;
+}
+function AssistanceProgress({
+  task,
+  ws,
+  reload,
+}: {
+  task: Row;
+  ws: string;
+  reload: () => void;
+}) {
+  const a = useAction();
+  return (
+    <div className="assistance-progress">
+      <div className="section-heading">
+        <strong>{assistanceLabels[task.kind]}</strong>
+        <Badge value={task.status} />
+      </div>
+      {task.kind === "faq_review" && (
+        <>
+          <progress
+            aria-label="Document review progress"
+            max={task.total}
+            value={task.completed}
+          />
+          <p>
+            {task.completed} of {task.total} batches reviewed across{" "}
+            {task.document_count} documents · {task.output.generated ?? 0}{" "}
+            private FAQ drafts created
+          </p>
+        </>
+      )}
+      <Alert>{task.error || a.error}</Alert>
+      {["queued", "running"].includes(task.status) && (
+        <button
+          disabled={a.busy}
+          onClick={() =>
+            void a.run(async () => {
+              await api(ws, `/assistance/${task.id}/cancel`, {});
+              reload();
+            })
+          }
+        >
+          Cancel workflow
+        </button>
+      )}
+      {task.status === "failed" && (
+        <button
+          disabled={a.busy}
+          onClick={() =>
+            void a.run(async () => {
+              await api(ws, `/assistance/${task.id}/retry`, {});
+              reload();
+            })
+          }
+        >
+          Retry workflow
+        </button>
+      )}
+    </div>
+  );
+}
+function FaqReview({ ws, onChange }: { ws: string; onChange: () => void }) {
+  const l = useAssistance(ws),
+    a = useAction();
+  useEffect(() => {
+    onChange();
+  }, [l.data?.tasks[0]?.completed]);
+  return (
+    <section className="panel faq-review">
+      <div>
+        <span className="eyebrow">FAQ AGENT</span>
+        <h2>Build FAQs from your whole library</h2>
+        <p>
+          Review every passage of every ready, customer-approved document,
+          including each imported documentation page. Existing FAQs are
+          excluded. The agent saves new private drafts as it works and avoids
+          repeated questions.
+        </p>
+      </div>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          const instructions = String(
+            new FormData(e.currentTarget).get("instructions") ?? "",
+          );
+          void a.run(async () => {
+            await api(ws, "/assistance", { kind: "faq_review", instructions });
+            l.reload();
+          }, "Document review queued. You can leave this page and come back.");
+        }}
+      >
+        <Field label="Full review focus (optional)">
+          <input
+            name="instructions"
+            maxLength={2000}
+            placeholder="For example: onboarding and troubleshooting"
+          />
+        </Field>
+        <button
+          className="primary"
+          disabled={
+            a.busy ||
+            l.data?.tasks.some((t: Row) =>
+              ["queued", "running"].includes(t.status),
+            )
+          }
+        >
+          Review all documents and create FAQs
+        </button>
+        <small>
+          Uses your connected model and token budget, with one request per small
+          batch. Private or unfinished imports are excluded until approved and
+          ready.
+        </small>
+      </form>
+      <Alert>{a.error || l.error}</Alert>
+      {a.success && (
+        <p className="success" role="status">
+          {a.success}
+        </p>
+      )}
+      {l.data?.tasks.slice(0, 5).map((task: Row) => (
+        <AssistanceProgress
+          key={task.id}
+          task={task}
+          ws={ws}
+          reload={l.reload}
+        />
+      ))}
+    </section>
+  );
+}
+function SupportAssistant({
+  panelRef,
+  ws,
+  conversation,
+  admin,
+  onChange,
+  onCompose,
+}: {
+  panelRef: React.RefObject<HTMLDetailsElement | null>;
+  ws: string;
+  conversation: Row;
+  admin: boolean;
+  onChange: () => void;
+  onCompose: (body: string, internal: boolean) => void;
+}) {
+  const l = useAssistance(ws, conversation.id),
+    a = useAction();
+  const [selected, setSelected] = useState(""),
+    [instructions, setInstructions] = useState("");
+  const [draft, setDraft] = useState<Row | null>(null);
+  const task =
+    l.data?.tasks.find((t: Row) => t.id === selected) ?? l.data?.tasks[0];
+  useEffect(() => {
+    setDraft(task?.output.draft ?? null);
+  }, [task?.id, task?.status]);
+  const stale = task && task.conversation_revision !== conversation.revision;
+  const apply = () =>
+    a.run(
+      async () => {
+        await api(ws, `/assistance/${task.id}/apply`, {
+          title: draft!.title,
+          body: draft!.body,
+          priority: draft!.priority,
+          category: draft!.category,
+        });
+        l.reload();
+        onChange();
+      },
+      task.kind === "article"
+        ? "Private article saved in Knowledge → Sources. Review it before approving or publishing."
+        : "Ticket priority and category updated.",
+    );
+  return (
+    <details className="support-assistant" ref={panelRef} open>
+      <summary>Support assistant</summary>
+      <p>
+        Choose a workflow, review the evidence, then edit the result. Nothing is
+        sent or published automatically.
+      </p>
+      <Field label="Workflow focus (optional)">
+        <input
+          value={instructions}
+          onChange={(e) => setInstructions(e.target.value)}
+          maxLength={2000}
+          placeholder="Add context or describe what to investigate"
+        />
+      </Field>
+      <div className="assistance-actions">
+        {["triage", "research", "response", "escalation", "article"].map(
+          (kind) => (
+            <button
+              key={kind}
+              disabled={
+                a.busy ||
+                l.data?.tasks.some(
+                  (t: Row) =>
+                    t.kind === kind && ["queued", "running"].includes(t.status),
+                ) ||
+                (kind === "article" &&
+                  (!admin || conversation.status !== "resolved"))
+              }
+              onClick={() =>
+                void a.run(async () => {
+                  const created = await api(ws, "/assistance", {
+                    kind,
+                    conversationId: conversation.id,
+                    instructions,
+                  });
+                  setSelected(created.id);
+                  l.reload();
+                })
+              }
+            >
+              {assistanceLabels[kind]}
+            </button>
+          ),
+        )}
+      </div>
+      <small>
+        Article creation requires an administrator and a resolved ticket.
+        Research searches all ready knowledge sources, including internal
+        material. Customer reply drafts use approved knowledge only. Model usage
+        counts toward your workspace budget.
+      </small>
+      <Alert>{l.error || a.error}</Alert>
+      {a.success && (
+        <p className="success" role="status">
+          {a.success}
+        </p>
+      )}
+      {!!l.data?.tasks.length && (
+        <Field label="Workflow history">
+          <select
+            value={task?.id ?? ""}
+            onChange={(e) => setSelected(e.target.value)}
+          >
+            {l.data.tasks.map((t: Row) => (
+              <option key={t.id} value={t.id}>
+                {assistanceLabels[t.kind]} · {t.status} ·{" "}
+                {new Date(t.created_at).toLocaleTimeString()}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {task && (
+        <AssistanceProgress
+          key={task.id}
+          task={task}
+          ws={ws}
+          reload={l.reload}
+        />
+      )}
+      {draft && task?.status === "completed" && (
+        <div className="assistance-result">
+          {stale && !task.output.applied && (
+            <p className="error">
+              The ticket changed after this draft. Run the workflow again for
+              current context.
+            </p>
+          )}
+          <Field label="Draft title">
+            <input
+              value={draft.title}
+              maxLength={200}
+              onChange={(e) => setDraft({ ...draft, title: e.target.value })}
+            />
+          </Field>
+          {task.kind === "triage" && (
+            <div className="button-row">
+              <Field label="Suggested priority">
+                <select
+                  value={draft.priority}
+                  onChange={(e) =>
+                    setDraft({ ...draft, priority: e.target.value })
+                  }
+                >
+                  {["low", "normal", "high", "urgent"].map((v) => (
+                    <option key={v}>{v}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Ticket category">
+                <input
+                  value={draft.category}
+                  maxLength={80}
+                  onChange={(e) =>
+                    setDraft({ ...draft, category: e.target.value })
+                  }
+                />
+              </Field>
+            </div>
+          )}
+          <Field label="Workflow draft">
+            <textarea
+              rows={10}
+              value={draft.body}
+              maxLength={12000}
+              onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+            />
+          </Field>
+          <p>{draft.reason}</p>
+          {!!draft.gaps.length && (
+            <div>
+              <strong>Still needs clarification</strong>
+              <ul>
+                {draft.gaps.map((gap: string, i: number) => (
+                  <li key={i}>{gap}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <details className="citations">
+            <summary>Evidence and search coverage</summary>
+            <p>
+              Searched{" "}
+              {task.output.coverage
+                .map((c: Row) => `${c.sources} ${c.kind} source(s)`)
+                .join(", ") || "the conversation"}
+              . Up to 24 relevant passages are used, balanced across sources.
+            </p>
+            {task.output.citations.map((c: Row) => (
+              <blockquote key={c.id}>
+                <strong>
+                  {c.title}
+                  {c.visibility === "staff" ? " · Internal" : ""}
+                </strong>
+                <p>{c.excerpt}</p>
+              </blockquote>
+            ))}
+          </details>
+          <div className="button-row">
+            {["triage", "article"].includes(task.kind) ? (
+              <button
+                className="primary"
+                disabled={
+                  a.busy ||
+                  stale ||
+                  task.output.applied ||
+                  !draft.title.trim() ||
+                  !draft.body.trim()
+                }
+                onClick={() => void apply()}
+              >
+                {task.output.applied
+                  ? "Applied"
+                  : task.kind === "triage"
+                    ? "Apply triage"
+                    : "Save private article"}
+              </button>
+            ) : (
+              <button
+                disabled={stale || !draft.body.trim()}
+                onClick={() =>
+                  void a.run(async () => {
+                    const result = await api(
+                      ws,
+                      `/assistance/${task.id}/compose`,
+                      { body: draft.body },
+                    );
+                    onCompose(result.body, result.internal);
+                  }, "Draft added to the composer for your review.")
+                }
+              >
+                {task.kind === "response"
+                  ? "Use in reply"
+                  : "Use as internal note"}
+              </button>
+            )}
+            <button
+              onClick={() =>
+                void a.run(
+                  () =>
+                    navigator.clipboard.writeText(
+                      `${draft.title}\n\n${draft.body}\n\nOpen questions\n${draft.gaps.join("\n")}\n\nEvidence\n${task.output.citations.map((c: Row) => `${c.title}: ${c.url || c.id}\n${c.excerpt}`).join("\n\n")}`,
+                    ),
+                  "Copied draft and evidence.",
+                )
+              }
+            >
+              Copy draft and evidence
+            </button>
+          </div>
+        </div>
+      )}
+    </details>
   );
 }
 function MessageList({ messages }: { messages: Row[] }) {
@@ -1604,6 +2082,7 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
           {a.success || ai.success}
         </p>
       )}
+      {admin && <FaqReview ws={ws} onChange={l.reload} />}
       {admin && (
         <div className="faq-layout">
           <section className="panel">

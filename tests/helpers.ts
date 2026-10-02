@@ -5,6 +5,7 @@ import type {
   ModelPort,
   ModelInput,
   FaqModelInput,
+  SupportModelInput,
 } from "../packages/platform/src/model.js";
 import type { Draft } from "../packages/platform/src/contracts.js";
 import type { Fetcher } from "../packages/platform/src/security.js";
@@ -40,13 +41,32 @@ export async function resetDatabase(url: string) {
   }
 }
 export class TestModel implements ModelPort {
+  assistHook?: (input: SupportModelInput) => Promise<void>;
+  async assist(input: SupportModelInput) {
+    await this.assistHook?.(input);
+    if (this.fail) throw new Error("Model outage");
+    return {
+      title:
+        input.kind === "article" ? "How to return an item" : "Return request",
+      body: "Unused items can be returned within 30 days. Contact support to arrange a return.",
+      priority: "high" as const,
+      category: "returns",
+      reason: "The customer needs help with a return.",
+      citationIds: [input.evidence[0]?.id ?? input.messages[0].id],
+      gaps: ["Order details have not been provided."],
+    };
+  }
   faqHook?: (input: FaqModelInput) => Promise<void>;
   async faqs(input: FaqModelInput) {
     await this.faqHook?.(input);
     if (this.fail) throw new Error("Model outage");
     return [
       {
-        question: input.question || "How long do I have to return an item?",
+        question:
+          input.question ||
+          (input.instructions.startsWith("Review every supplied passage")
+            ? `What should I know about ${input.evidence[0]?.title}?`
+            : "How long do I have to return an item?"),
         answer: input.answer
           ? "Improved: " + input.answer
           : "Unused items can be returned within 30 days.",
