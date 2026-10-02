@@ -8,7 +8,7 @@ Bring your own model provider and documents: OpenAI, Claude, Kimi, OpenRouter, D
 
 **Status: development release candidate.** The application and automated tests are implemented; several real vendor test-account verification gates remain open. See [verification and release boundaries](docs/verification.md) before using it for customer-facing operations.
 
-Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo` (`npm run demo`, explicitly invoked).
+Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo`. To run it explicitly, install its separate dependencies with `npm ci --prefix examples/demo`, then run `npm run demo`. Its SQLite dependencies are excluded from the production installation.
 
 ## What is implemented
 
@@ -60,6 +60,7 @@ npm run build
 npm test
 npx playwright install chromium
 npm run test:browser
+npm ci --prefix examples/demo
 npm run test:demo
 ```
 

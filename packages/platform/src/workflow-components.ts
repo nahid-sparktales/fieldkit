@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import type { Database, Queryable } from "./db.js";
 import { uid } from "./db.js";
 import { HttpError, requireValue } from "./config.js";
-import { requireAdmin, requireStaff, type Principal } from "./auth.js";
+import { requireAdmin, type Principal } from "./auth.js";
 import {
   WorkflowDefinition,
   WorkflowNodeSchema,

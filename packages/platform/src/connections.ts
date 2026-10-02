@@ -8,7 +8,6 @@ import {
   token,
   tokenHash,
   safeFetch,
-  externalURL,
   modelBaseURL,
   modelFetch,
   digest,

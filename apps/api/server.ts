@@ -4,7 +4,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { readFile, stat, mkdir, writeFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { resolve, join, extname } from "node:path";
 import { createHmac } from "node:crypto";
 import { z, ZodError } from "zod";
@@ -24,7 +24,6 @@ import {
   requireAdmin,
   requireOwner,
   conversation,
-  type Principal,
 } from "../../packages/platform/src/auth.js";
 import {
   Settings,
@@ -38,9 +37,7 @@ import { uid } from "../../packages/platform/src/db.js";
 import {
   token,
   tokenHash,
-  seal,
   equal,
-  digest,
 } from "../../packages/platform/src/security.js";
 
 async function rawBody(req: IncomingMessage, max = 256 * 1024) {

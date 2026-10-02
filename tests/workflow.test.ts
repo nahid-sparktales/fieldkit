@@ -203,9 +203,15 @@ test("published workflows pin a graph version and apply source selection, accoun
     "SELECT data FROM events WHERE conversation_id=$1 AND kind='agent.step'",
     [result.conv.id],
   );
-  assert.ok(
-    events.some((e) => e.data.node === "agent" && e.data.workflowVersion === 1),
-  );
+  assert.deepEqual(events.find((e) => e.data.node === "agent")?.data, {
+    runId: result.run.id,
+    node: "agent",
+    title: agent.title,
+    operation: "node",
+    workflowVersion: 1,
+    status: "running",
+    route: "answer",
+  });
 });
 
 test("a second agent step can review the prior unsent draft within the same bounded turn", async () => {
@@ -287,6 +293,32 @@ test("the configured approval gate survives a fresh process and executes one aut
   const final = (await app.db.one("SELECT * FROM runs WHERE id=$1", [run.id]))!;
   assert.equal(final.status, "completed");
   assert.equal(final.state.receipt.result.amountMinor, 4900);
+  const steps = await app.db.rows(
+    "SELECT data FROM events WHERE kind='agent.step' AND data->>'runId'=$1 AND data->>'operation' IN ('approve','execute') ORDER BY id",
+    [run.id],
+  );
+  assert.deepEqual(
+    steps.map(({ data }) => ({
+      node: data.node,
+      operation: data.operation,
+      route: data.route,
+      workflowVersion: data.workflowVersion,
+    })),
+    [
+      {
+        node: "action",
+        operation: "approve",
+        route: "execute",
+        workflowVersion: 1,
+      },
+      {
+        node: "action",
+        operation: "execute",
+        route: "respond",
+        workflowVersion: 1,
+      },
+    ],
+  );
   await app.agent.advance(w.ws.id, run.id);
   assert.equal(providers.writes, 0);
 });

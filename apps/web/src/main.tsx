@@ -17,6 +17,7 @@ import { createRoot } from "react-dom/client";
 import { createAuthClient } from "better-auth/react";
 import "./style.css";
 import { WorkflowPage } from "./WorkflowPage.js";
+import { useAction } from "./useAction.js";
 import {
   MODEL_PROVIDERS,
   EmbeddingProvider,
@@ -154,29 +155,6 @@ function Field({
       {hint && <small>{hint}</small>}
     </div>
   );
-}
-function useAction() {
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [success, setSuccess] = useState("");
-  return {
-    busy,
-    error,
-    success,
-    run: async (fn: () => Promise<void>, message = "") => {
-      setBusy(true);
-      setError("");
-      setSuccess("");
-      try {
-        await fn();
-        setSuccess(message);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Something went wrong");
-      } finally {
-        setBusy(false);
-      }
-    },
-  };
 }
 function AuthScreen({
   done,

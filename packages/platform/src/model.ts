@@ -412,7 +412,7 @@ export class LiveModel implements ModelPort {
       4000,
     );
 
-    return FaqSuggestions.parse(parsedOutput).faqs;
+    return parsedOutput.faqs;
   }
   async assist(input: SupportModelInput): Promise<SupportDraft> {
     const tasks = {
@@ -433,7 +433,7 @@ export class LiveModel implements ModelPort {
       knowledge: input.evidence,
       writingInstructions: input.instructions,
     });
-    const parsedOutput = await this.structured(
+    return this.structured(
       input.workspaceId,
       input.model,
       input.kind,
@@ -443,7 +443,5 @@ export class LiveModel implements ModelPort {
       payload,
       4000,
     );
-
-    return SupportSuggestion.parse(parsedOutput);
   }
 }

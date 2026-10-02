@@ -26,6 +26,7 @@ import {
 
 const requests: { url: string; body: any; headers: any }[] = [];
 let invalid = false,
+  invalidShape = false,
   truncated = false,
   missingUsage = false,
   wrongDimensions = false;
@@ -81,7 +82,9 @@ const fetcher: Fetcher = async (url, init = {}) => {
       citationIds: ["message-1"],
       gaps: ["Product name"],
     };
-  const content = invalid ? "not valid JSON" : JSON.stringify(value);
+  const content = invalid
+    ? "not valid JSON"
+    : JSON.stringify(invalidShape ? {} : value);
   return Response.json(
     native
       ? {
@@ -126,6 +129,7 @@ after(() => app.close());
 beforeEach(() => {
   requests.length = 0;
   invalid = false;
+  invalidShape = false;
   truncated = false;
   missingUsage = false;
   wrongDimensions = false;
@@ -211,7 +215,7 @@ test("provider selection also powers FAQ drafting and staff assistance, and work
   for (const provider of ["anthropic", "openrouter"] as const) {
     await connect(w.ws.id, provider);
     await select(w.ws.id, provider);
-    const faqs = await live.faqs({
+    const faqInput = {
       workspaceId: w.ws.id,
       model: "test-chat",
       count: 1,
@@ -220,19 +224,31 @@ test("provider selection also powers FAQ drafting and staff assistance, and work
       answer: "Open a support ticket.",
       evidence: [],
       existingQuestions: [],
-    });
+    };
+    const faqs = await live.faqs(faqInput);
     assert.equal(faqs.length, 1);
-    const draft = await live.assist({
+    const assistanceInput = {
       workspaceId: w.ws.id,
       model: "test-chat",
-      kind: "escalation",
+      kind: "escalation" as const,
       subject: "Help",
       messages: [{ id: "message-1", role: "customer", body: "Help" }],
       evidence: [],
       instructions: "",
-    });
+    };
+    const draft = await live.assist(assistanceInput);
     assert.deepEqual(draft.citationIds, ["message-1"]);
+    invalidShape = true;
+    await assert.rejects(live.faqs(faqInput), { name: "ZodError" });
+    await assert.rejects(live.assist(assistanceInput), { name: "ZodError" });
+    invalidShape = false;
   }
+  const usage = await app.db.rows(
+    "SELECT input_tokens,output_tokens FROM usage WHERE workspace_id=$1 AND kind IN ('faq','escalation')",
+    [w.ws.id],
+  );
+  assert.equal(usage.length, 8);
+  assert.ok(usage.every((u) => u.input_tokens > 0 && u.output_tokens > 0));
   await live.answer({ ...input(w.ws.id), provider: "anthropic" });
   assert.ok(requests.at(-1)!.url.startsWith("https://api.anthropic.com/"));
   assert.equal(

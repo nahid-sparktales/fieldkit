@@ -15,14 +15,13 @@ import {
   unseal,
   externalURL,
   publicAddress,
-  digest,
 } from "../packages/platform/src/security.js";
 import { uid } from "../packages/platform/src/db.js";
 import { extract } from "../packages/platform/src/knowledge.js";
 import { Knowledge } from "../packages/platform/src/knowledge.js";
 import { Connections } from "../packages/platform/src/connections.js";
 import { docsFixture } from "./website-fixture.js";
-import { Settings, DraftSchema } from "../packages/platform/src/contracts.js";
+import { DraftSchema } from "../packages/platform/src/contracts.js";
 import { LiveModel } from "../packages/platform/src/model.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -919,6 +918,20 @@ test("a cited answer persists through the real LangGraph graph and a follow-up k
   const { conv, run } = await runText(w, "What is your return policy?");
   assert.equal(run.status, "completed");
   assert.equal(run.state.draft.intent, "answer");
+  const published = await app.db.one(
+    "SELECT workspace_id,conversation_id,data FROM events WHERE kind='agent.step' AND data->>'runId'=$1 AND data->>'node'='publish_response'",
+    [run.id],
+  );
+  assert.deepEqual(published, {
+    workspace_id: w.ws.id,
+    conversation_id: conv.id,
+    data: {
+      runId: run.id,
+      node: "publish_response",
+      status: "completed",
+      route: "respond",
+    },
+  });
   const messages = await app.db.rows(
     "SELECT * FROM messages WHERE conversation_id=$1 ORDER BY created_at",
     [conv.id],

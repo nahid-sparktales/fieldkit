@@ -9,7 +9,7 @@ import {
   type ActionDefinition,
   type Proposal,
 } from "./contracts.js";
-import { canonical, digest, externalURL } from "./security.js";
+import { digest, externalURL } from "./security.js";
 
 const ajv = new Ajv({ allErrors: true, strict: true, validateFormats: false });
 const Refund = z

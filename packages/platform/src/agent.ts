@@ -76,24 +76,7 @@ export class Agent {
           ]),
         );
         await fn(run);
-        await db.tx(async (q) => {
-          await q.query(
-            "UPDATE runs SET state=$1,status=$2,updated_at=now() WHERE id=$3",
-            [run.state, run.status, run.id],
-          );
-          await db.event(
-            q,
-            run.workspace_id,
-            "agent.step",
-            {
-              runId: run.id,
-              node: name,
-              status: run.status,
-              route: run.state.route,
-            },
-            run.conversation_id,
-          );
-        });
+        await this.persistStep(run, { node: name });
         return {
           route: run.state.route ?? "",
           approvalId: run.state.approvalId ?? "",
@@ -154,6 +137,26 @@ export class Agent {
       .addEdge("publish_response", END)
       .compile({ checkpointer: db.saver });
   }
+  private async persistStep(run: any, metadata: Record<string, unknown>) {
+    await this.db.tx(async (q) => {
+      await q.query(
+        "UPDATE runs SET state=$1,status=$2,updated_at=now() WHERE id=$3",
+        [run.state, run.status, run.id],
+      );
+      await this.db.event(
+        q,
+        run.workspace_id,
+        "agent.step",
+        {
+          runId: run.id,
+          status: run.status,
+          route: run.state.route,
+          ...metadata,
+        },
+        run.conversation_id,
+      );
+    });
+  }
   private async workflowAuthority(run: any, q?: import("./db.js").Queryable) {
     if (run.preview) return;
     const active = await this.db.one(
@@ -185,29 +188,15 @@ export class Agent {
         if (operation === "node") await this.workflowStep(run, node, def);
         else if (operation === "approve") await this.approved(run);
         else await this.execute(run);
-        await this.db.tx(async (q) => {
-          await q.query(
-            "UPDATE runs SET state=$1,status=$2,updated_at=now() WHERE id=$3",
-            [run.state, run.status, run.id],
-          );
-          await this.db.event(
-            q,
-            run.workspace_id,
-            "agent.step",
-            {
-              runId: run.id,
-              node: node.id,
-              title: node.title,
-              operation,
-              workflowVersion: run.workflow_version,
-              status: run.status,
-              route:
-                operation === "node"
-                  ? (run.state.outcome ?? run.state.route)
-                  : run.state.route,
-            },
-            run.conversation_id,
-          );
+        await this.persistStep(run, {
+          node: node.id,
+          title: node.title,
+          operation,
+          workflowVersion: run.workflow_version,
+          route:
+            operation === "node"
+              ? (run.state.outcome ?? run.state.route)
+              : run.state.route,
         });
         return {
           outcome: run.state.outcome ?? "",

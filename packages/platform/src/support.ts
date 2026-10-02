@@ -1,5 +1,5 @@
 import { Actions } from "./actions.js";
-import type { Database, Queryable } from "./db.js";
+import type { Database } from "./db.js";
 import { uid } from "./db.js";
 import type { Connections } from "./connections.js";
 import { HttpError, requireValue } from "./config.js";

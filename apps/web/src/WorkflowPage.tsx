@@ -20,6 +20,7 @@ import {
   type NodeType,
 } from "../../../packages/platform/src/workflow-definition.js";
 import "./workflow.css";
+import { useAction } from "./useAction.js";
 import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
 
 type Row = Record<string, any>;
@@ -120,10 +121,15 @@ export function WorkflowPage({
   const [loaded, setLoaded] = useState<Row | null>(null),
     [definition, setDefinition] = useState<Workflow | null>(null),
     [saved, setSaved] = useState("");
-  const [selected, setSelected] = useState("start"),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState(""),
-    [success, setSuccess] = useState("");
+  const [selected, setSelected] = useState("start");
+  const {
+    busy,
+    error,
+    success,
+    setError,
+    setSuccess,
+    run: act,
+  } = useAction("Workflow request failed");
   const [link, setLink] = useState<{ from: string; port: string } | null>(null),
     [zoom, setZoom] = useState(0.8),
     [past, setPast] = useState<Workflow[]>([]),
@@ -200,19 +206,6 @@ export function WorkflowPage({
       live = false;
     };
   }, [ws]);
-  const act = async (fn: () => Promise<void>, message = "") => {
-    setBusy(true);
-    setError("");
-    setSuccess("");
-    try {
-      await fn();
-      setSuccess(message);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Workflow request failed");
-    } finally {
-      setBusy(false);
-    }
-  };
   if (!loaded || !definition)
     return (
       <section className="panel">

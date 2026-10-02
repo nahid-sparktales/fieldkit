@@ -12,6 +12,8 @@ All customers, contacts, articles, accounts, and transactions are fictional. Jir
 
 Use **Node.js 24 LTS** (supported engine: Node >=22.12; local verification used Node 25.5.0) and npm. Native SQLite dependencies may need the normal platform build tools if a prebuilt binary is unavailable.
 
+Run these commands from `examples/demo`; its dependencies and lockfile are separate from the production app.
+
 ```sh
 npm ci
 npm run dev

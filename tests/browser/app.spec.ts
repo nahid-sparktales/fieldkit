@@ -302,7 +302,45 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(page.getByLabel("Route empty", { exact: true })).toHaveValue(
     conditionId,
   );
-  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  const saveDraft = page.getByRole("button", {
+    name: "Save draft",
+    exact: true,
+  });
+  let releaseSave!: () => void;
+  const pendingSave = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  await page.route(
+    "**/workflow",
+    async (route) => {
+      await pendingSave;
+      await route.fulfill({
+        status: 503,
+        json: { error: "Save temporarily unavailable" },
+      });
+    },
+    { times: 1 },
+  );
+  await saveDraft.click();
+  try {
+    await expect(saveDraft).toBeDisabled();
+  } finally {
+    releaseSave();
+  }
+  await expect(page.getByRole("alert")).toHaveText(
+    "Save temporarily unavailable",
+  );
+  await expect(saveDraft).toBeEnabled();
+  await saveDraft.click();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByRole("status")).toHaveText(
+    "Draft saved. Publish it to use it for new conversations.",
+  );
+  const stepName = page.getByLabel("Step name", { exact: true });
+  const savedStepName = await stepName.inputValue();
+  await stepName.fill(`${savedStepName} edited`);
+  await expect(page.getByRole("status")).toHaveCount(0);
+  await stepName.fill(savedStepName);
   await expect(
     page.getByRole("button", { name: "Publish workflow", exact: true }),
   ).toBeEnabled();
@@ -591,6 +629,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
       exact: true,
     }),
   ).toBeVisible();
+  await expect(library.getByRole("alert")).toHaveCount(0);
   await library
     .getByRole("button", { name: "New subflow", exact: true })
     .click();

@@ -19,6 +19,9 @@ jobs:
         with:
           node-version: 24
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            examples/demo/package-lock.json
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
@@ -27,6 +30,7 @@ jobs:
         run: |
           docker build -f runner/Dockerfile -t fieldkit-runner:local .
           npm run test:runner
+      - run: npm ci --prefix examples/demo
       - run: npm run test:demo
       - run: npx playwright install --with-deps chromium
       - run: npm run test:browser

@@ -1,4 +1,5 @@
-import React, { useId, useState } from "react";
+import { useId, useState } from "react";
+import { useAction } from "./useAction.js";
 import {
   EMPTY_SCHEMA,
   type ValueBindings,
@@ -160,9 +161,8 @@ export function WorkflowLibrary({
     [testInput, setTestInput] = useState("{}"),
     [contact, setContact] = useState(""),
     [result, setResult] = useState<Row | null>(null),
-    [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
     [recent, setRecent] = useState<Row[] | null>(null);
+  const { busy, error, setError, run: act } = useAction();
   const load = (definition: Row, row: Row | null = null) => {
     setEditing(row);
     setDraft(definition);
@@ -190,17 +190,6 @@ export function WorkflowLibrary({
         ? { language, code: initialCode(language) }
         : { source: "public_get", endpoint: "", actionId: "" }),
     });
-  const act = async (fn: () => Promise<void>) => {
-    setBusy(true);
-    setError("");
-    try {
-      await fn();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
-  };
   const definition = () => ({
     ...draft,
     inputSchema: JSON.parse(input),

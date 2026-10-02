@@ -6,7 +6,6 @@ import {
   type Mailer,
   type Principal,
   requireAdmin,
-  requireOwner,
   requireStaff,
   staff,
   conversation,
@@ -26,7 +25,7 @@ import {
   MessageInput,
   ChannelInput,
 } from "./contracts.js";
-import { token, tokenHash, equal, digest, type Fetcher } from "./security.js";
+import { token, tokenHash, equal, type Fetcher } from "./security.js";
 
 export class Platform {
   private heartbeat?: ReturnType<typeof setInterval>;
