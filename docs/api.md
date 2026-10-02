@@ -142,3 +142,34 @@ Run `npm run mcp` as a stdio server with those variables plus `FIELDKIT_CUSTOMER
 See [component contracts and examples](workflow-components.md). `POST /workflow/components` takes `{ "revision": 0, "definition": { ... } }`; updating `/:id` uses the last returned revision. Definitions are `kind: "code"` (Python/JavaScript), `"api"` (fixed `public_get` or existing `customer_action`), or `"subflow"` (an editable workflow). All have a name, description, closed input/output JSON schemas, and `customerSafe` (default false). Code additionally has `language` and `code`; API has `source`, `endpoint` or `actionId`; subflows have `workflow`. Tests take `{ "definition": { ... }, "input": { ... }, "contactId": "optional-verified-contact" }` and return output and trace. The optional runner is required only for code.
 
 Custom/subflow nodes reference `componentId`, immutable `version`, and `inputs`, keyed by schema field: `{ "type": "path", "path": "customer.id" }` or `{ "type": "value", "value": 40 }`. A Return node has `outcome: "done" | "failed"` and `outputs` using the same mapping format. Compiled `task`/`scope` nodes and their execution metadata are server-only and rejected in editor definitions. Reply nodes select `content: "agent" | "exact" | "template"` and `text`; value conditions use `field: "value"`, a variable `path`, comparison `operator`, and a string `value` parsed as JSON when applicable. Existing format-1 graphs receive default AI reply behavior.
+
+## Test Lab, gaps, feedback, and analytics
+
+All paths below are relative to `/v2/workspaces/:workspaceId` and use the existing session authorization. They share the Zod contracts in `packages/platform/src/quality-contracts.ts`.
+
+| Resource | Methods | Access |
+| --- | --- | --- |
+| `/evaluation/suites` | GET, POST | Staff read; owner/admin create |
+| `/evaluation/suites/:id` | PUT (name, revision, cases) | Owner/admin; optimistic revision |
+| `/evaluation/runs` | GET, POST (suiteId, tokenCap, variants, judge) | Staff read; owner/admin launch |
+| `/quality/jobs/:id` | GET, PATCH (cancel/retry) | Staff read; owner/admin control |
+| `/evaluation/runs/:id/results/:resultId/reviews` | POST (verdict, note) | Staff; append-only review history |
+| `/conversations/:id/test-case` | GET | Staff; returns an unsaved draft excluding internal notes |
+| `/conversations/:id/gap` | POST | Staff flag; deduplicated |
+| `/conversations/:id/feedback` | GET, PUT | Own conversation; only customer/visitor can submit |
+| `/knowledge/gaps` and `/knowledge/gaps/:id` | GET | Staff |
+| `/knowledge/gaps/:id` | PATCH (status, reason) | Staff; closing requires a reason |
+| `/knowledge/gaps/:id/merge` | POST (targetId) | Staff |
+| `/knowledge/gaps/:id/case` | GET | Staff; draft regression case |
+| `/knowledge/gaps/:id/draft` | POST | Owner/admin; creates a private FAQ draft |
+| `/knowledge/analysis` | GET, POST (tokenCap, optional gapIds) | Staff read; owner/admin launch |
+| `/knowledge/gap-scan` | POST (days 1–365, limit 1–500) | Owner/admin; no model calls |
+| `/quality/settings` | GET, PUT (nightly, dailyTokenCap) | Staff read; owner write |
+| `/analytics?from=ISO&to=ISO&channel=portal` | GET | Staff; default 30 days, max 366 days |
+| `/quality/events?after=eventId` | GET SSE | Staff; permissions rechecked while streaming |
+
+A case has an ID, name, up to ten ordered `{question, expected}` turns, channel, and fixtures. Expected checks can require an intent, visited node IDs, source IDs, exact action name/parameters, approval requirement, and a reference answer. Imported cases retain their source conversation ID and require `personalDataReviewed: true` before saving.
+
+Runs accept one or two variants, each with a name and optional workflow `definition`, response `model`, and `provider`. An enabled judge defaults to the workspace response model; it may have its own connected provider/model. `tokenCap` is mandatory (1,000–10,000,000). Reservations for response, retrieval embedding, and judging calls share the same cap and workspace budget. A retry needs `{action:"retry", acknowledgeRetry:true}` and may increase the total cap. Completed turns are reused. Unresolved reservations remain visible; acknowledgement does not clear usage.
+
+Feedback input is `{messageId, resolved, rating: "good" | "bad" | null, comment}`. The message must be a delivered AI reply belonging to the caller's conversation. Updates replace its current rating while preserving its history; a later customer message prevents an old answer from confirming resolution. Zendesk ratings are read-only imports and never become native resolution confirmations.

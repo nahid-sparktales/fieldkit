@@ -136,5 +136,29 @@
     },
     "docker_code_execution": "Not run locally: Docker unavailable; dedicated real-Docker CI check added",
     "live_provider_verification": "No live model or provider account calls; external release gates unchanged"
+  },
+  "quality_release": {
+    "recorded_at": "2026-10-02T06:36:51.770243+00:00",
+    "schema": 9,
+    "backend": {
+      "passed": 92,
+      "failed": 0,
+      "provider_mode": "injected doubles; real PostgreSQL and LangGraph"
+    },
+    "archived_demo": {
+      "passed": 33,
+      "failed": 0
+    },
+    "typecheck": "passed including noUnusedLocals and noUnusedParameters",
+    "build": "passed",
+    "browser": {
+      "passed": 1,
+      "failed": 0,
+      "includes": "feedback, two-turn comparisons, staff review, gaps, analytics, keyboard labels and mobile overflow"
+    },
+    "local_installation": "backed up, migrated and restarted; readiness passed",
+    "paid_model_calls": 0,
+    "live_zendesk_csat": "not verified; dedicated account required",
+    "docker": "not run locally; no Docker/Podman/Colima runtime; CI gate retained"
   }
 }

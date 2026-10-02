@@ -1,3 +1,5 @@
+import { Quality } from "./quality.js";
+import { FeedbackSync } from "./feedback-sync.js";
 import type { CodeRunner } from "./code-runner.js";
 import type { Config } from "./config.js";
 import { Database, uid } from "./db.js";
@@ -40,6 +42,8 @@ export class Platform {
   agent: Agent;
   assistance: Assistance;
   workflows: Workflows;
+  quality: Quality;
+  feedbackSync: FeedbackSync;
   constructor(
     public config: Config,
     options: {
@@ -71,6 +75,29 @@ export class Platform {
       options.runner,
     );
     this.workflows = new Workflows(this.db, this.agent);
+    this.quality = new Quality(
+      this.db,
+      this.agent,
+      this.workflows,
+      this.knowledge,
+      this.model,
+      this.connections,
+    );
+    this.feedbackSync = new FeedbackSync(this.db, this.connections);
+    this.feedbackSync.onNegative = (ws, id, key) =>
+      this.db.tx((q) =>
+        this.quality.occurrence(
+          ws,
+          id,
+          "negative_feedback",
+          key,
+          undefined,
+          undefined,
+          q,
+        ),
+      );
+    this.agent.onOutcome = (ws, id, q) => this.quality.captureRun(ws, id, q);
+    this.support.onSynced = (ws, id) => this.feedbackSync.queue(ws, id);
   }
   async migrate() {
     await this.db.migrate();
@@ -143,9 +170,34 @@ export class Platform {
         }
       },
     );
+    await this.db.boss.work<{ workspaceId: string; jobId: string }>(
+      "quality",
+      { batchSize: 1, localConcurrency: 2 },
+      async (jobs) => {
+        for (const j of jobs)
+          await this.quality.advance(j.data.workspaceId, j.data.jobId);
+      },
+    );
+    await this.db.boss.work<{
+      workspaceId: string;
+      ticketId?: string;
+      path?: string;
+    }>("feedback-sync", async (jobs) => {
+      for (const j of jobs)
+        await this.feedbackSync.advance(
+          j.data.workspaceId,
+          j.data.ticketId,
+          j.data.path,
+        );
+    });
     await this.db.boss.schedule("maintenance", "0 * * * *", {});
   }
   async maintenance() {
+    await this.quality.schedule();
+    for (const c of await this.db.rows(
+      "SELECT workspace_id FROM connections WHERE provider='zendesk' AND status='connected'",
+    ))
+      await this.feedbackSync.queue(c.workspace_id);
     for (const source of await this.db.rows(
       "SELECT workspace_id,id FROM sources WHERE active AND kind NOT IN ('file','faq','article') AND status<>'processing'",
     ))
@@ -169,6 +221,7 @@ export class Platform {
       );
     for (const ws of await this.db.rows("SELECT id,settings FROM workspaces")) {
       const days = Settings.parse(ws.settings).retentionDays;
+      await this.quality.retain(ws.id, days);
       const old = await this.db.rows(
         "SELECT c.id FROM conversations c WHERE c.workspace_id=$1 AND c.status='resolved' AND c.updated_at<now()-($2::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.conversation_id=c.id AND o.status IN ('prepared','sent','unknown'))",
         [ws.id, days],
@@ -477,6 +530,10 @@ export class Platform {
           q,
         )
       )[0];
+      if (!conv.external_id && role === "staff")
+        await q.query("UPDATE messages SET delivered_at=now() WHERE id=$1", [
+          msg.id,
+        ]);
       const next = (
         await this.db.rows(
           "UPDATE conversations SET revision=revision+1,status='open',mode=$1,updated_at=now() WHERE id=$2 RETURNING *",
@@ -493,6 +550,7 @@ export class Platform {
       if (conv.external_id)
         await this.support.queue(q, p.workspaceId, id, {
           body: data.body,
+          messageId: msg.id,
           public: !note,
           customer: role === "customer",
         });
@@ -500,7 +558,12 @@ export class Platform {
         q,
         p.workspaceId,
         "message.created",
-        { messageId: msg.id },
+        {
+          messageId: msg.id,
+          previousStatus: conv.status,
+          status: "open",
+          actorType: role,
+        },
         id,
         !note,
       );
@@ -568,7 +631,16 @@ export class Platform {
         q,
         p.workspaceId,
         "conversation.updated",
-        { mode: result.mode, status: result.status },
+        {
+          mode: result.mode,
+          status: result.status,
+          previousStatus: conv.status,
+          previousMode: conv.mode,
+          actorType: "staff",
+          ...(input.mode === "human"
+            ? { handoffCategory: "staff_takeover" }
+            : {}),
+        },
         id,
         true,
       );
@@ -654,6 +726,7 @@ export class Platform {
         [ws, id],
         q,
       );
+      await this.quality.forgetConversation(ws, id, q);
       await q.query(
         "DELETE FROM conversations WHERE workspace_id=$1 AND id=$2",
         [ws, id],

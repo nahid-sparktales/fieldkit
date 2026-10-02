@@ -56,3 +56,11 @@ One server, persistent local uploads, one agent per workspace, and invited busin
 Step output is private by default. Explicit customer-safe output can supply template variables and cited AI evidence. Subflow inputs retain source visibility. Templates cannot execute code or interpolate secrets, and verified identity is rechecked before account data is published. Queued Zendesk replies additionally revalidate the pinned workflow, identity, and read proofs before delivery.
 
 The optional runner accepts operator-authenticated requests and launches a disposable non-root Docker container per execution. It alone holds the host Docker socket; child containers have no socket, app files, credentials, network, or capabilities. Runtime images are fixed by the operator. See [runner setup and limits](workflow-components.md#enable-the-optional-runner).
+
+## Quality measurement and evaluation
+
+Schema 9 adds tenant-scoped suites, immutable quality jobs, per-turn evaluation results and staff review history, gap groups/aliases/occurrences, and answer-bound feedback. The existing pg-boss queues process evaluation/analysis batches and read-only feedback reconciliation. Job creation and queue insertion share a transaction. Evaluation context runs the existing compiled graph without checkpoint/customer write paths; saved fixtures replace every account/API read and business actions stop after parameter, identity and policy checks. Only the existing isolated runner executes code.
+
+An async usage context attributes retrieval/response/judge calls and enforces run caps and optional daily analysis caps inside the workspace budget lock. Provider-reported usage replaces reservations; ambiguous attempts retain reservations. Persisted completed turns are reused; interrupted model attempts require an acknowledged retry. Workers recheck the initiating administrator, source versions, imports, cancellation and scheduled-owner authority.
+
+Gap evidence points to the original customer message and survives later follow-ups. Feedback updates keep history, and current resolution confirmation is calculated against later customer messages. Delivered timestamps and explicit transition events drive metrics; historical unknowns are not reconstructed. Retention/deletion removes derived transcripts and invalidates imported cases while preserving aggregate model accounting.

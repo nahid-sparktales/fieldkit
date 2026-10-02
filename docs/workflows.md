@@ -39,3 +39,7 @@ Publishing a different workflow invalidates pending approvals. Runs retain their
 This release supports directed graphs without loops: at most 24 steps per editable graph, 96 expanded runtime nodes, three nested subflow levels, eight code/API steps, three model decisions, one account lookup, and one governed action per turn. All outcomes must have a destination and all steps must be reachable. Follow-up customer messages start new bounded turns with the conversation's persisted history. Unrestricted host scripts, model-selected URLs, credentials in graphs, parallel actions, and execution bypasses are not supported.
 
 See [customization and runner setup](workflow-components.md) for variables, code/API contracts, subflow versioning, execution limits, and examples.
+
+## Repeatable evaluation
+
+Use **Test Lab** for saved multi-turn scenarios and up to two workflow/model variants. It runs the actual expanded graph with account/API fixtures and stops at the governed action boundary. This is distinct from the existing preview, which retains live reads. Rule checks, AI quality scores, and staff verdicts stay separate, and no evaluation publishes a workflow. See the [quality guide](quality.md) for fixtures, snapshots, budgets, cancellation, and recovery.

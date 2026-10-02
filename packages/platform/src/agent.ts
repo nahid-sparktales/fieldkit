@@ -1,3 +1,7 @@
+import { classifyHandoff } from "./quality.js";
+import { usageContext } from "./usage-context.js";
+import type { EvaluationContext } from "./evaluation-context.js";
+import { automaticPolicy } from "./actions.js";
 import {
   Annotation,
   StateGraph,
@@ -56,6 +60,11 @@ type RunState = {
 };
 export class Agent {
   graph;
+  onOutcome?: (
+    ws: string,
+    runId: string,
+    q?: import("./db.js").Queryable,
+  ) => Promise<void>;
   execution: WorkflowExecution;
   constructor(
     public db: Database,
@@ -155,6 +164,8 @@ export class Agent {
         },
         run.conversation_id,
       );
+      if (run.status === "handed_off")
+        await this.onOutcome?.(run.workspace_id, run.id, q);
     });
   }
   private async workflowAuthority(run: any, q?: import("./db.js").Queryable) {
@@ -227,7 +238,8 @@ export class Agent {
         ),
       );
     const question = async () =>
-      run.previewMessages?.[0].body ??
+      run.previewMessages?.filter((m: any) => m.role === "customer").at(-1)
+        .body ??
       (
         await this.db.one(
           "SELECT body FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role='customer' ORDER BY created_at DESC,id DESC LIMIT 1",
@@ -272,10 +284,13 @@ export class Agent {
           },
         );
         run.state.outcome = run.state.evidence.length ? "found" : "empty";
+        if (!run.state.evidence.length)
+          run.state.error = "No customer-approved knowledge evidence was found";
       } catch (e) {
         run.state.evidence = [];
         run.state.error =
           e instanceof Error ? e.message : "Knowledge unavailable";
+        if (run.evaluation) run.state.evaluationBlocked = run.state.error;
         run.state.outcome = "failed";
       }
       return;
@@ -291,7 +306,15 @@ export class Agent {
               ? { customer: { name: c.name, email: c.email } }
               : {}),
             ...(node.data.billing
-              ? { billing: await this.actions.account(ws, c, node.data.modes) }
+              ? {
+                  billing: run.evaluation
+                    ? (requireValue(
+                        run.evaluation.fixtures.account,
+                        409,
+                        "Missing account fixture",
+                      ).billing ?? run.evaluation.fixtures.account)
+                    : await this.actions.account(ws, c, node.data.modes),
+                }
               : {}),
           };
           run.state.accountContactRevision = c.revision;
@@ -300,6 +323,7 @@ export class Agent {
       } catch (e) {
         run.state.error =
           e instanceof Error ? e.message : "Customer account unavailable";
+        if (run.evaluation) run.state.evaluationBlocked = run.state.error;
         run.state.outcome = "failed";
       }
       return;
@@ -453,83 +477,108 @@ export class Agent {
     contact: any,
     channel: string,
     inputs: Record<string, unknown> = {},
+    options?: {
+      evaluation: EvaluationContext;
+      messages: { role: string; body: string }[];
+      runId: string;
+    },
   ) {
-    const run: any = {
-      id: `preview-${uid()}`,
-      workspace_id: ws,
-      revision: 0,
-      state: {
-        evidence: [],
-        inputs: { "": inputs },
-        safeInputs: { "": inputs },
-      },
-      status: "running",
-      preview: true,
-      previewContact: contact,
-      previewConversation: {
-        id: "preview",
-        contact_id: contact.id,
-        mode: "agent",
-        revision: 0,
-      },
-      previewMessages: [{ role: "customer", body: question }],
-      previewChannel: channel,
-    };
-    const trace: any[] = [];
-    const graph = compileWorkflow(def, async (node) => {
-      await this.workflowStep(run, node, def);
-      trace.push({
-        nodeId: node.origin || node.id,
-        executionId: node.id,
-        title: node.title,
-        type: node.type,
-        outcome: run.state.outcome ?? run.state.route,
-        error: run.state.error ?? null,
-        evidenceCount: run.state.evidence?.length ?? 0,
-        hasAccount: !!run.state.account,
-        output:
-          run.state.outputs?.[node.scope ?? ""]?.[node.localId ?? node.id]
-            ?.output ?? null,
-        logs: node.type === "task" ? (run.state.lastStepLogs ?? "") : "",
-      });
-      return { outcome: run.state.outcome ?? "", route: run.state.route ?? "" };
-    });
-    await graph.invoke(
-      { workspaceId: ws, runId: run.id },
-      { recursionLimit: 240 },
-    );
-    if (!(await this.knowledge.validEvidence(ws, run.state.evidence ?? [])))
-      throw new HttpError(
-        409,
-        "Knowledge changed during the preview. Test again.",
-      );
-    if (run.state.accountContactRevision !== undefined) {
-      const current = await this.db.one(
-        "SELECT revision,verified FROM contacts WHERE workspace_id=$1 AND id=$2",
-        [ws, contact.id],
-      );
-      if (
-        !current?.verified ||
-        current.revision !== run.state.accountContactRevision
-      )
-        throw new HttpError(
-          409,
-          "The customer identity changed during preview.",
+    return usageContext.run(
+      usageContext.getStore() ?? { purpose: "preview" },
+      async () => {
+        const run: any = {
+          id: options?.runId ?? `preview-${uid()}`,
+          evaluation: options?.evaluation,
+          workspace_id: ws,
+          revision: 0,
+          state: {
+            evidence: [],
+            inputs: { "": inputs },
+            safeInputs: { "": inputs },
+          },
+          status: "running",
+          preview: true,
+          previewContact: contact,
+          previewConversation: {
+            id: "preview",
+            contact_id: contact.id,
+            mode: "agent",
+            revision: 0,
+          },
+          previewMessages: options?.messages ?? [
+            { role: "customer", body: question },
+          ],
+          previewChannel: channel,
+        };
+        const trace: any[] = [];
+        const graph = compileWorkflow(def, async (node) => {
+          await run.evaluation?.beforeStep?.();
+          await this.workflowStep(run, node, def);
+          trace.push({
+            nodeId: node.origin || node.id,
+            executionId: node.id,
+            title: node.title,
+            type: node.type,
+            outcome: run.state.outcome ?? run.state.route,
+            error: run.state.error ?? null,
+            evidenceCount: run.state.evidence?.length ?? 0,
+            hasAccount: !!run.state.account,
+            output:
+              run.state.outputs?.[node.scope ?? ""]?.[node.localId ?? node.id]
+                ?.output ?? null,
+            logs: node.type === "task" ? (run.state.lastStepLogs ?? "") : "",
+          });
+          return {
+            outcome: run.state.outcome ?? "",
+            route: run.state.route ?? "",
+          };
+        });
+        await graph.invoke(
+          { workspaceId: ws, runId: run.id },
+          { recursionLimit: 240 },
         );
-    }
-    await this.execution.validate(run);
-    return {
-      trace,
-      output: run.state.previewOutput ?? null,
-      answer: run.state.response ?? "",
-      intent: run.state.route ?? run.state.draft?.intent,
-      action: run.state.previewAction ?? null,
-      citations: [
-        ...(run.state.evidence ?? []),
-        ...(run.state.stepEvidence ?? []),
-      ].filter((e: Citation) => run.state.draft?.citationIds.includes(e.id)),
-      actionsExecuted: false,
-    };
+        if (!(await this.knowledge.validEvidence(ws, run.state.evidence ?? [])))
+          throw new HttpError(
+            409,
+            "Knowledge changed during the preview. Test again.",
+          );
+        if (!run.evaluation && run.state.accountContactRevision !== undefined) {
+          const current = await this.db.one(
+            "SELECT revision,verified FROM contacts WHERE workspace_id=$1 AND id=$2",
+            [ws, contact.id],
+          );
+          if (
+            !current?.verified ||
+            current.revision !== run.state.accountContactRevision
+          )
+            throw new HttpError(
+              409,
+              "The customer identity changed during preview.",
+            );
+        }
+        await this.execution.validate(run);
+        return {
+          trace,
+          output: run.state.previewOutput ?? null,
+          answer: run.state.response ?? "",
+          intent: run.state.route ?? run.state.draft?.intent,
+          action: run.state.previewAction ?? null,
+          citations: [
+            ...(run.state.evidence ?? []),
+            ...(run.state.stepEvidence ?? []),
+          ].filter((e: Citation) =>
+            run.state.draft?.citationIds.includes(e.id),
+          ),
+          actionsExecuted: false,
+          blocked: run.state.evaluationBlocked ?? null,
+          error: run.state.error ?? null,
+          decision:
+            run.state.route === "handoff"
+              ? "handoff"
+              : (run.state.draft?.intent ?? "answer"),
+        };
+      },
+    );
   }
   private handoff(run: any, message: string) {
     run.state.route = "handoff";
@@ -589,7 +638,9 @@ export class Agent {
             run.workspace_id,
           ]),
         ),
-        settings = Settings.parse(workspace.settings);
+        settings = Settings.parse(
+          run.evaluation?.settings ?? workspace.settings,
+        );
       const conv = requireValue(await this.current(run));
       const contact =
         run.previewContact ??
@@ -608,10 +659,15 @@ export class Agent {
           )
         ).reverse();
       const actions = contact.verified
-        ? await this.db.rows<ActionDefinition>(
-            "SELECT * FROM actions WHERE workspace_id=$1 AND enabled AND ($2::text[] IS NULL OR id=ANY($2::text[]))",
-            [run.workspace_id, options?.actionIds ?? null],
-          )
+        ? run.evaluation
+          ? run.evaluation.actions.filter(
+              (a: ActionDefinition) =>
+                a.enabled && (!options || options.actionIds.includes(a.id)),
+            )
+          : await this.db.rows<ActionDefinition>(
+              "SELECT * FROM actions WHERE workspace_id=$1 AND enabled AND ($2::text[] IS NULL OR id=ANY($2::text[]))",
+              [run.workspace_id, options?.actionIds ?? null],
+            )
         : [];
       const { schemaFor } = await import("./actions.js");
       const draft = await this.model.answer({
@@ -631,7 +687,7 @@ export class Agent {
           ...(run.state.evidence ?? []),
           ...(run.state.stepEvidence ?? []),
         ],
-        actions: actions.map((a) => ({
+        actions: actions.map((a: ActionDefinition) => ({
           name: a.name,
           description:
             a.description +
@@ -640,9 +696,10 @@ export class Agent {
               : ""),
           schema: schemaFor(a),
         })),
-        account: options
-          ? (run.state.account ?? null)
-          : await this.actions.account(run.workspace_id, contact),
+        account:
+          options || run.evaluation
+            ? (run.state.account ?? null)
+            : await this.actions.account(run.workspace_id, contact),
         instructions:
           settings.instructions +
           (options?.instructions
@@ -663,6 +720,9 @@ export class Agent {
         throw new Error("The answer has no supporting company evidence");
       run.state.draft = draft;
     } catch (e) {
+      if (run.evaluation)
+        run.state.evaluationBlocked =
+          e instanceof Error ? e.message : "Model unavailable";
       this.handoff(run, e instanceof Error ? e.message : "Model unavailable");
     }
   }
@@ -692,6 +752,88 @@ export class Agent {
               [run.workspace_id, conv.contact_id],
             ),
           );
+      if (run.evaluation) {
+        const evaluation: EvaluationContext = run.evaluation;
+        if (!contact.verified)
+          throw new Error("Verified customer fixture required");
+        const action = requireValue(
+          evaluation.actions.find(
+            (a) =>
+              a.enabled &&
+              a.name === d.actionName &&
+              (!options || options.actionIds.includes(a.id)),
+          ),
+          409,
+          "Action is not enabled",
+        );
+        const parameters = d.parameters ?? {};
+        this.actions.validateParameters(action, parameters);
+        const mapping = action.kind.startsWith("stripe")
+          ? `stripe_${action.config.stripeMode ?? "test"}`
+          : action.config.mappingKey;
+        if (!mapping || typeof contact.mappings?.[mapping] !== "string")
+          throw new Error("Customer fixture requires a provider mapping");
+        if (action.kind.startsWith("stripe")) {
+          const account: any = requireValue(
+            evaluation.fixtures.account,
+            409,
+            "Missing account fixture",
+          );
+          const billing = account.billing ?? account;
+          const selected = Array.isArray(billing)
+            ? billing.find(
+                (b) => b.mode === (action.config.stripeMode ?? "test"),
+              )
+            : billing;
+          const resource =
+            action.kind === "stripe_refund"
+              ? selected?.charges?.find(
+                  (c: any) => c.id === parameters.chargeId,
+                )
+              : selected?.subscriptions?.find(
+                  (c: any) => c.id === parameters.subscriptionId,
+                );
+          if (!resource)
+            throw new Error(
+              "Selected resource does not belong to the customer fixture",
+            );
+          if (
+            action.kind === "stripe_cancel" &&
+            (!["active", "trialing", "past_due", "unpaid"].includes(
+              resource.status,
+            ) ||
+              resource.cancelAtPeriodEnd)
+          )
+            throw new Error(
+              "Subscription fixture is already ending or inactive",
+            );
+          if (
+            action.kind === "stripe_refund" &&
+            (!resource.paid ||
+              !resource.captured ||
+              resource.disputed ||
+              Number(parameters.amountMinor) >
+                resource.amountMinor - resource.refundedMinor ||
+              parameters.currency !== resource.currency)
+          )
+            throw new Error("Refund is outside the fixture purchase limits");
+        }
+        run.state.previewAction = {
+          name: action.name,
+          parameters,
+          requiresApproval:
+            !!options?.forceApproval ||
+            !automaticPolicy(
+              action,
+              parameters,
+              evaluation.fixtures.dailyActionCount,
+            ),
+        };
+        run.state.response =
+          "Evaluation stopped at the governed action boundary. No approval or operation was created.";
+        run.state.route = "preview_action";
+        return;
+      }
       const action = requireValue(
         await this.db.one<ActionDefinition>(
           "SELECT * FROM actions WHERE workspace_id=$1 AND name=$2 AND enabled AND ($3::text[] IS NULL OR id=ANY($3::text[]))",
@@ -770,6 +912,8 @@ export class Agent {
         );
       });
     } catch (e) {
+      if (run.evaluation && /fixture/i.test(String(e)))
+        run.state.evaluationBlocked = String(e);
       this.handoff(
         run,
         e instanceof Error ? e.message : "Action could not be authorized",
@@ -1000,7 +1144,7 @@ export class Agent {
         "A member of our support team will help you with this request.";
       const role = review ? "note" : "assistant";
       await q.query(
-        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,citations,request_key) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(workspace_id,conversation_id,request_key) DO NOTHING",
+        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,citations,request_key,run_id,delivered_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,conversation_id,request_key) DO NOTHING",
         [
           uid(),
           run.workspace_id,
@@ -1009,6 +1153,8 @@ export class Agent {
           body,
           JSON.stringify(citations),
           `run:${run.id}`,
+          run.id,
+          !conv.external_id && role === "assistant" ? new Date() : null,
         ],
       );
       if (conv.external_id)
@@ -1093,7 +1239,22 @@ export class Agent {
         q,
         run.workspace_id,
         "conversation.updated",
-        { status: human ? "needs_staff" : "open" },
+        {
+          status: human ? "needs_staff" : "open",
+          previousStatus: conv.status,
+          mode: human ? "human" : "agent",
+          previousMode: conv.mode,
+          runId: run.id,
+          workflowVersion: run.workflow_version ?? null,
+          ...(human
+            ? {
+                handoffCategory: review
+                  ? "staff_review"
+                  : classifyHandoff(run.state.error ?? ""),
+              }
+            : {}),
+          handoffReason: run.state.error ?? (review ? "staff_review" : null),
+        },
         conv.id,
         true,
       );
@@ -1152,7 +1313,9 @@ export class Agent {
         if (!saved.next.length) return;
         input = null;
       }
-      await graph.invoke(input, config);
+      await usageContext.run({ purpose: "production", runId: id }, () =>
+        graph.invoke(input, config),
+      );
     } finally {
       await lock.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [
         lockKey,

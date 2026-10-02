@@ -444,6 +444,20 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(
     page.getByRole("heading", { name: "What is your return policy?" }).last(),
   ).toBeVisible();
+  await customer
+    .getByLabel("Issue resolution", { exact: true })
+    .selectOption("true");
+  await customer
+    .getByLabel("Experience (optional)", { exact: true })
+    .selectOption("good");
+  await customer
+    .getByRole("button", { name: "Save feedback", exact: true })
+    .click();
+  await expect(
+    customer.getByText("Thank you. Your feedback has been saved.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Take over", exact: true }).click();
   await expect(page.getByText("human takeover", { exact: true })).toBeVisible();
   await page
@@ -717,6 +731,107 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     path: "test-results/custom-workflow.png",
     fullPage: true,
   });
+  await page.getByRole("button", { name: "Test Lab", exact: true }).click();
+  await page.getByRole("button", { name: "New suite", exact: true }).click();
+  await page
+    .getByLabel("Suite name", { exact: true })
+    .fill("Support regression");
+  await page.getByLabel("Suite name", { exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(page.getByLabel("Case", { exact: true })).toBeFocused();
+  await page
+    .getByLabel("Case name", { exact: true })
+    .fill("Service continuity");
+  await page
+    .getByLabel("Customer message 1", { exact: true })
+    .fill("Is the service online?");
+  await page
+    .getByRole("button", { name: "Add customer turn", exact: true })
+    .click();
+  await page.getByLabel("Customer message 2", { exact: true }).fill("And now?");
+  await page
+    .getByText("Customer, account and API fixtures", { exact: true })
+    .click();
+  await page.getByLabel("Fixtures JSON", { exact: true }).fill(
+    JSON.stringify({
+      steps: { [customId]: { output: { status: "operational" } } },
+    }),
+  );
+  await page.getByLabel("Fixtures JSON", { exact: true }).fill("{invalid");
+  await page.getByRole("button", { name: "Save suite", exact: true }).click();
+  await expect(
+    page.locator(".quality-page [role=alert]").first(),
+  ).toContainText(/JSON|property/i);
+  await page.getByLabel("Fixtures JSON", { exact: true }).fill(
+    JSON.stringify({
+      steps: { [customId]: { output: { status: "operational" } } },
+    }),
+  );
+  await page.getByRole("button", { name: "Save suite", exact: true }).click();
+  await expect(page.getByText("Suite saved.", { exact: true })).toBeVisible();
+  await expect(page.locator(".quality-page [role=alert]").first()).toHaveText(
+    "",
+  );
+  await page.getByLabel("Compare two variants").check();
+  await page
+    .getByRole("button", { name: "Launch test run", exact: true })
+    .click();
+  await expect(page.locator(".quality-result")).toHaveCount(4);
+  await expect(
+    page.getByRole("heading", { name: "AI quality assessment", exact: true }),
+  ).toHaveCount(4);
+  await expect(page.locator(".quality-result").first()).toContainText(
+    "Grounding 5/5",
+    { timeout: 30000 },
+  );
+  await page
+    .locator(".quality-result")
+    .first()
+    .getByLabel("Review explanation")
+    .fill("Reviewed this answer and route.");
+  await page
+    .locator(".quality-result")
+    .first()
+    .getByRole("button", { name: "Record staff review" })
+    .click();
+  await expect(
+    page
+      .locator(".quality-result")
+      .first()
+      .getByText("Review recorded. Original results retained."),
+  ).toBeVisible();
+  await page.screenshot({ path: "test-results/test-lab.png", fullPage: true });
+  await page.getByRole("button", { name: "Analytics", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Analytics", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Satisfaction", exact: true }),
+  ).toBeVisible();
+  await page.getByLabel("Channel", { exact: true }).selectOption("portal");
+  await page.screenshot({ path: "test-results/analytics.png", fullPage: true });
+  await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Flag knowledge gap", exact: true })
+    .click();
+  await expect(
+    page.getByText("Conversation flagged under Knowledge → Gaps.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Knowledge", exact: true }).click();
+  await page.getByRole("button", { name: "Gaps", exact: true }).click();
+  await expect(
+    page.getByText("Nightly analysis · disabled", { exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Analyze now", exact: true }).click();
+  await expect(
+    page.getByText("Analysis queued.", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/knowledge-gaps.png",
+    fullPage: true,
+  });
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(
@@ -727,6 +842,24 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     path: "test-results/custom-workflow-mobile.png",
     fullPage: true,
   });
+  for (const section of ["Test Lab", "Analytics"]) {
+    await page
+      .getByRole("button", { name: "Toggle navigation", exact: true })
+      .click();
+    await page.getByRole("button", { name: section, exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: section, exact: true }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: `test-results/${section.toLowerCase().replace(" ", "-")}-mobile.png`,
+      fullPage: true,
+    });
+  }
   expect(errors).toEqual([]);
   await customerContext.close();
 });

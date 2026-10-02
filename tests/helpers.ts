@@ -41,6 +41,36 @@ export async function resetDatabase(url: string) {
   }
 }
 export class TestModel implements ModelPort {
+  async judge(
+    input: import("../packages/platform/src/quality-contracts.js").QualityModelInput,
+  ) {
+    const p = input.payload as any;
+    return {
+      grounding: 5,
+      relevance: 4,
+      completeness: 4,
+      referenceConsistency: "not_applicable" as const,
+      explanation: "Fixture assessment tied to supplied evidence.",
+      citationIds: (p.evidence ?? []).slice(0, 1).map((e: any) => e.id),
+    };
+  }
+  async analyzeGap(
+    input: import("../packages/platform/src/quality-contracts.js").QualityModelInput,
+  ) {
+    const p = input.payload as any;
+    return {
+      title: "Return policy",
+      category: "missing_knowledge" as const,
+      explanation: "Customers need a clear return deadline.",
+      mergeWith: null,
+      missingInformation: [],
+      question: "What is the return deadline?",
+      answer: p.evidence?.length
+        ? "Unused items can be returned within 30 days."
+        : "",
+      citationIds: (p.evidence ?? []).slice(0, 1).map((e: any) => e.id),
+    };
+  }
   assistHook?: (input: SupportModelInput) => Promise<void>;
   async assist(input: SupportModelInput) {
     await this.assistHook?.(input);

@@ -50,7 +50,7 @@ export class WorkflowExecution {
       run.state.accountContactRevision = customer.revision;
     }
     const last =
-      run.previewMessages?.[0] ??
+      run.previewMessages?.filter((m: any) => m.role === "customer").at(-1) ??
       (await this.db.one(
         "SELECT body FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role='customer' ORDER BY created_at DESC,id DESC LIMIT 1",
         [run.workspace_id, conv.id],
@@ -148,6 +148,13 @@ export class WorkflowExecution {
       run.state.outcome = "next";
     } catch (error) {
       run.state.error = (error as Error).message;
+      if (
+        run.evaluation &&
+        /runner.*not configured|Missing.*fixture|fixture.*missing|Fixture output|Step output/i.test(
+          run.state.error,
+        )
+      )
+        run.state.evaluationBlocked = run.state.error;
       run.state.outcome = "failed";
       run.state.stepEvidence = (run.state.stepEvidence ?? []).filter(
         (c: any) => c.id !== `step:${node.id}`,
@@ -198,6 +205,41 @@ export class WorkflowExecution {
           });
           output = result.output;
           logs = result.logs;
+        } else if (run.evaluation) {
+          if (definition.source === "customer_action") {
+            const action = run.evaluation.actions.find(
+              (a: any) =>
+                a.id === definition.actionId &&
+                a.enabled &&
+                a.kind === "custom_read",
+            );
+            if (
+              !action ||
+              !run.previewContact?.verified ||
+              !run.previewContact.mappings?.[action.config.mappingKey]
+            )
+              throw new Error(
+                "Verified customer fixture and provider mapping required for this read",
+              );
+            validateObject(
+              action.config.inputSchema ?? {},
+              input,
+              "Action input",
+            );
+          }
+          const fixture =
+            run.evaluation.fixtures.steps[node.id] ??
+            run.evaluation.fixtures.steps[node.origin || node.id];
+          if (!fixture) {
+            run.state.evaluationBlocked = `Missing API fixture for ${node.origin || node.id}`;
+            throw new Error(run.state.evaluationBlocked);
+          }
+          if (fixture.error) throw new Error(fixture.error);
+          output = requireValue(
+            fixture.output,
+            409,
+            "Fixture output is missing",
+          );
         } else if (definition.source === "public_get") {
           const response = await this.actions.connections.fetch(
             definition.endpoint,
@@ -281,6 +323,13 @@ export class WorkflowExecution {
       run.state.lastStepLogs = logs;
     } catch (error) {
       run.state.error = (error as Error).message;
+      if (
+        run.evaluation &&
+        /runner.*not configured|Missing.*fixture|fixture.*missing|Fixture output|Step output/i.test(
+          run.state.error,
+        )
+      )
+        run.state.evaluationBlocked = run.state.error;
       run.state.outcome = "failed";
       run.state.stepEvidence = (run.state.stepEvidence ?? []).filter(
         (c: any) => c.id !== `step:${node.id}`,

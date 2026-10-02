@@ -1,3 +1,16 @@
+const TestLabPage = React.lazy(() =>
+  import("./TestLabPage.js").then((m) => ({ default: m.TestLabPage })),
+);
+const KnowledgeGapsPage = React.lazy(() =>
+  import("./KnowledgeGapsPage.js").then((m) => ({
+    default: m.KnowledgeGapsPage,
+  })),
+);
+const AnalyticsPage = React.lazy(() =>
+  import("./AnalyticsPage.js").then((m) => ({ default: m.AnalyticsPage })),
+);
+import { ConversationFeedback } from "./ConversationFeedback.js";
+import { request, api, useLoad } from "./request.js";
 import "@fontsource/dm-sans/latin-400.css";
 import "@fontsource/dm-sans/latin-500.css";
 import "@fontsource/dm-sans/latin-600.css";
@@ -26,59 +39,6 @@ import {
 
 const auth = createAuthClient();
 type Row = Record<string, any>;
-async function request(
-  path: string,
-  data?: unknown,
-  method?: string,
-  bearer?: string,
-) {
-  const res = await fetch(path, {
-    method: method ?? (data === undefined ? "GET" : "POST"),
-    headers: {
-      ...(data instanceof FormData
-        ? {}
-        : { "Content-Type": "application/json" }),
-      ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
-    },
-    body:
-      data === undefined
-        ? undefined
-        : data instanceof FormData
-          ? data
-          : JSON.stringify(data),
-  });
-  const result = await res.json();
-  if (!res.ok)
-    throw new Error(result.error ?? "The request could not be completed");
-  return result;
-}
-const api = (
-  ws: string,
-  path: string,
-  data?: unknown,
-  method?: string,
-  bearer?: string,
-) => request(`/v2/workspaces/${ws}${path}`, data, method, bearer);
-function useLoad(fn: () => Promise<any>, keys: unknown[]) {
-  const [data, setData] = useState<any>(null),
-    [error, setError] = useState(""),
-    [version, setVersion] = useState(0);
-  useEffect(() => {
-    let live = true;
-    setError("");
-    fn()
-      .then((v) => {
-        if (live) setData(v);
-      })
-      .catch((e) => {
-        if (live) setError(e.message);
-      });
-    return () => {
-      live = false;
-    };
-  }, [...keys, version]);
-  return { data, error, reload: () => setVersion((v) => v + 1) };
-}
 function Logo() {
   return (
     <span className="brand">
@@ -104,6 +64,8 @@ function Icon({ name }: { name: string }) {
     Team: "M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2 M9 11a4 4 0 100-8 4 4 0 000 8 M18 3a4 4 0 010 8 M22 21v-2a4 4 0 00-3-4",
     Settings:
       "M12 8a4 4 0 100 8 4 4 0 000-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2",
+    "Test Lab": "M8 3h8 M10 3v7l-6 10h16l-6-10V3 M7 15h10",
+    Analytics: "M4 20V10 M12 20V4 M20 20V7",
     Activity: "M2 12h5l3-8 4 16 3-8h5",
   };
   return (
@@ -375,6 +337,8 @@ const sections = [
   "Inbox",
   "Knowledge",
   "Workflow",
+  "Test Lab",
+  "Analytics",
   "Connections",
   "Actions",
   "Publish",
@@ -469,6 +433,8 @@ function App() {
                   "Workflow",
                   "Actions",
                   "Activity",
+                  "Test Lab",
+                  "Analytics",
                 ].includes(s),
             )
             .map((s) => (
@@ -529,35 +495,45 @@ function App() {
           </a>
         </header>
         <div className="workspace-body" key={ws + view}>
-          {view === "Setup" ? (
-            <Setup ws={ws} go={go} />
-          ) : view === "Inbox" ? (
-            <Inbox ws={ws} role={role} />
-          ) : view === "Knowledge" ? (
-            <KnowledgePage ws={ws} admin={role !== "agent"} />
-          ) : view === "Workflow" ? (
-            <WorkflowPage
-              ws={ws}
-              admin={role !== "agent"}
-              request={(path, data, method) => api(ws, path, data, method)}
-            />
-          ) : view === "Connections" ? (
-            <ConnectionsPage ws={ws} owner={role === "owner"} />
-          ) : view === "Actions" ? (
-            <ActionsPage ws={ws} owner={role === "owner"} />
-          ) : view === "Publish" ? (
-            <PublishPage
-              ws={ws}
-              slug={workspace.slug}
-              owner={role === "owner"}
-            />
-          ) : view === "Team" ? (
-            <TeamPage ws={ws} />
-          ) : view === "Settings" ? (
-            <SettingsPage ws={ws} />
-          ) : (
-            <ActivityPage ws={ws} admin={role !== "agent"} />
-          )}
+          <React.Suspense fallback={<p role="status">Loading…</p>}>
+            {view === "Setup" ? (
+              <Setup ws={ws} go={go} />
+            ) : view === "Inbox" ? (
+              <Inbox ws={ws} role={role} />
+            ) : view === "Knowledge" ? (
+              <KnowledgePage
+                ws={ws}
+                admin={role !== "agent"}
+                owner={role === "owner"}
+              />
+            ) : view === "Workflow" ? (
+              <WorkflowPage
+                ws={ws}
+                admin={role !== "agent"}
+                request={(path, data, method) => api(ws, path, data, method)}
+              />
+            ) : view === "Test Lab" ? (
+              <TestLabPage ws={ws} admin={role !== "agent"} />
+            ) : view === "Analytics" ? (
+              <AnalyticsPage ws={ws} />
+            ) : view === "Connections" ? (
+              <ConnectionsPage ws={ws} owner={role === "owner"} />
+            ) : view === "Actions" ? (
+              <ActionsPage ws={ws} owner={role === "owner"} />
+            ) : view === "Publish" ? (
+              <PublishPage
+                ws={ws}
+                slug={workspace.slug}
+                owner={role === "owner"}
+              />
+            ) : view === "Team" ? (
+              <TeamPage ws={ws} />
+            ) : view === "Settings" ? (
+              <SettingsPage ws={ws} />
+            ) : (
+              <ActivityPage ws={ws} admin={role !== "agent"} />
+            )}
+          </React.Suspense>
         </div>
       </main>
     </div>
@@ -814,7 +790,9 @@ function useConversationEvents(
 }
 function Inbox({ ws, role }: { ws: string; role: string }) {
   const l = useLoad(() => api(ws, "/conversations"), [ws]),
-    [selected, setSelected] = useState("");
+    [selected, setSelected] = useState(
+      new URLSearchParams(location.search).get("conversation") ?? "",
+    );
   const detail = useLoad(
     () =>
       selected ? api(ws, `/conversations/${selected}`) : Promise.resolve(null),
@@ -862,6 +840,11 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
         Your agent and your team, working from the same context.
       </Heading>
       <Alert>{l.error || detail.error || a.error}</Alert>
+      {a.success && (
+        <p className="success" role="status">
+          {a.success}
+        </p>
+      )}
       <div className="inbox">
         <section className="conversation-list">
           <div className="list-title">
@@ -964,6 +947,23 @@ function Inbox({ ws, role }: { ws: string; role: string }) {
                 {detail.data.conversation.status === "resolved"
                   ? "Reopen"
                   : "Resolve"}
+              </button>
+            </div>
+            <div className="button-row">
+              <a
+                href={`/?workspace=${ws}&view=test%20lab&importConversation=${selected}`}
+              >
+                Create regression test
+              </a>
+              <button
+                disabled={a.busy}
+                onClick={() =>
+                  void a.run(async () => {
+                    await api(ws, `/conversations/${selected}/gap`, {});
+                  }, "Conversation flagged under Knowledge → Gaps.")
+                }
+              >
+                Flag knowledge gap
               </button>
             </div>
             <SupportAssistant
@@ -1636,12 +1636,22 @@ async function googlePicker(
     picker.setVisible(true);
   });
 }
-function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
+function KnowledgePage({
+  ws,
+  admin,
+  owner,
+}: {
+  ws: string;
+  admin: boolean;
+  owner: boolean;
+}) {
   const l = useLoad(() => api(ws, "/sources"), [ws]),
     a = useAction(),
     [preview, setPreview] = useState<Row | null>(null),
     [kind, setKind] = useState("website"),
-    [section, setSection] = useState("sources");
+    [section, setSection] = useState(
+      new URLSearchParams(location.search).has("gap") ? "gaps" : "sources",
+    );
   const importing = l.data?.sources.some((s: Row) =>
     ["queued", "processing"].includes(s.status),
   );
@@ -1684,8 +1694,16 @@ function KnowledgePage({ ws, admin }: { ws: string; admin: boolean }) {
         >
           FAQs
         </button>
+        <button
+          aria-pressed={section === "gaps"}
+          onClick={() => setSection("gaps")}
+        >
+          Gaps
+        </button>
       </nav>
-      {section === "faqs" ? (
+      {section === "gaps" ? (
+        <KnowledgeGapsPage ws={ws} admin={admin} owner={owner} />
+      ) : section === "faqs" ? (
         <FaqPage key={ws} ws={ws} admin={admin} />
       ) : (
         <>
@@ -3753,7 +3771,26 @@ function Portal({ slug, widget = false }: { slug: string; widget?: boolean }) {
       </div>
       <div className="messages">
         {detail.data ? (
-          <MessageList messages={detail.data.messages} />
+          <>
+            <MessageList messages={detail.data.messages} />
+            {detail.data.messages.findLast(
+              (m: Row) => m.role === "assistant" && m.delivered_at,
+            ) && (
+              <ConversationFeedback
+                key={
+                  detail.data.messages.findLast(
+                    (m: Row) => m.role === "assistant" && m.delivered_at,
+                  ).id
+                }
+                ws={joined.workspaceId}
+                id={selected}
+                message={detail.data.messages.findLast(
+                  (m: Row) => m.role === "assistant" && m.delivered_at,
+                )}
+                bearer={bearer}
+              />
+            )}
+          </>
         ) : (
           <div className="chat-welcome">
             <span className="chat-mark">✦</span>

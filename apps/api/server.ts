@@ -1,3 +1,5 @@
+import { usageContext } from "../../packages/platform/src/usage-context.js";
+import { qualityRoutes } from "./quality-routes.js";
 import { WorkflowDefinition } from "../../packages/platform/src/workflow-definition.js";
 import {
   createServer,
@@ -424,6 +426,8 @@ export async function createApp(
             `${ws}:${p.userId ?? p.contactId ?? tokenHash(req.headers.authorization ?? "")}`,
             90,
           );
+        if (await qualityRoutes(app, p, req, res, url, suffix, body, json))
+          return;
         if (!suffix && method === "GET") {
           requireStaff(p);
           json(res, {
@@ -644,18 +648,22 @@ export async function createApp(
               ]),
             ).settings,
           );
-          const evidence = await app.knowledge.retrieve(ws, d.question);
+          const evidence = await usageContext.run({ purpose: "preview" }, () =>
+            app.knowledge.retrieve(ws, d.question),
+          );
           const draft = DraftSchema.parse(
-            await app.model.answer({
-              workspaceId: ws,
-              runId: `preview-${uid()}`,
-              messages: [{ role: "customer", body: d.question }],
-              evidence,
-              account: null,
-              actions: [],
-              instructions: settings.instructions,
-              model: settings.model,
-            }),
+            await usageContext.run({ purpose: "preview" }, () =>
+              app.model.answer({
+                workspaceId: ws,
+                runId: `preview-${uid()}`,
+                messages: [{ role: "customer", body: d.question }],
+                evidence,
+                account: null,
+                actions: [],
+                instructions: settings.instructions,
+                model: settings.model,
+              }),
+            ),
           );
           if (
             draft.intent === "action" ||

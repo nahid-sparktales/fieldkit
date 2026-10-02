@@ -6,6 +6,7 @@ import { HttpError, requireValue } from "./config.js";
 import { digest, equal, verifySignature } from "./security.js";
 
 export class Support {
+  onSynced?: (ws: string, ticketId: string) => Promise<void>;
   constructor(
     public db: Database,
     public connections: Connections,
@@ -210,6 +211,11 @@ export class Support {
           ],
         );
         if (r.rowCount) {
+          if (role === "staff")
+            await q.query("UPDATE messages SET delivered_at=$2 WHERE id=$1", [
+              r.rows[0].id,
+              comment.created_at,
+            ]);
           changed = true;
           if (role !== "note") lastRole = role;
         }
@@ -232,7 +238,20 @@ export class Support {
           status !== "resolved"
         )
           await enqueueTurn(this.db, q, updated);
-        await this.db.event(q, ws, "conversation.synced", {}, conv.id, true);
+        await this.db.event(
+          q,
+          ws,
+          "conversation.synced",
+          {
+            previousStatus: conv.status,
+            status: ["solved", "closed"].includes(ticket.status)
+              ? "resolved"
+              : "open",
+            actorType: "zendesk",
+          },
+          conv.id,
+          true,
+        );
       } else {
         const resolved = ["solved", "closed"].includes(ticket.status);
         const statusChanged = resolved !== (conv.status === "resolved");
@@ -247,7 +266,20 @@ export class Support {
           ],
         );
         if (statusChanged)
-          await this.db.event(q, ws, "conversation.synced", {}, conv.id, true);
+          await this.db.event(
+            q,
+            ws,
+            "conversation.synced",
+            {
+              previousStatus: conv.status,
+              status: ["solved", "closed"].includes(ticket.status)
+                ? "resolved"
+                : "open",
+              actorType: "zendesk",
+            },
+            conv.id,
+            true,
+          );
       }
       if (forceTurn) {
         const current = await this.db.one(
@@ -259,6 +291,7 @@ export class Support {
           await enqueueTurn(this.db, q, current);
       }
     });
+    await this.onSynced?.(ws, ticketId);
   }
   private async resumeCustomer(
     q: import("pg").PoolClient,
@@ -285,7 +318,33 @@ export class Support {
         "SELECT id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
         [ws, link.conversation_id],
       );
-      return this.deliverLocked(ws, id, q);
+      await this.deliverLocked(ws, id, q);
+      const delivered = await this.db.one(
+        "SELECT * FROM deliveries WHERE workspace_id=$1 AND id=$2 AND status='delivered'",
+        [ws, id],
+        q,
+      );
+      if (delivered?.payload.public) {
+        const messages = await this.db.rows(
+          "UPDATE messages SET delivered_at=now() WHERE workspace_id=$1 AND conversation_id=$2 AND delivered_at IS NULL AND role IN ('assistant','staff') AND (id=$3 OR run_id=$4) RETURNING id,run_id",
+          [
+            ws,
+            link.conversation_id,
+            delivered.payload.messageId ?? null,
+            delivered.id,
+          ],
+          q,
+        );
+        for (const m of messages)
+          await this.db.event(
+            q,
+            ws,
+            "response.delivered",
+            { messageId: m.id, runId: m.run_id },
+            link.conversation_id,
+            true,
+          );
+      }
     });
   }
   private async deliverLocked(

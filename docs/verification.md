@@ -2,6 +2,14 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Test Lab, gaps, and analytics — 2026-10-02
+
+All 92 backend tests, 33 archived demo tests, strict TypeScript checks (including unused bindings), the production build, and the expanded browser journey passed locally. The feature suite uses the real PostgreSQL database, queue contracts, and LangGraph engine with injected model/provider doubles. New regressions cover multi-turn continuity and two-model snapshots, independent rules/judging/staff overrides, schema-checked fixture reads, zero customer or business-operation writes during evaluation, missing fixtures and unavailable runners, cancellation/uncertain restart recovery, revoked administrator access, changed knowledge, feedback updates and isolation, original-question gap evidence, grounded private drafts, merges, incremental analysis, opt-in scheduling, imported-case deletion, known analytics totals and delivery times, native/unrated denominators, modern/legacy Zendesk ratings and pagination, and atomic token reservations. Structured judging tests check invalid output and actual reported usage separately from the simulated judge's scores.
+
+The expanded browser journey exercises native feedback, editable two-turn suites, invalid fixture errors and successful message resets, two-variant evaluation, staff review, Analytics channel filters, gap flagging, Analyze now, default-disabled scheduling, keyboard labels/focus, and mobile overflow checks. Desktop Test Lab/Analytics and portal feedback screenshots were inspected. Quality pages are loaded as separate bundles. The local database was backed up before the additive schema 9 migration and app/worker restart; readiness passed.
+
+No paid model calls or live Zendesk ratings were used for these checks. The existing opt-in live-model suite remains separate. The Zendesk CSAT import is **not release-verified** until a dedicated account passes modern and legacy feedback flows, edits, pagination, permissions and rate limits. Docker/runner/Compose checks are defined in CI but cannot run on this Mac, which has no Docker, Podman, or Colima runtime. No local container success is claimed.
+
 ## Workflow customization verification — 2026-10-02
 
 All 78 v2 tests, type checking, the production build, and the expanded browser journey passed locally. Thirteen customization tests cover exact/template replies without model usage, variable validation, typed conditions, customer visibility, schema failures, immutable components/subflows, cached-result recovery, tenant/role boundaries, fixed API destinations, verified customer reads, takeover, changed identity, nested action approvals, AI citations, and revoked read authority before Zendesk delivery. Existing process-restart approval regressions still pass.

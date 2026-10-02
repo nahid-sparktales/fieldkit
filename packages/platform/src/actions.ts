@@ -266,24 +266,11 @@ export class Actions {
     return { result, proof };
   }
   async automatic(ws: string, action: ActionDefinition, p: Proposal) {
-    if (action.kind === "custom_read") return true;
-    if (action.policy.mode !== "automatic") return false;
-    if (
-      action.kind === "stripe_refund" &&
-      (Number(p.parameters.amountMinor) > action.policy.maxAmountMinor ||
-        p.parameters.currency !== action.policy.currency)
-    )
-      return false;
-    if (
-      action.kind === "custom_write" &&
-      (!action.config.idempotent || !action.config.lookupEndpoint)
-    )
-      return false;
     const used = await this.db.one(
       "SELECT count(*) n FROM operations WHERE workspace_id=$1 AND action_id=$2 AND created_at>=date_trunc('day',now()) AND status<>'failed'",
       [ws, action.id],
     );
-    return Number(used!.n) < action.policy.dailyLimit;
+    return automaticPolicy(action, p.parameters, Number(used!.n));
   }
   async revalidate(ws: string, p: Proposal, q: Queryable = this.db.pool) {
     const action = requireValue(
@@ -645,4 +632,25 @@ export class Actions {
     );
     return receipt;
   }
+}
+
+export function automaticPolicy(
+  action: ActionDefinition,
+  parameters: Record<string, unknown>,
+  used: number,
+) {
+  if (action.kind === "custom_read") return true;
+  if (action.policy.mode !== "automatic") return false;
+  if (
+    action.kind === "stripe_refund" &&
+    (Number(parameters.amountMinor) > action.policy.maxAmountMinor ||
+      parameters.currency !== action.policy.currency)
+  )
+    return false;
+  if (
+    action.kind === "custom_write" &&
+    (!action.config.idempotent || !action.config.lookupEndpoint)
+  )
+    return false;
+  return used < action.policy.dailyLimit;
 }

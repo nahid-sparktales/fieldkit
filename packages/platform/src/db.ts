@@ -1,3 +1,4 @@
+import { QUALITY_SCHEMA } from "./quality-schema.js";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { PgBoss } from "pg-boss";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
@@ -82,6 +83,7 @@ export class Database {
   }
   async migrate() {
     await this.pool.query(SCHEMA);
+    await this.pool.query(QUALITY_SCHEMA);
     await this.saver.setup();
     await this.boss.start();
     for (const name of [
@@ -91,6 +93,8 @@ export class Database {
       "delivery",
       "maintenance",
       "assist",
+      "quality",
+      "feedback-sync",
     ])
       await this.boss.createQueue(name, {
         retryLimit: 4,
