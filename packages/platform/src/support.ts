@@ -562,9 +562,22 @@ export async function enqueueTurn(
   conv: any,
 ) {
   const id = uid();
+  const workflow = await db.one(
+    "SELECT v.version,v.definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
+    [conv.workspace_id],
+    q,
+  );
   const r = await q.query(
-    "INSERT INTO runs(id,workspace_id,conversation_id,revision) VALUES($1,$2,$3,$4) ON CONFLICT(conversation_id,revision) DO NOTHING RETURNING id",
-    [id, conv.workspace_id, conv.id, conv.revision],
+    "INSERT INTO runs(id,workspace_id,conversation_id,revision,graph_version,workflow_definition,workflow_version) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(conversation_id,revision) DO NOTHING RETURNING id",
+    [
+      id,
+      conv.workspace_id,
+      conv.id,
+      conv.revision,
+      workflow ? "support-v3" : "support-v2",
+      workflow?.definition ?? null,
+      workflow?.version ?? null,
+    ],
   );
   if (r.rowCount)
     await db.enqueue(q, "turn", { workspaceId: conv.workspace_id, runId: id });

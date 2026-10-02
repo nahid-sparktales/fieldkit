@@ -28,6 +28,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { FieldKitClient } from "../packages/sdk/src/index.js";
 import { token, tokenHash } from "../packages/platform/src/security.js";
+import { newWorkflowNode } from "../packages/platform/src/workflow-definition.js";
 
 const c = testConfig(),
   model = new TestModel(),
@@ -572,6 +573,101 @@ test("assistance HTTP endpoints require staff sessions and keep jobs scoped to t
     [w.ws.id, user.id],
   );
   assert.equal((await call(path, undefined, cookie)).response.status, 403);
+});
+test("workflow HTTP editing, previews and version history enforce current workspace roles", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  const user = await app.db.one(
+    'SELECT id FROM "user" WHERE "emailVerified"=true LIMIT 1',
+  );
+  await app.db.pool.query("INSERT INTO memberships VALUES($1,$2,'owner')", [
+    w.ws.id,
+    user.id,
+  ]);
+  const cookie = staffTestCookie,
+    path = `/v2/workspaces/${w.ws.id}/workflow`;
+  assert.equal((await call(path)).response.status, 401);
+  assert.equal(
+    (await call(`/v2/workspaces/${other.ws.id}/workflow`, undefined, cookie))
+      .response.status,
+    403,
+  );
+  assert.equal((await call(path, undefined, cookie)).json.revision, 0);
+  const handoff = newWorkflowNode("handoff", "handoff");
+  if (handoff.type === "handoff")
+    handoff.data.message = "Our support team will help you.";
+  const definition = {
+    format: 1,
+    title: "Team handoff",
+    nodes: [newWorkflowNode("start", "start"), handoff],
+    edges: [{ from: "start", port: "next", to: "handoff" }],
+  };
+  const saved = await call(path, { revision: 0, definition }, cookie, "PUT");
+  assert.equal(saved.response.status, 200, JSON.stringify(saved.json));
+  const published = await call(
+    `${path}/publish`,
+    { revision: saved.json.revision },
+    cookie,
+  );
+  assert.equal(published.response.status, 200, JSON.stringify(published.json));
+  assert.equal(published.json.publishedVersion, 1);
+  assert.deepEqual(
+    (await call(`${path}/versions/1`, undefined, cookie)).json.definition,
+    definition,
+  );
+  assert.equal(
+    (await call(`${path}/versions/2`, undefined, cookie)).response.status,
+    404,
+  );
+  const preview = await call(
+    `${path}/test`,
+    { definition, question: "Hello" },
+    cookie,
+  );
+  assert.equal(preview.json.answer, "Our support team will help you.");
+  assert.equal(preview.json.actionsExecuted, false);
+  const setupPreview = await call(
+    `/v2/workspaces/${w.ws.id}/agent/test`,
+    { question: "Hello" },
+    cookie,
+  );
+  assert.equal(setupPreview.json.answer, preview.json.answer);
+  assert.equal(
+    (
+      await call(
+        `${path}/test`,
+        { definition, question: "Hello", contactId: other.customer.contactId },
+        cookie,
+      )
+    ).response.status,
+    404,
+  );
+  await app.db.pool.query(
+    "UPDATE memberships SET role='agent' WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, user.id],
+  );
+  assert.equal((await call(path, undefined, cookie)).response.status, 200);
+  assert.equal(
+    (await call(`${path}/versions/1`, undefined, cookie)).response.status,
+    200,
+  );
+  for (const [suffix, data, method] of [
+    ["", { revision: published.json.revision, definition }, "PUT"],
+    ["/publish", { revision: published.json.revision }, "POST"],
+    ["/test", { definition, question: "Hello" }, "POST"],
+  ] as const)
+    assert.equal(
+      (await call(path + suffix, data, cookie, method)).response.status,
+      403,
+    );
+  await app.db.pool.query(
+    "DELETE FROM memberships WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, user.id],
+  );
+  assert.equal(
+    (await call(`${path}/versions/1`, undefined, cookie)).response.status,
+    403,
+  );
 });
 test("live model adapter removes transport-only JSON before strict draft validation and records actual usage", async () => {
   const w = await workspace(app),

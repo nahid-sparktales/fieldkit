@@ -1,8 +1,12 @@
 # FieldKit
 
-Self-hosted AI support with a customer portal, embedded chat, a staff inbox, and Zendesk integration. Bring your own knowledge and OpenAI account. FieldKit retrieves evidence and proposes actions; application code controls identity, approval, and execution.
+An open-source, self-hosted AI support platform. Add an agent to your Zendesk operation, or publish your own help center, embedded chat, and customer portal with a staff inbox. Both use the same knowledge, visual LangGraph workflow, verified customer identities, and governed business actions.
 
-Apache-2.0 licensed. This repository is private during development. **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo` (`npm run demo`, explicitly invoked).
+Bring your own OpenAI key and documents. FieldKit retrieves evidence and proposes actions; application code controls identity, approval, and execution. Your application data, uploads, and encrypted credentials live on your server; model inputs and enabled provider requests are sent to the services you connect.
+
+**Status: development release candidate.** The application and automated tests are implemented; several real vendor test-account verification gates remain open. See [verification and release boundaries](docs/verification.md) before using it for customer-facing operations.
+
+Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo` (`npm run demo`, explicitly invoked).
 
 ## What is implemented
 
@@ -13,6 +17,7 @@ Apache-2.0 licensed. This repository is private during development. **Version 2 
 - **Inbox support assistant:** triage and prioritize a ticket, research across indexed sources, draft a customer response, package an engineering escalation, and turn a resolved ticket into a private knowledge-base article. Review and edit outputs with evidence before applying them. Internal research can use staff-only knowledge; customer replies cannot. Type `/customer-support` in a staff reply box to open the assistant.
 - PDF, DOCX, Markdown, text, individual website pages or entire public documentation sites (Docusaurus/GitBook), selected Notion pages, Google Picker files, and Zendesk help-center articles. Background ingestion, extraction errors, per-page versions and citations, manual refresh, and hourly synchronization. Imported knowledge starts staff-only; approval for customer answers and public article publication are separate controls.
 - OpenAI Responses structured outputs inside LangGraph, PostgreSQL checkpoints, tenant-scoped pgvector/keyword retrieval, citations, actual usage accounting, and workspace token budgets.
+- **Workflow:** visually edit the agent's actual LangGraph with draggable steps, outcome connections, customer-account lookup, selected knowledge/FAQs, model instructions, conditions, existing actions, approvals, replies, and staff handoff. Save drafts, test routes without executing actions, publish immutable versions, and restore an earlier version as a new draft. See the [workflow guide](docs/workflows.md).
 - Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.
 - Separate Stripe test/live connections, purchase/subscription retrieval, full or partial refunds, and selected-subscription cancellation at period end. Fixed-destination custom APIs with schemas, reviewed customer mappings, exact approvals, automatic limits, durable operation IDs, and outcome lookup.
 - A `/v2` API, event streams, authenticated SDK/CLI/MCP, durable PostgreSQL jobs, a separate worker, health checks, and Docker Compose packaging.
@@ -22,7 +27,7 @@ Apache-2.0 licensed. This repository is private during development. **Version 2 
 Use a server with Docker Compose, a TLS reverse proxy, a domain, SMTP, and an OpenAI API key. Node 24 is needed only for the local setup command; alternatively use the Node container below.
 
 ```sh
-git clone git@github.com:nahid-sparktales/fieldkit.git
+git clone https://github.com/nahid-sparktales/fieldkit.git
 cd fieldkit
 node scripts/setup.ts
 # Alternatively: docker run --rm -v "$PWD:/app" -w /app node:24 node scripts/setup.ts
@@ -37,7 +42,9 @@ docker compose logs --tail=50 migrate app worker
 
 Proxy the public domain to `127.0.0.1:4317` with streaming enabled. PostgreSQL is private to the Compose network. App and worker share the persistent uploads volume. Migrations finish before either starts. See [operations](docs/operations.md) for TLS, backup, restoration, upgrades, and key rotation.
 
-Open the app, register, verify your email, and create the first workspace with `FIELDKIT_SETUP_TOKEN` from `.env`. Invite staff from Team. Connect OpenAI, add knowledge, approve customer-safe sources, try a question, configure actions, and publish your channels. Replies initially require staff review; automatic replies are an explicit workspace setting. Account-changing actions initially require approval independently of reply mode.
+Open the app, register, verify your email, and create the first workspace with `FIELDKIT_SETUP_TOKEN` from `.env`. Invite staff from Team. Connect OpenAI, add knowledge, approve customer-safe sources, configure actions, and test the agent. Use **Workflow** to customize and publish its graph, then publish a portal/widget or connect Zendesk. Replies initially require staff review; automatic replies are an explicit workspace setting. Account-changing actions initially require approval independently of reply mode.
+
+In **Workflow**, select a step to choose its knowledge, account data, model instructions, or allowed actions. Drag steps and connect their outcomes, save a draft, test its route, and publish a version when ready. Tests use your model quota and can read a selected verified customer's account, but never execute actions or send replies. [Full workflow guide →](docs/workflows.md)
 
 ## Verification status
 
@@ -60,10 +67,13 @@ For local development, configure PostgreSQL 17 with pgvector, run `npm run migra
 
 ## Guides
 
+- [Visual LangGraph workflow editor](docs/workflows.md)
 - [Integrations, identities, and custom actions](docs/integrations.md)
 - [Installation and operations](docs/operations.md)
 - [Architecture and authorization](docs/architecture.md)
 - [API, SDK, CLI, and MCP](docs/api.md)
 - [Verification and external release blockers](docs/verification.md)
+- [Contributing and local development](CONTRIBUTING.md)
+- [Reporting a security vulnerability](SECURITY.md)
 
 One installation on one server and one agent configuration per workspace are the initial deployment boundaries. Paid hosting, subscriptions, included model credits, OCR, arbitrary scripts, and unrestricted agent HTTP access are outside this release.

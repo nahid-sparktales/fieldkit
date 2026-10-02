@@ -680,7 +680,11 @@ export class Knowledge {
       throw e;
     }
   }
-  async retrieve(ws: string, query: string): Promise<Citation[]> {
+  async retrieve(
+    ws: string,
+    query: string,
+    options?: { sourceIds?: string[]; limit?: number },
+  ): Promise<Citation[]> {
     const [embedding] = await this.model.embed(ws, [query.slice(0, 6000)]);
     const rows = await this.db.rows(
       `SELECT c.id,c.document_id,d.source_id,d.title,d.version,c.body,
@@ -688,8 +692,14 @@ export class Knowledge {
       (1-(c.embedding<=>$3::vector))+ts_rank_cd(c.search,websearch_to_tsquery('english',$2)) score
       FROM chunks c JOIN documents d ON d.id=c.document_id AND d.workspace_id=c.workspace_id JOIN sources s ON s.id=d.source_id AND s.workspace_id=d.workspace_id
       WHERE c.workspace_id=$1 AND d.active AND s.active AND s.status='ready' AND s.visibility='customer' AND c.embedding_model='text-embedding-3-small'
-      ORDER BY score DESC LIMIT 8`,
-      [ws, query, JSON.stringify(embedding)],
+      AND ($4::text[] IS NULL OR s.id=ANY($4::text[])) ORDER BY score DESC LIMIT $5`,
+      [
+        ws,
+        query,
+        JSON.stringify(embedding),
+        options?.sourceIds ?? null,
+        options?.limit ?? 8,
+      ],
     );
     return rows.map((r) => ({
       id: r.id,

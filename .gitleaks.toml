@@ -1,0 +1,11 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Nonfunctional injected-provider test keys and one archived synthetic demo request UUID"
+regexTarget = "secret"
+regexes = [
+  '''^rk_test_placeholder$''',
+  '''^rk_(test|live)_connection$''',
+  '''^32742e27-8f1c-4b71-8a7c-3ed725dca76a$''',
+]

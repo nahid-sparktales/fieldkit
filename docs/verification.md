@@ -2,6 +2,14 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Visual agent workflow and public-source preparation — 2026-10-01
+
+All 59 v2 tests, type checking, the production build, the complete browser journey, and 33 separate archived-demo regressions passed. Workflow coverage includes validation, resource/tenant/role boundaries, optimistic editing, immutable run versions, knowledge selection, verified account context, multi-step draft review, conditional branches, held replies, assigned/prioritized handoff, takeover, mapping changes, exact approvals, fresh-process checkpoint recovery, and revocation of action authority when a workflow is replaced. Previews execute the same LangGraph route while stopping before approvals, writes, or messages. Setup preview follows the published graph.
+
+The browser journey moves a node with the keyboard, adds and connects a condition using both outcome buttons and inspector controls, selects a knowledge source, publishes, previews the highlighted route, and completes a customer conversation through the edited workflow. Desktop and 390-pixel mobile views passed overflow checks. The local installation was backed up, migrated to schema 6, and restarted with app/worker readiness passing. These tests use injected model/provider responses; no live account action or paid model request was needed for this change.
+
+Before publication, Gitleaks scanned all Git history and the tracked/new source tree. Five initial findings were confirmed as three literal fake provider keys and one synthetic request UUID (one key appears twice); only those exact values are allowlisted. The final scans found no non-allowlisted secrets. The production dependency audit reported zero known vulnerabilities. This review is not a complete security audit or a claim that the outstanding live-provider release gates have passed.
+
 ## Whole-library FAQ agent and inbox workflows — 2026-10-01
 
 All 48 v2 regressions, type checking, the production build, and the browser journey passed. The regression suite now includes whole-library chunk coverage beyond the old 16-passage selection, saved batch progress, competing workers, cancellation, explicit retry, role revocation, source changes, tenant-scoped HTTP access, all five support workflows, private-note exclusion from customer replies, stale-result rejection, source revalidation before composing, private article creation, idempotent application, and queued Zendesk priority updates. Model/provider responses in these tests are injected. The browser journey exercises the full FAQ review, all five workflows, the `/customer-support` shortcut, reviewed triage, composer handoff, private article saving, and desktop/mobile layouts.

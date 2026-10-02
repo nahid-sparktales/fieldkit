@@ -101,11 +101,11 @@ export class Actions {
       )
     )[0];
   }
-  async account(ws: string, contact: any) {
+  async account(ws: string, contact: any, modes?: string[]) {
     if (!contact.verified) return null;
     const connections = await this.db.rows(
-      "SELECT * FROM connections WHERE workspace_id=$1 AND provider IN ('stripe_test','stripe_live') AND status='connected'",
-      [ws],
+      "SELECT * FROM connections WHERE workspace_id=$1 AND provider IN ('stripe_test','stripe_live') AND status='connected' AND ($2::text[] IS NULL OR metadata->>'mode'=ANY($2::text[]))",
+      [ws, modes ?? null],
     );
     const result = [];
     for (const connection of connections) {

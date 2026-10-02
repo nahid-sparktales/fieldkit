@@ -196,6 +196,96 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     animations: "disabled",
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Workflow", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Design how your agent helps." }),
+  ).toBeVisible();
+  await page.getByLabel("Selected step").selectOption("agent");
+  await page
+    .getByLabel("Step instructions")
+    .fill("Keep the answer to two clear sentences.");
+  const agentNode = page.locator(".wf-node.agent");
+  const oldLeft = await agentNode.evaluate(
+    (el) => (el as HTMLElement).style.left,
+  );
+  await page
+    .getByRole("button", { name: "Select Agent decision", exact: true })
+    .press("ArrowRight");
+  expect(
+    await agentNode.evaluate((el) => (el as HTMLElement).style.left),
+  ).not.toBe(oldLeft);
+  await page.getByLabel("Selected step").selectOption("knowledge");
+  await page.getByLabel("Knowledge scope").selectOption("selected");
+  await page.getByRole("checkbox", { name: /^returns\.txt/ }).check();
+  await page.getByRole("button", { name: "＋ Condition", exact: true }).click();
+  const conditionId = await page.getByLabel("Selected step").inputValue();
+  await page.getByLabel("Condition", { exact: true }).selectOption("evidence");
+  await page.getByLabel("Step name").fill("Check available knowledge");
+  await page.getByLabel("Route yes", { exact: true }).selectOption("agent");
+  await page.getByLabel("Route no", { exact: true }).selectOption("handoff");
+  await page.getByLabel("Selected step").selectOption("knowledge");
+  await page
+    .getByLabel("Route found", { exact: true })
+    .selectOption(conditionId);
+  // Both outcome buttons and inspector dropdowns operate on the actual graph.
+  await page
+    .getByRole("button", {
+      name: "Connect Search knowledge empty",
+      exact: true,
+    })
+    .click();
+  await page
+    .getByRole("button", {
+      name: "Connect to Check available knowledge",
+      exact: true,
+    })
+    .click();
+  await page.getByLabel("Selected step").selectOption("knowledge");
+  await expect(page.getByLabel("Route empty", { exact: true })).toHaveValue(
+    conditionId,
+  );
+  await page.getByRole("button", { name: "Save draft", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Publish workflow", exact: true }),
+  ).toBeEnabled();
+  await page
+    .getByRole("button", { name: "Publish workflow", exact: true })
+    .click();
+  await expect(
+    page.getByText("Published version 1", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByLabel("Test question", { exact: true })
+    .fill("What is your return policy?");
+  await page
+    .getByRole("button", { name: "Test workflow", exact: true })
+    .click();
+  await expect(page.locator(".wf-test-result")).toContainText(
+    "You can return an unused item within 30 days.",
+  );
+  await expect(page.locator(".wf-test-result")).toContainText(
+    "Check available knowledge",
+  );
+  await expect(page.locator(".wf-node.agent")).toHaveClass(/visited/);
+  await page.getByLabel("Selected step").selectOption("customer");
+  await page.screenshot({
+    path: "test-results/workflow.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await expect(page.getByLabel("Selected step")).toBeVisible();
+  await page.screenshot({
+    path: "test-results/workflow-mobile.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByLabel("Reply behavior").selectOption("automatic");
   await page.getByRole("button", { name: "Save settings" }).click();

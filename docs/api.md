@@ -11,6 +11,10 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | `/members`, `/invitations` | GET / POST | Staff list / admin invitations |
 | `/contacts`, `/contacts/:id/mapping` | GET / PUT | Staff identities / reviewed admin mapping |
 | `/agent/test` | POST | Admin answer preview with no account actions |
+| `/workflow` | GET / PUT | Staff graph/resources/version list / admin draft save with current revision |
+| `/workflow/publish` | POST | Admin publish of the exact saved draft revision |
+| `/workflow/test` | POST | Admin route preview with no action execution or ticket changes |
+| `/workflow/versions/:version` | GET | Staff read of an immutable published definition in this workspace |
 | `/conversations` | GET, POST | Staff inbox or own customer tickets |
 | `/conversations/:id` | GET, DELETE | Authorized history; admin deletion guards unresolved operations |
 | `/conversations/:id/messages` | POST | Customer message or staff reply; `body`, unique `requestKey` |
@@ -75,6 +79,14 @@ Research, triage, escalation, and article drafting search all ready indexed sour
 `/compose` accepts `{ "body": "Reviewed text" }`, checks that the conversation and source access are still current, and returns `{ body, internal }`. It never sends a message. Staff explicitly send through the existing message/note endpoints. `/apply` accepts `{ "title": "Reviewed title", "body": "Reviewed content", "priority": "low|normal|high|urgent", "category": "Reviewed category" }`. For triage it updates local priority/category and queues the priority change for Zendesk-owned tickets. For an article it creates a staff-only `article` source and queues indexing; customer approval and publication remain separate source/document operations. Apply is idempotent per task and rejects changed conversation revisions or revoked evidence. User-supplied titles and text remain subject to ordinary size limits. Escalation outputs can be copied with citations or put into an internal-note draft; no engineering issue is filed automatically.
 
 The `/customer-support` shortcut is local to FieldKit's staff conversation composer. These internal workflows are not exposed through customer-scoped SDK, CLI, widget, or MCP credentials.
+
+## Visual agent workflow API
+
+See the [workflow guide](workflows.md) for step types and runtime behavior. `GET /workflow` returns `draft`, optimistic `revision`, `publishedVersion` (null for the built-in flow), `problems`, version metadata, and workspace-scoped resource metadata. `PUT /workflow` accepts `{ "revision": 0, "definition": { ... } }`; definitions have `format: 1`, `title`, `nodes`, and `edges`. Each node has `id`, `type`, `title`, canvas coordinates `x`/`y`, and closed typed `data`; each edge has `from`, `port`, and `to`. The exact shared schema is `packages/platform/src/workflow-definition.ts`.
+
+Publish with `{ "revision": 1 }`. Both saving and publishing increment the draft revision; use the returned revision for the next mutation. `GET /workflow/versions/1` returns the immutable definition and timestamp. To restore it, save that definition as the current draft and publish a new version.
+
+`POST /workflow/test` accepts `{ "definition": { ... }, "question": "...", "contactId": "optional-existing-verified-contact", "channel": "portal" }` (channel may also be `widget` or `zendesk`). It returns `answer`, `intent`, `citations`, an optional proposed `action`, step `trace`, and `actionsExecuted: false`. Model and embedding calls are charged through normal usage accounting; selected account lookups are read-only. `/agent/test` follows the published graph as an anonymous preview when one exists. Editing, publishing, and previews require an owner/admin session; customer and service credentials cannot configure workflows. `agent.step` events identify the node, operation, and pinned workflow version.
 
 ## SDK
 

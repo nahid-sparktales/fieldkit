@@ -68,5 +68,33 @@
     "Google Picker and revoked-access lifecycle": "BLOCKED: dedicated credentials/account or vendor registration required",
     "Stripe App test-mode writes": "BLOCKED: dedicated credentials/account or vendor registration required",
     "Custom HTTPS test API": "BLOCKED: dedicated credentials/account or vendor registration required"
+  },
+  "latest": {
+    "recorded_at": "2026-10-02T00:49:16.341Z",
+    "change": "Visual LangGraph workflow editor and public-source preparation",
+    "typecheck": "passed",
+    "production_build": "passed",
+    "v2_database_tests": {
+      "passed": 59,
+      "failed": 0,
+      "provider_mode": "injected models/providers; real PostgreSQL and LangGraph"
+    },
+    "browser_journeys": {
+      "passed": 1,
+      "failed": 0,
+      "includes": "visual edit, publish, preview, customer conversation, desktop/mobile"
+    },
+    "archived_demo_tests": {
+      "passed": 33,
+      "failed": 0,
+      "counts_toward_live_release": false
+    },
+    "installation_schema": 6,
+    "installation_readiness": "passed",
+    "secret_review": "History and source tree: no non-allowlisted findings; exact synthetic fixtures documented in .gitleaks.toml",
+    "production_dependency_audit": {
+      "known_vulnerabilities": 0
+    },
+    "live_provider_verification": "Not run for this change; external release gates unchanged"
   }
 }

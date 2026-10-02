@@ -17,6 +17,7 @@ import { Actions } from "./actions.js";
 import { Support, enqueueTurn } from "./support.js";
 import { Agent } from "./agent.js";
 import { Assistance } from "./assistance.js";
+import { Workflows } from "./workflows.js";
 import { HttpError, requireValue, log } from "./config.js";
 import {
   Settings,
@@ -38,6 +39,7 @@ export class Platform {
   support: Support;
   agent: Agent;
   assistance: Assistance;
+  workflows: Workflows;
   constructor(
     public config: Config,
     options: { mailer?: Mailer; fetch?: Fetcher; model?: ModelPort } = {},
@@ -62,6 +64,7 @@ export class Platform {
       this.actions,
       this.support,
     );
+    this.workflows = new Workflows(this.db, this.agent);
   }
   async migrate() {
     await this.db.migrate();

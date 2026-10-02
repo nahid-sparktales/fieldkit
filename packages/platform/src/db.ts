@@ -162,8 +162,13 @@ CREATE TABLE IF NOT EXISTS assistance_batches(
  task_id text NOT NULL REFERENCES assistance_tasks ON DELETE CASCADE, position integer NOT NULL,
  document_id text NOT NULL, source_revision integer NOT NULL, chunk_ids text[] NOT NULL,
  done boolean NOT NULL DEFAULT false, PRIMARY KEY(task_id,position));
+CREATE TABLE IF NOT EXISTS workflows(workspace_id text PRIMARY KEY REFERENCES workspaces ON DELETE CASCADE,draft jsonb NOT NULL,revision integer NOT NULL DEFAULT 1,published_version integer,updated_by text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS workflow_versions(workspace_id text REFERENCES workspaces ON DELETE CASCADE,version integer NOT NULL,title text NOT NULL,definition jsonb NOT NULL,created_by text NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(workspace_id,version));
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS workflow_definition jsonb;
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS workflow_version integer;
 INSERT INTO app_migrations(version) VALUES(2) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(3) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(4) ON CONFLICT DO NOTHING;
 INSERT INTO app_migrations(version) VALUES(5) ON CONFLICT DO NOTHING;
+INSERT INTO app_migrations(version) VALUES(6) ON CONFLICT DO NOTHING;
 `;

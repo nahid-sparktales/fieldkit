@@ -1,0 +1,341 @@
+.workflow-page {
+  min-width: 0;
+}
+.workflow-page h1 {
+  font:
+    700 30px "Manrope",
+    sans-serif;
+  letter-spacing: -1px;
+  margin: 10px 0;
+}
+.workflow-page h2 {
+  font-size: 18px;
+  margin: 0 0 14px;
+}
+.workflow-page p {
+  line-height: 1.65;
+}
+.wf-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 0;
+}
+.wf-toolbar small {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+}
+.wf-palette {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0 18px;
+}
+.wf-palette button {
+  font-size: 12px;
+}
+.wf-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: white;
+}
+.wf-map-panel {
+  min-width: 0;
+}
+.wf-map-tools {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 62px;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+}
+.wf-map-tools span {
+  font-size: 11px;
+  color: var(--muted);
+}
+.wf-map-tools button {
+  padding: 7px 10px;
+  font-size: 11px;
+}
+.wf-canvas-scroll {
+  height: 650px;
+  overflow: auto;
+  background: #f5f8f6;
+  overscroll-behavior: contain;
+}
+.wf-canvas {
+  position: relative;
+  transform-origin: 0 0;
+  background-image: radial-gradient(#cddbd2 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+.wf-lines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: #8da89a;
+  overflow: visible;
+}
+.wf-lines > path {
+  fill: none;
+  stroke: #a4b9ae;
+  stroke-width: 2;
+}
+.wf-lines > path.visited {
+  stroke: #146b57;
+  stroke-width: 4;
+}
+.wf-node {
+  position: absolute;
+  width: 240px;
+  border: 1px solid #c8d9ce;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 3px 10px #2947340a;
+}
+.wf-node.selected {
+  outline: 3px solid #146b5740;
+  border-color: #146b57;
+}
+.wf-node.visited {
+  box-shadow: 0 0 0 3px #42a87d50;
+}
+.wf-node-title {
+  display: block;
+  width: 100%;
+  border: 0;
+  border-radius: 10px 10px 0 0;
+  padding: 12px 16px;
+  text-align: left;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  background: #fff;
+  height: 64px;
+}
+.wf-node-title strong,
+.wf-node-title small {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.wf-node-title small {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: #7a8e80;
+  margin-bottom: 6px;
+}
+.wf-node-title strong {
+  font-size: 14px;
+}
+.wf-node.start .wf-node-title,
+.wf-node.reply .wf-node-title {
+  background: #e8f5ed;
+}
+.wf-node.action .wf-node-title {
+  background: #f9f1e5;
+}
+.wf-node.handoff .wf-node-title {
+  background: #eef0f8;
+}
+.wf-input {
+  position: absolute;
+  top: -12px;
+  left: 106px;
+  height: 24px;
+  width: 28px;
+  padding: 0;
+  border-radius: 20px;
+  z-index: 2;
+  font-size: 12px;
+  color: #146b57;
+}
+.wf-ports {
+  padding-bottom: 7px;
+}
+.wf-ports button {
+  height: 25px;
+  padding: 2px 6px 2px 16px;
+  display: flex;
+  width: 100%;
+  justify-content: space-between;
+  align-items: center;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  color: #648372;
+  background: transparent;
+}
+.wf-ports button.connecting {
+  background: #dceee4;
+  color: #146b57;
+}
+.wf-terminal {
+  color: #84968a;
+  font-size: 11px;
+  padding: 2px 16px 9px;
+  margin: 0;
+}
+.wf-inspector {
+  border-left: 1px solid var(--line);
+  padding: 20px;
+  max-height: 712px;
+  overflow: auto;
+}
+.wf-inspector > p,
+.wf-note {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.7;
+}
+.wf-field {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+.wf-field input,
+.wf-field select,
+.wf-field textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font:
+    400 13px "DM Sans",
+    sans-serif;
+  background: white;
+  color: inherit;
+}
+.wf-field textarea {
+  resize: vertical;
+}
+.workflow-page fieldset {
+  border: 0;
+  padding: 0;
+  min-width: 0;
+  margin: 0;
+}
+.wf-checks {
+  max-height: 230px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+}
+.wf-checks label,
+.wf-check {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  margin: 9px 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.wf-checks input,
+.wf-check input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.wf-checks small {
+  display: block;
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--muted);
+}
+.wf-routing {
+  margin-top: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.wf-routing h3 {
+  font-size: 13px;
+}
+.wf-bottom {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 24px;
+}
+.wf-bottom .panel {
+  min-width: 0;
+}
+.wf-resource-details {
+  border-top: 1px solid var(--line);
+  padding: 18px 0 4px;
+  margin-top: 18px;
+  font-size: 12px;
+}
+.wf-resource-details summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.wf-resource-details .button-row {
+  margin: 14px 0;
+}
+.wf-test-result {
+  border-top: 1px solid var(--line);
+  margin-top: 24px;
+  padding-top: 12px;
+  overflow-wrap: anywhere;
+}
+.wf-test-result > p {
+  white-space: pre-wrap;
+}
+.wf-test-result li {
+  font-size: 12px;
+  padding: 8px 0;
+}
+.wf-test-result small {
+  display: block;
+  margin: 6px 0;
+  color: var(--muted);
+}
+.wf-test-result li button {
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  background: none;
+  text-decoration: underline;
+}
+@media (max-width: 1150px) {
+  .wf-editor {
+    grid-template-columns: 1fr;
+  }
+  .wf-inspector {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+    max-height: none;
+  }
+  .wf-canvas-scroll {
+    height: 560px;
+  }
+}
+@media (max-width: 760px) {
+  .wf-bottom {
+    grid-template-columns: 1fr;
+  }
+  .wf-toolbar .button-row {
+    flex-wrap: wrap;
+  }
+  .wf-canvas-scroll {
+    height: 480px;
+  }
+  .workflow-page h1 {
+    font-size: 25px;
+  }
+}

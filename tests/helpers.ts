@@ -86,7 +86,8 @@ export class TestModel implements ModelPort {
   async answer(input: ModelInput): Promise<Draft> {
     await this.hook?.(input);
     if (this.fail) throw new Error("Model outage");
-    const last = input.messages.at(-1)?.body ?? "";
+    const last =
+      input.messages.findLast((m) => m.role === "customer")?.body ?? "";
     if (last.includes("refund"))
       return {
         intent: "action",

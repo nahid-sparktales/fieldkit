@@ -454,6 +454,40 @@ export async function createApp(
           json(res, { settings });
           return;
         }
+        if (suffix === "/workflow" && method === "GET") {
+          json(res, await app.workflows.get(p));
+          return;
+        }
+        if (suffix === "/workflow" && method === "PUT") {
+          json(res, await app.workflows.save(p, await body(req)));
+          return;
+        }
+        if (suffix === "/workflow/publish" && method === "POST") {
+          const input = z
+            .object({ revision: z.number().int().positive() })
+            .strict()
+            .parse(await body(req));
+          json(res, await app.workflows.publish(p, input.revision));
+          return;
+        }
+        if (suffix === "/workflow/test" && method === "POST") {
+          json(res, await app.workflows.preview(p, await body(req)));
+          return;
+        }
+        const workflowVersion = suffix.match(/^\/workflow\/versions\/(\d+)$/);
+        if (workflowVersion && method === "GET") {
+          requireStaff(p);
+          json(
+            res,
+            requireValue(
+              await app.db.one(
+                "SELECT version,definition,created_at FROM workflow_versions WHERE workspace_id=$1 AND version=$2",
+                [ws, Number(workflowVersion[1])],
+              ),
+            ),
+          );
+          return;
+        }
         let m = suffix.match(/^\/channels\/([^/]+)$/);
         if (m && method === "PUT") {
           json(res, await app.publishChannel(p, m[1], await body(req)));
@@ -541,6 +575,20 @@ export async function createApp(
             .object({ question: z.string().trim().min(1).max(12000) })
             .strict()
             .parse(await body(req));
+          const workflow = await app.db.one(
+            "SELECT v.definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
+            [ws],
+          );
+          if (workflow) {
+            json(
+              res,
+              await app.workflows.preview(p, {
+                definition: workflow.definition,
+                question: d.question,
+              }),
+            );
+            return;
+          }
           const settings = Settings.parse(
             requireValue(
               await app.db.one("SELECT settings FROM workspaces WHERE id=$1", [

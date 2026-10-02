@@ -13,13 +13,19 @@ Application queries explicitly scope every resource to the authenticated workspa
 ## A conversation turn
 
 1. A message and its new conversation revision commit with the pg-boss job in one PostgreSQL transaction.
-2. The worker enters the persisted LangGraph: retrieve → structured decision → policy → approval interrupt if required → revalidation → execution → publication.
+2. The worker enters the persisted LangGraph. The built-in route is retrieve → structured decision → policy → approval interrupt if required → revalidation → execution → publication. A published visual workflow replaces this route for new turns with its validated steps and outcome connections.
 3. Retrieval includes only active customer-approved versions in the workspace. The model can answer, clarify, propose a named action, or hand off. It sees customer-visible messages, approved evidence, allowed action schemas, and reviewed account data. Internal notes and credentials are excluded.
 4. Staff intervention and newer messages advance the revision. Each stage checks it. The final effect boundary locks the conversation, so a completed takeover prevents later automatic effects. An already-sent provider request cannot be recalled; it must be reconciled.
 5. Approval binds the exact proposal, parameters, customer mapping revision, action/policy revision, connection revision, workspace revision, conversation revision, and evidence hash. Staff authority, expiry, evidence, provider ownership, and policy are checked again before execution.
 6. Automatic replies and automatic account actions are independent settings. Uploaded text never grants execution authority.
 
 Runs use per-conversation PostgreSQL advisory locks and revision checks. Turns within one conversation are serialized; new messages still invalidate an older in-flight response immediately. Only the current conversation revision can publish or execute. Unpublishing a channel pauses its conversations and revokes widget credentials; republishing does not silently resume paused conversations. All messages are independent records. SSE rechecks access and emits only customer-safe events to customers.
+
+## Configurable LangGraph
+
+`workflows` stores the editable draft and optimistic revision; `workflow_versions` stores immutable published definitions. Message enqueue snapshots the active version and definition onto the run in the same transaction as the job. The runtime compiles that definition into LangGraph nodes and conditional edges, expanding governed actions into approval interrupt, revalidation, and execution. PostgreSQL checkpoints resume the exact saved graph after restart. Older `support-v2` runs retain their original graph; configured runs use `support-v3`.
+
+Publishing changes new turns and invalidates pending approvals. At the effect boundary the worker also checks that the run's workflow version is still active, including legacy runs created before the first publication. The graph cannot introduce arbitrary code, remote destinations, or customer identities. Preview uses the same configured graph but stops before action execution and does not persist conversations or approvals. See [workflows](workflows.md) for steps, roles, and bounds.
 
 ## Durable effects
 
@@ -33,7 +39,7 @@ Zendesk deliveries have a separate durable ledger. Ticket creation uses a stable
 
 Sources own immutable document versions. New content invalidates the old searchable version before indexing. Refresh errors, revoked access, disconnection, and deletion remove material from customer retrieval. Publishing an article requires customer approval and is independently revocable. Historical conversation citations remain historical records until conversation retention removes them.
 
-Uploads are size bounded and stored under random server-generated names. PDF extraction is capped at 500 pages; image-only files report that OCR is required. Website ingestion accepts one selected public HTTPS page. Remote fetches prohibit redirects and non-public destinations, validate DNS results at connection time, and bound response size/time. Provider destinations are fixed. Custom action destinations and schemas are owner configured; the model cannot change them.
+Uploads are size bounded and stored under random server-generated names. PDF extraction is capped at 500 pages; image-only files report that OCR is required. Website ingestion accepts a selected public HTTPS page or a bounded documentation-site crawl using sitemaps and internal links. The crawler validates each redirect and stays within its permitted scope; other remote adapters reject redirects. Remote fetches reject non-public destinations, validate DNS results at connection time, and bound response size/time. Provider destinations are fixed. Custom action destinations and schemas are owner configured; the model cannot change them.
 
 Credentials use AES-256-GCM with workspace/provider scope as authenticated data. Service/widget tokens are hashed at rest. Budget reservations prevent concurrent model calls overspending configured token limits. On an uncertain model failure, the reservation remains conservative; actual token counts are stored when the provider reports them.
 

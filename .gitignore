@@ -2,6 +2,13 @@ node_modules/
 dist/
 .fieldkit/
 .env
+.env.*
+!.env.example
+*.pem
+*.key
+*.dump
+*.sqlite
+*.sqlite-*
 test-results/
 playwright-report/
 *.zip

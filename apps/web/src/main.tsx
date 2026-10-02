@@ -16,6 +16,7 @@ import React, {
 import { createRoot } from "react-dom/client";
 import { createAuthClient } from "better-auth/react";
 import "./style.css";
+import { WorkflowPage } from "./WorkflowPage.js";
 
 const auth = createAuthClient();
 type Row = Record<string, any>;
@@ -87,6 +88,7 @@ function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
     Setup: "M4 12l5 5L20 6",
     Inbox: "M3 4h18v16H3z M3 13h5l2 3h4l2-3h5",
+    Workflow: "M3 3h6v6H3z M15 15h6v6h-6z M15 3h6v6h-6z M9 6h6 M6 9v9h9",
     Knowledge:
       "M4 3h6c2 0 2 2 2 2s0-2 2-2h6v17h-6c-2 0-2 1-2 1s0-1-2-1H4z M12 5v16",
     Connections:
@@ -389,6 +391,7 @@ const sections = [
   "Setup",
   "Inbox",
   "Knowledge",
+  "Workflow",
   "Connections",
   "Actions",
   "Publish",
@@ -477,7 +480,13 @@ function App() {
             .filter(
               (s) =>
                 role !== "agent" ||
-                ["Inbox", "Knowledge", "Actions", "Activity"].includes(s),
+                [
+                  "Inbox",
+                  "Knowledge",
+                  "Workflow",
+                  "Actions",
+                  "Activity",
+                ].includes(s),
             )
             .map((s) => (
               <button
@@ -543,6 +552,12 @@ function App() {
             <Inbox ws={ws} role={role} />
           ) : view === "Knowledge" ? (
             <KnowledgePage ws={ws} admin={role !== "agent"} />
+          ) : view === "Workflow" ? (
+            <WorkflowPage
+              ws={ws}
+              admin={role !== "agent"}
+              request={(path, data, method) => api(ws, path, data, method)}
+            />
           ) : view === "Connections" ? (
             <ConnectionsPage ws={ws} owner={role === "owner"} />
           ) : view === "Actions" ? (
