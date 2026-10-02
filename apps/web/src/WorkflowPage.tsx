@@ -20,6 +20,7 @@ import {
   type NodeType,
 } from "../../../packages/platform/src/workflow-definition.js";
 import "./workflow.css";
+import { WorkflowFocus } from "./WorkflowFocus.js";
 import { useAction } from "./useAction.js";
 import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
 
@@ -121,7 +122,13 @@ export function WorkflowPage({
   const [loaded, setLoaded] = useState<Row | null>(null),
     [definition, setDefinition] = useState<Workflow | null>(null),
     [saved, setSaved] = useState("");
-  const [selected, setSelected] = useState("start");
+  const [selected, setSelected] = useState("start"),
+    [expanded, setExpanded] = useState(false),
+    [showInspector, setShowInspector] = useState(true);
+  const canvas = useRef<HTMLDivElement>(null),
+    expandToggle = useRef<HTMLButtonElement>(null),
+    inspectorToggle = useRef<HTMLButtonElement>(null);
+  const inspectorId = useId();
   const {
     busy,
     error,
@@ -252,6 +259,51 @@ export function WorkflowPage({
   };
   const width = Math.max(1080, ...def.nodes.map((n) => n.x + 300)),
     height = Math.max(850, ...def.nodes.map((n) => n.y + 230));
+  const changeZoom = (value: number) => {
+    const viewport = canvas.current;
+    if (!viewport) return;
+    const centerX = (viewport.scrollLeft + viewport.clientWidth / 2) / zoom;
+    const centerY = (viewport.scrollTop + viewport.clientHeight / 2) / zoom;
+    const next = Math.max(0.05, Math.min(1.4, value));
+    setZoom(next);
+    requestAnimationFrame(() =>
+      canvas.current?.scrollTo({
+        left: Math.max(0, centerX * next - viewport.clientWidth / 2),
+        top: Math.max(0, centerY * next - viewport.clientHeight / 2),
+      }),
+    );
+  };
+  const fitWorkflow = () => {
+    const viewport = canvas.current;
+    if (
+      !viewport ||
+      viewport.clientWidth <= 48 ||
+      viewport.clientHeight <= 48 ||
+      !def.nodes.length
+    )
+      return;
+    const left = Math.min(...def.nodes.map((n) => n.x)) - 20;
+    const top = Math.min(...def.nodes.map((n) => n.y)) - 24;
+    const right = Math.max(...def.nodes.map((n) => n.x + 280));
+    const bottom = Math.max(
+      ...def.nodes.map((n) => n.y + 100 + PORTS[n.type].length * 25),
+    );
+    const next = Math.max(
+      0.05,
+      Math.min(
+        1.4,
+        (viewport.clientWidth - 48) / (right - left),
+        (viewport.clientHeight - 48) / (bottom - top),
+      ),
+    );
+    setZoom(next);
+    requestAnimationFrame(() =>
+      canvas.current?.scrollTo({
+        left: Math.max(0, ((left + right) * next - viewport.clientWidth) / 2),
+        top: Math.max(0, ((top + bottom) * next - viewport.clientHeight) / 2),
+      }),
+    );
+  };
   const pathNodes = new Set(test?.trace.map((s: Row) => s.nodeId) ?? []);
   const pathEdges = new Set(
     test?.trace.map((s: Row) => `${s.nodeId}:${s.outcome}`) ?? [],
@@ -449,12 +501,12 @@ export function WorkflowPage({
           )}
         </div>
       </div>
-      {error && (
+      {error && !expanded && (
         <div className="alert" role="alert">
           {error}
         </div>
       )}
-      {success && (
+      {success && !expanded && (
         <p className="success" role="status">
           {success}
         </p>
@@ -513,858 +565,963 @@ export function WorkflowPage({
           </label>
         </section>
       )}
-      <div className="wf-palette" aria-label="Workflow step palette">
-        {(Object.keys(NODE_LABELS) as NodeType[])
-          .filter(
-            (t) =>
-              !["start", "task", "scope"].includes(t) &&
-              (t !== "return" || editingSubflow),
-          )
-          .map((type) => (
-            <button
-              key={type}
-              disabled={!canEdit || def.nodes.length >= 24}
-              onClick={() => {
-                const id = `step-${crypto.randomUUID().slice(0, 8)}`,
-                  n = newWorkflowNode(
-                    type,
-                    id,
-                    80 + (def.nodes.length % 3) * 310,
-                    100 + Math.floor(def.nodes.length / 3) * 230,
-                  );
-                replace({ ...def, nodes: [...def.nodes, n] });
-                setSelected(id);
+      <WorkflowFocus
+        expanded={expanded}
+        triggerRef={expandToggle}
+        close={() => setExpanded(false)}
+        title={editingSubflow ? `Subflow · ${def.title}` : def.title}
+        actions={
+          <>
+            <span className="wf-save-status">
+              {dirty
+                ? "Unsaved changes"
+                : loaded.revision
+                  ? "Draft saved"
+                  : "Unsaved template"}
+            </span>
+            {admin && (
+              <button
+                className="primary"
+                disabled={busy || (!dirty && loaded.revision > 0)}
+                onClick={() => void save()}
+              >
+                {busy
+                  ? "Saving…"
+                  : editingSubflow
+                    ? "Save subflow version"
+                    : "Save draft"}
+              </button>
+            )}
+          </>
+        }
+      >
+        {expanded && error && (
+          <div className="alert" role="alert">
+            {error}
+          </div>
+        )}
+        {expanded && success && (
+          <p className="success" role="status">
+            {success}
+          </p>
+        )}
+        <div className="wf-palette" aria-label="Workflow step palette">
+          {(Object.keys(NODE_LABELS) as NodeType[])
+            .filter(
+              (t) =>
+                !["start", "task", "scope"].includes(t) &&
+                (t !== "return" || editingSubflow),
+            )
+            .map((type) => (
+              <button
+                key={type}
+                disabled={!canEdit || def.nodes.length >= 24}
+                onClick={() => {
+                  const id = `step-${crypto.randomUUID().slice(0, 8)}`,
+                    n = newWorkflowNode(
+                      type,
+                      id,
+                      80 + (def.nodes.length % 3) * 310,
+                      100 + Math.floor(def.nodes.length / 3) * 230,
+                    );
+                  replace({ ...def, nodes: [...def.nodes, n] });
+                  setSelected(id);
+                }}
+              >
+                ＋ {NODE_LABELS[type]}
+              </button>
+            ))}
+        </div>
+        <div
+          className={`wf-editor${showInspector ? "" : " wf-inspector-hidden"}`}
+        >
+          <section className="wf-map-panel" aria-label="Workflow map">
+            <div className="wf-map-tools">
+              <div className="button-row">
+                <button
+                  aria-label="Zoom out"
+                  onClick={() => changeZoom(zoom - 0.1)}
+                  disabled={zoom <= 0.05}
+                >
+                  −
+                </button>
+                <span className="wf-zoom-level" aria-label="Zoom level">
+                  {Math.round(zoom * 100)}%
+                </span>
+                <button
+                  aria-label="Zoom in"
+                  onClick={() => changeZoom(zoom + 0.1)}
+                  disabled={zoom >= 1.4}
+                >
+                  ＋
+                </button>
+                <button onClick={fitWorkflow}>Fit workflow</button>
+                <button
+                  onClick={() => changeZoom(1)}
+                  aria-label="Reset zoom to 100%"
+                >
+                  100%
+                </button>
+                <button
+                  disabled={!canEdit || !past.length}
+                  onClick={() => {
+                    setFuture([def, ...future]);
+                    setDefinition(past.at(-1)!);
+                    setPast(past.slice(0, -1));
+                    setTest(null);
+                  }}
+                >
+                  Undo
+                </button>
+                <button
+                  disabled={!canEdit || !future.length}
+                  onClick={() => {
+                    setPast([...past, def]);
+                    setDefinition(future[0]);
+                    setFuture(future.slice(1));
+                    setTest(null);
+                  }}
+                >
+                  Redo
+                </button>
+              </div>
+              <div className="button-row wf-view-controls">
+                <button
+                  ref={inspectorToggle}
+                  aria-expanded={showInspector}
+                  aria-controls={inspectorId}
+                  onClick={() => setShowInspector(!showInspector)}
+                >
+                  {showInspector ? "Hide step settings" : "Show step settings"}
+                </button>
+                <button
+                  hidden={expanded}
+                  ref={expandToggle}
+                  onClick={() => {
+                    if (matchMedia("(max-width: 760px)").matches)
+                      setShowInspector(false);
+                    setExpanded(true);
+                  }}
+                  aria-haspopup="dialog"
+                >
+                  Expand editor ⤢
+                </button>
+              </div>
+              <span className="wf-canvas-hint">
+                {link
+                  ? `Connect ${link.port}: select a step’s input`
+                  : "Drag a step to move it. Connect an outcome to an input."}
+              </span>
+              {link && (
+                <button onClick={() => setLink(null)}>Cancel connection</button>
+              )}
+            </div>
+            <div
+              className="wf-canvas-scroll"
+              ref={canvas}
+              tabIndex={0}
+              aria-label="Scrollable workflow canvas"
+              onKeyDown={(e) => {
+                if (e.key === "Escape" && link) {
+                  e.preventDefault();
+                  setLink(null);
+                }
               }}
             >
-              ＋ {NODE_LABELS[type]}
-            </button>
-          ))}
-      </div>
-      <div className="wf-editor">
-        <section className="wf-map-panel" aria-label="Workflow map">
-          <div className="wf-map-tools">
-            <div className="button-row">
-              <button
-                aria-label="Zoom out"
-                onClick={() => setZoom((z) => Math.max(0.35, z - 0.1))}
-              >
-                −
-              </button>
-              <span>{Math.round(zoom * 100)}%</span>
-              <button
-                aria-label="Zoom in"
-                onClick={() => setZoom((z) => Math.min(1.4, z + 0.1))}
-              >
-                ＋
-              </button>
-              <button
-                disabled={!canEdit || !past.length}
-                onClick={() => {
-                  setFuture([def, ...future]);
-                  setDefinition(past.at(-1)!);
-                  setPast(past.slice(0, -1));
-                  setTest(null);
-                }}
-              >
-                Undo
-              </button>
-              <button
-                disabled={!canEdit || !future.length}
-                onClick={() => {
-                  setPast([...past, def]);
-                  setDefinition(future[0]);
-                  setFuture(future.slice(1));
-                  setTest(null);
-                }}
-              >
-                Redo
-              </button>
-            </div>
-            <span>
-              {link
-                ? `Connect ${link.port}: select a step’s input`
-                : "Drag a step to move it. Connect an outcome to an input."}
-            </span>
-            {link && (
-              <button onClick={() => setLink(null)}>Cancel connection</button>
-            )}
-          </div>
-          <div
-            className="wf-canvas-scroll"
-            tabIndex={0}
-            aria-label="Scrollable workflow canvas"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setLink(null);
-            }}
-          >
-            <div style={{ width: width * zoom, height: height * zoom }}>
-              <div
-                className="wf-canvas"
-                style={{ width, height, transform: `scale(${zoom})` }}
-              >
-                <svg
-                  width={width}
-                  height={height}
-                  className="wf-lines"
-                  aria-hidden="true"
+              <div style={{ width: width * zoom, height: height * zoom }}>
+                <div
+                  className="wf-canvas"
+                  style={{ width, height, transform: `scale(${zoom})` }}
                 >
-                  <defs>
-                    <marker
-                      id="wf-arrow"
-                      markerWidth="8"
-                      markerHeight="8"
-                      refX="7"
-                      refY="4"
-                      orient="auto"
-                    >
-                      <path d="M0 0L8 4L0 8" fill="currentColor" />
-                    </marker>
-                  </defs>
-                  {def.edges.map((e) => {
-                    const from = def.nodes.find((n) => n.id === e.from),
-                      to = def.nodes.find((n) => n.id === e.to);
-                    if (!from || !to) return null;
-                    const x = from.x + 240,
-                      y = from.y + 77 + PORTS[from.type].indexOf(e.port) * 25,
-                      tx = to.x + 120,
-                      ty = to.y - 7;
-                    return (
-                      <path
-                        key={`${e.from}:${e.port}:${e.to}`}
-                        className={
-                          pathEdges.has(`${e.from}:${e.port}`) ? "visited" : ""
-                        }
-                        d={`M${x} ${y} C${x + 70} ${y},${tx} ${ty - 70},${tx} ${ty}`}
-                        markerEnd="url(#wf-arrow)"
-                      />
-                    );
-                  })}
-                </svg>
-                {def.nodes.map((n) => (
-                  <article
-                    key={n.id}
-                    className={`wf-node ${n.type} ${selected === n.id ? "selected" : ""} ${pathNodes.has(n.id) ? "visited" : ""}`}
-                    style={{ left: n.x, top: n.y }}
+                  <svg
+                    width={width}
+                    height={height}
+                    className="wf-lines"
+                    aria-hidden="true"
                   >
-                    {n.type !== "start" && (
-                      <button
-                        className="wf-input"
-                        aria-label={`Connect to ${n.title}`}
-                        disabled={!canEdit}
-                        onPointerUp={() => {
-                          if (link) connect(link.from, link.port, n.id);
-                        }}
-                        onClick={() => {
-                          if (link) connect(link.from, link.port, n.id);
-                          else setSelected(n.id);
-                        }}
+                    <defs>
+                      <marker
+                        id="wf-arrow"
+                        markerWidth="8"
+                        markerHeight="8"
+                        refX="7"
+                        refY="4"
+                        orient="auto"
                       >
-                        ●
-                      </button>
-                    )}
-                    <button
-                      className="wf-node-title"
-                      aria-label={`Select ${n.title}`}
-                      onClick={() => setSelected(n.id)}
-                      onPointerDown={(e) => {
-                        setSelected(n.id);
-                        if (!canEdit || e.button !== 0) return;
-                        drag.current = {
-                          id: n.id,
-                          x: n.x,
-                          y: n.y,
-                          clientX: e.clientX,
-                          clientY: e.clientY,
-                        };
-                        setPast((p) => [...p.slice(-29), def]);
-                        setFuture([]);
-                        e.currentTarget.setPointerCapture(e.pointerId);
-                      }}
-                      onPointerMove={(e) => {
-                        const d = drag.current;
-                        if (!d || !canEdit) return;
-                        const x = Math.max(
-                            0,
-                            Math.min(
-                              4000,
-                              Math.round(
-                                (d.x + (e.clientX - d.clientX) / zoom) / 10,
-                              ) * 10,
-                            ),
-                          ),
-                          y = Math.max(
-                            0,
-                            Math.min(
-                              3000,
-                              Math.round(
-                                (d.y + (e.clientY - d.clientY) / zoom) / 10,
-                              ) * 10,
-                            ),
-                          );
-                        setDefinition((current) =>
-                          current
-                            ? {
-                                ...current,
-                                nodes: current.nodes.map((v) =>
-                                  v.id === d.id ? { ...v, x, y } : v,
-                                ),
-                              }
-                            : current,
-                        );
-                      }}
-                      onPointerUp={() => {
-                        drag.current = null;
-                      }}
-                      onPointerCancel={() => {
-                        drag.current = null;
-                      }}
-                      onKeyDown={(e) => {
-                        if (
-                          !canEdit ||
-                          ![
-                            "ArrowUp",
-                            "ArrowDown",
-                            "ArrowLeft",
-                            "ArrowRight",
-                          ].includes(e.key)
-                        )
-                          return;
-                        e.preventDefault();
-                        replace({
-                          ...def,
-                          nodes: def.nodes.map((v) =>
-                            v.id === n.id
-                              ? {
-                                  ...v,
-                                  x: Math.max(
-                                    0,
-                                    Math.min(
-                                      4000,
-                                      v.x +
-                                        (e.key === "ArrowRight"
-                                          ? 20
-                                          : e.key === "ArrowLeft"
-                                            ? -20
-                                            : 0),
-                                    ),
-                                  ),
-                                  y: Math.max(
-                                    0,
-                                    Math.min(
-                                      3000,
-                                      v.y +
-                                        (e.key === "ArrowDown"
-                                          ? 20
-                                          : e.key === "ArrowUp"
-                                            ? -20
-                                            : 0),
-                                    ),
-                                  ),
-                                }
-                              : v,
-                          ),
-                        });
-                      }}
-                    >
-                      <small>{NODE_LABELS[n.type]}</small>
-                      <strong>{n.title}</strong>
-                    </button>
-                    <div className="wf-ports">
-                      {PORTS[n.type].map((port) => (
-                        <button
-                          key={port}
-                          disabled={!canEdit}
+                        <path d="M0 0L8 4L0 8" fill="currentColor" />
+                      </marker>
+                    </defs>
+                    {def.edges.map((e) => {
+                      const from = def.nodes.find((n) => n.id === e.from),
+                        to = def.nodes.find((n) => n.id === e.to);
+                      if (!from || !to) return null;
+                      const x = from.x + 240,
+                        y = from.y + 77 + PORTS[from.type].indexOf(e.port) * 25,
+                        tx = to.x + 120,
+                        ty = to.y - 7;
+                      return (
+                        <path
+                          key={`${e.from}:${e.port}:${e.to}`}
                           className={
-                            link?.from === n.id && link.port === port
-                              ? "connecting"
+                            pathEdges.has(`${e.from}:${e.port}`)
+                              ? "visited"
                               : ""
                           }
-                          aria-label={`Connect ${n.title} ${port}`}
-                          onPointerDown={() => setLink({ from: n.id, port })}
-                          onClick={() => setLink({ from: n.id, port })}
+                          d={`M${x} ${y} C${x + 70} ${y},${tx} ${ty - 70},${tx} ${ty}`}
+                          markerEnd="url(#wf-arrow)"
+                        />
+                      );
+                    })}
+                  </svg>
+                  {def.nodes.map((n) => (
+                    <article
+                      key={n.id}
+                      className={`wf-node ${n.type} ${selected === n.id ? "selected" : ""} ${pathNodes.has(n.id) ? "visited" : ""}`}
+                      style={{ left: n.x, top: n.y }}
+                    >
+                      {n.type !== "start" && (
+                        <button
+                          className="wf-input"
+                          aria-label={`Connect to ${n.title}`}
+                          disabled={!canEdit}
+                          onPointerUp={() => {
+                            if (link) connect(link.from, link.port, n.id);
+                          }}
+                          onClick={() => {
+                            if (link) connect(link.from, link.port, n.id);
+                            else setSelected(n.id);
+                          }}
                         >
-                          <span>{port}</span>●
+                          ●
                         </button>
-                      ))}
-                    </div>
-                    {!PORTS[n.type].length && (
-                      <p className="wf-terminal">End of turn</p>
-                    )}
-                  </article>
-                ))}
+                      )}
+                      <button
+                        className="wf-node-title"
+                        aria-label={`Select ${n.title}`}
+                        onClick={() => setSelected(n.id)}
+                        onPointerDown={(e) => {
+                          setSelected(n.id);
+                          if (!canEdit || e.button !== 0) return;
+                          drag.current = {
+                            id: n.id,
+                            x: n.x,
+                            y: n.y,
+                            clientX: e.clientX,
+                            clientY: e.clientY,
+                          };
+                          setPast((p) => [...p.slice(-29), def]);
+                          setFuture([]);
+                          e.currentTarget.setPointerCapture(e.pointerId);
+                        }}
+                        onPointerMove={(e) => {
+                          const d = drag.current;
+                          if (!d || !canEdit) return;
+                          const x = Math.max(
+                              0,
+                              Math.min(
+                                4000,
+                                Math.round(
+                                  (d.x + (e.clientX - d.clientX) / zoom) / 10,
+                                ) * 10,
+                              ),
+                            ),
+                            y = Math.max(
+                              0,
+                              Math.min(
+                                3000,
+                                Math.round(
+                                  (d.y + (e.clientY - d.clientY) / zoom) / 10,
+                                ) * 10,
+                              ),
+                            );
+                          setDefinition((current) =>
+                            current
+                              ? {
+                                  ...current,
+                                  nodes: current.nodes.map((v) =>
+                                    v.id === d.id ? { ...v, x, y } : v,
+                                  ),
+                                }
+                              : current,
+                          );
+                        }}
+                        onPointerUp={() => {
+                          drag.current = null;
+                        }}
+                        onPointerCancel={() => {
+                          drag.current = null;
+                        }}
+                        onKeyDown={(e) => {
+                          if (
+                            !canEdit ||
+                            ![
+                              "ArrowUp",
+                              "ArrowDown",
+                              "ArrowLeft",
+                              "ArrowRight",
+                            ].includes(e.key)
+                          )
+                            return;
+                          e.preventDefault();
+                          replace({
+                            ...def,
+                            nodes: def.nodes.map((v) =>
+                              v.id === n.id
+                                ? {
+                                    ...v,
+                                    x: Math.max(
+                                      0,
+                                      Math.min(
+                                        4000,
+                                        v.x +
+                                          (e.key === "ArrowRight"
+                                            ? 20
+                                            : e.key === "ArrowLeft"
+                                              ? -20
+                                              : 0),
+                                      ),
+                                    ),
+                                    y: Math.max(
+                                      0,
+                                      Math.min(
+                                        3000,
+                                        v.y +
+                                          (e.key === "ArrowDown"
+                                            ? 20
+                                            : e.key === "ArrowUp"
+                                              ? -20
+                                              : 0),
+                                      ),
+                                    ),
+                                  }
+                                : v,
+                            ),
+                          });
+                        }}
+                      >
+                        <small>{NODE_LABELS[n.type]}</small>
+                        <strong>{n.title}</strong>
+                      </button>
+                      <div className="wf-ports">
+                        {PORTS[n.type].map((port) => (
+                          <button
+                            key={port}
+                            disabled={!canEdit}
+                            className={
+                              link?.from === n.id && link.port === port
+                                ? "connecting"
+                                : ""
+                            }
+                            aria-label={`Connect ${n.title} ${port}`}
+                            onPointerDown={() => setLink({ from: n.id, port })}
+                            onClick={() => setLink({ from: n.id, port })}
+                          >
+                            <span>{port}</span>●
+                          </button>
+                        ))}
+                      </div>
+                      {!PORTS[n.type].length && (
+                        <p className="wf-terminal">End of turn</p>
+                      )}
+                    </article>
+                  ))}
+                </div>
               </div>
             </div>
-          </div>
-        </section>
-        <aside className="wf-inspector">
-          <Field label="Selected step">
-            <select
-              value={selected}
-              onChange={(e) => setSelected(e.target.value)}
+          </section>
+          <aside
+            className="wf-inspector"
+            id={inspectorId}
+            hidden={!showInspector}
+            aria-label="Step settings"
+          >
+            <button
+              className="wf-inspector-close"
+              onClick={() => {
+                setShowInspector(false);
+                requestAnimationFrame(() => inspectorToggle.current?.focus());
+              }}
             >
-              {def.nodes.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.title}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {node && (
-            <>
-              <h2>{NODE_LABELS[node.type]}</h2>
-              <p>{descriptions[node.type]}</p>
-              <fieldset disabled={!canEdit}>
-                <Field label="Step name">
-                  <input
-                    value={node.title}
-                    maxLength={80}
-                    onChange={(e) =>
-                      replace({
-                        ...def,
-                        nodes: def.nodes.map((n) =>
-                          n.id === node.id
-                            ? { ...n, title: e.target.value }
-                            : n,
-                        ),
-                      })
-                    }
-                  />
-                </Field>
-                {node.type === "knowledge" && (
-                  <>
-                    <Field label="Knowledge scope">
-                      <select
-                        value={node.data.scope}
-                        onChange={(e) => patch({ scope: e.target.value })}
-                      >
-                        <option value="all">
-                          All approved knowledge and FAQs
-                        </option>
-                        <option value="selected">Selected sources</option>
-                      </select>
-                    </Field>
-                    {node.data.scope === "selected" && (
-                      <Checks
-                        items={resources.sources.map((s: Row) => ({
-                          ...s,
-                          detail: `${s.kind} · ${s.visibility} · ${s.status}`,
-                          unavailable:
-                            s.visibility !== "customer" || s.status !== "ready",
-                        }))}
-                        selected={node.data.sourceIds}
-                        onChange={(sourceIds) => patch({ sourceIds })}
-                      />
-                    )}
-                    <Field label="Maximum passages">
-                      <input
-                        type="number"
-                        min={1}
-                        max={12}
-                        value={node.data.limit}
-                        onChange={(e) =>
-                          patch({ limit: Number(e.target.value) })
-                        }
-                      />
-                    </Field>
-                  </>
-                )}
-                {node.type === "customer" && (
-                  <>
-                    <label className="wf-check">
-                      <input
-                        type="checkbox"
-                        checked={node.data.profile}
-                        onChange={(e) => patch({ profile: e.target.checked })}
-                      />{" "}
-                      Include verified customer name and email
-                    </label>
-                    <label className="wf-check">
-                      <input
-                        type="checkbox"
-                        checked={node.data.billing}
-                        onChange={(e) => patch({ billing: e.target.checked })}
-                      />{" "}
-                      Read mapped Stripe purchases and subscriptions
-                    </label>
-                    {node.data.billing && (
-                      <Checks
-                        items={[
-                          {
-                            id: "test",
-                            name: "Stripe test",
-                            detail: "Dedicated test accounts",
-                          },
-                          {
-                            id: "live",
-                            name: "Stripe live",
-                            detail: "Read-only lookup of the current customer",
-                          },
-                        ]}
-                        selected={node.data.modes}
-                        onChange={(modes) => patch({ modes })}
-                      />
-                    )}
-                    <p className="wf-note">
-                      Uses the current conversation’s customer. Provider account
-                      IDs must come from a reviewed mapping or trusted server
-                      identity.
-                    </p>
-                  </>
-                )}
-                {node.type === "agent" && (
-                  <>
-                    <Field label="Step instructions">
-                      <textarea
-                        rows={7}
-                        value={node.data.instructions}
-                        maxLength={4000}
-                        placeholder="For example: ask one clarifying question if the request is ambiguous."
-                        onChange={(e) =>
-                          patch({ instructions: e.target.value })
-                        }
-                      />
-                    </Field>
-                    <Field label="Response provider (optional)">
-                      <select
-                        value={node.data.provider ?? ""}
-                        onChange={(e) =>
-                          patch({ provider: e.target.value, model: "" })
-                        }
-                      >
-                        <option value="">Use workspace provider</option>
-                        {Object.entries(MODEL_PROVIDERS).map(([id, p]) => (
-                          <option key={id} value={id}>
-                            {p.name}
+              Back to canvas
+            </button>
+            <Field label="Selected step">
+              <select
+                value={selected}
+                onChange={(e) => setSelected(e.target.value)}
+              >
+                {def.nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {node && (
+              <>
+                <h2>{NODE_LABELS[node.type]}</h2>
+                <p>{descriptions[node.type]}</p>
+                <fieldset disabled={!canEdit}>
+                  <Field label="Step name">
+                    <input
+                      value={node.title}
+                      maxLength={80}
+                      onChange={(e) =>
+                        replace({
+                          ...def,
+                          nodes: def.nodes.map((n) =>
+                            n.id === node.id
+                              ? { ...n, title: e.target.value }
+                              : n,
+                          ),
+                        })
+                      }
+                    />
+                  </Field>
+                  {node.type === "knowledge" && (
+                    <>
+                      <Field label="Knowledge scope">
+                        <select
+                          value={node.data.scope}
+                          onChange={(e) => patch({ scope: e.target.value })}
+                        >
+                          <option value="all">
+                            All approved knowledge and FAQs
                           </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Response model (optional)">
-                      <input
-                        value={node.data.model}
-                        maxLength={200}
-                        placeholder="Use workspace model"
-                        onChange={(e) => patch({ model: e.target.value })}
-                      />
-                    </Field>
-                    <p className="wf-note">
-                      Available tools come from the governed action step on this
-                      route. Workspace usage budgets and timeouts always apply.
-                    </p>
-                  </>
-                )}
-                {node.type === "condition" && (
-                  <>
-                    <Field label="Condition">
-                      <select
-                        value={node.data.field}
-                        onChange={(e) =>
-                          patch({
-                            field: e.target.value,
-                            value:
-                              e.target.value === "channel"
-                                ? "portal"
-                                : e.target.value === "mapped"
-                                  ? "customer_id"
-                                  : "",
-                          })
-                        }
-                      >
-                        <option value="verified">
-                          Customer identity is verified
-                        </option>
-                        <option value="mapped">
-                          Customer has a provider mapping
-                        </option>
-                        <option value="channel">
-                          Message came from a channel
-                        </option>
-                        <option value="evidence">Knowledge was found</option>
-                        <option value="value">
-                          Compare a workflow variable
-                        </option>
-                      </select>
-                    </Field>
-                    {node.data.field === "value" && (
-                      <>
-                        <Field label="Variable to compare">
+                          <option value="selected">Selected sources</option>
+                        </select>
+                      </Field>
+                      {node.data.scope === "selected" && (
+                        <Checks
+                          items={resources.sources.map((s: Row) => ({
+                            ...s,
+                            detail: `${s.kind} · ${s.visibility} · ${s.status}`,
+                            unavailable:
+                              s.visibility !== "customer" ||
+                              s.status !== "ready",
+                          }))}
+                          selected={node.data.sourceIds}
+                          onChange={(sourceIds) => patch({ sourceIds })}
+                        />
+                      )}
+                      <Field label="Maximum passages">
+                        <input
+                          type="number"
+                          min={1}
+                          max={12}
+                          value={node.data.limit}
+                          onChange={(e) =>
+                            patch({ limit: Number(e.target.value) })
+                          }
+                        />
+                      </Field>
+                    </>
+                  )}
+                  {node.type === "customer" && (
+                    <>
+                      <label className="wf-check">
+                        <input
+                          type="checkbox"
+                          checked={node.data.profile}
+                          onChange={(e) => patch({ profile: e.target.checked })}
+                        />{" "}
+                        Include verified customer name and email
+                      </label>
+                      <label className="wf-check">
+                        <input
+                          type="checkbox"
+                          checked={node.data.billing}
+                          onChange={(e) => patch({ billing: e.target.checked })}
+                        />{" "}
+                        Read mapped Stripe purchases and subscriptions
+                      </label>
+                      {node.data.billing && (
+                        <Checks
+                          items={[
+                            {
+                              id: "test",
+                              name: "Stripe test",
+                              detail: "Dedicated test accounts",
+                            },
+                            {
+                              id: "live",
+                              name: "Stripe live",
+                              detail:
+                                "Read-only lookup of the current customer",
+                            },
+                          ]}
+                          selected={node.data.modes}
+                          onChange={(modes) => patch({ modes })}
+                        />
+                      )}
+                      <p className="wf-note">
+                        Uses the current conversation’s customer. Provider
+                        account IDs must come from a reviewed mapping or trusted
+                        server identity.
+                      </p>
+                    </>
+                  )}
+                  {node.type === "agent" && (
+                    <>
+                      <Field label="Step instructions">
+                        <textarea
+                          rows={7}
+                          value={node.data.instructions}
+                          maxLength={4000}
+                          placeholder="For example: ask one clarifying question if the request is ambiguous."
+                          onChange={(e) =>
+                            patch({ instructions: e.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field label="Response provider (optional)">
+                        <select
+                          value={node.data.provider ?? ""}
+                          onChange={(e) =>
+                            patch({ provider: e.target.value, model: "" })
+                          }
+                        >
+                          <option value="">Use workspace provider</option>
+                          {Object.entries(MODEL_PROVIDERS).map(([id, p]) => (
+                            <option key={id} value={id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Response model (optional)">
+                        <input
+                          value={node.data.model}
+                          maxLength={200}
+                          placeholder="Use workspace model"
+                          onChange={(e) => patch({ model: e.target.value })}
+                        />
+                      </Field>
+                      <p className="wf-note">
+                        Available tools come from the governed action step on
+                        this route. Workspace usage budgets and timeouts always
+                        apply.
+                      </p>
+                    </>
+                  )}
+                  {node.type === "condition" && (
+                    <>
+                      <Field label="Condition">
+                        <select
+                          value={node.data.field}
+                          onChange={(e) =>
+                            patch({
+                              field: e.target.value,
+                              value:
+                                e.target.value === "channel"
+                                  ? "portal"
+                                  : e.target.value === "mapped"
+                                    ? "customer_id"
+                                    : "",
+                            })
+                          }
+                        >
+                          <option value="verified">
+                            Customer identity is verified
+                          </option>
+                          <option value="mapped">
+                            Customer has a provider mapping
+                          </option>
+                          <option value="channel">
+                            Message came from a channel
+                          </option>
+                          <option value="evidence">Knowledge was found</option>
+                          <option value="value">
+                            Compare a workflow variable
+                          </option>
+                        </select>
+                      </Field>
+                      {node.data.field === "value" && (
+                        <>
+                          <Field label="Variable to compare">
+                            <input
+                              value={node.data.path}
+                              list="condition-variables"
+                              onChange={(e) => patch({ path: e.target.value })}
+                              placeholder="steps.lookup.output.plan"
+                            />
+                          </Field>
+                          <datalist id="condition-variables">
+                            {variablePaths.map((path) => (
+                              <option key={path} value={path} />
+                            ))}
+                          </datalist>
+                          <Field label="Comparison">
+                            <select
+                              value={node.data.operator}
+                              onChange={(e) =>
+                                patch({ operator: e.target.value })
+                              }
+                            >
+                              {OPERATORS.map((op) => (
+                                <option key={op} value={op}>
+                                  {op.replaceAll("_", " ")}
+                                </option>
+                              ))}
+                            </select>
+                          </Field>
+                          {!["exists", "is_true"].includes(
+                            node.data.operator,
+                          ) && (
+                            <Field label="Compare with">
+                              <input
+                                value={node.data.value}
+                                onChange={(e) =>
+                                  patch({ value: e.target.value })
+                                }
+                                placeholder="Text, 123, or true"
+                              />
+                            </Field>
+                          )}
+                        </>
+                      )}
+                      {node.data.field === "mapped" && (
+                        <Field label="Provider mapping key">
                           <input
-                            value={node.data.path}
-                            list="condition-variables"
-                            onChange={(e) => patch({ path: e.target.value })}
-                            placeholder="steps.lookup.output.plan"
+                            value={node.data.value}
+                            onChange={(e) => patch({ value: e.target.value })}
+                            placeholder="stripe_test or customer_id"
                           />
                         </Field>
-                        <datalist id="condition-variables">
-                          {variablePaths.map((path) => (
-                            <option key={path} value={path} />
-                          ))}
-                        </datalist>
-                        <Field label="Comparison">
+                      )}
+                      {node.data.field === "channel" && (
+                        <Field label="Channel">
                           <select
-                            value={node.data.operator}
-                            onChange={(e) =>
-                              patch({ operator: e.target.value })
-                            }
+                            value={node.data.value}
+                            onChange={(e) => patch({ value: e.target.value })}
                           >
-                            {OPERATORS.map((op) => (
-                              <option key={op} value={op}>
-                                {op.replaceAll("_", " ")}
-                              </option>
+                            {["portal", "widget", "zendesk"].map((v) => (
+                              <option key={v}>{v}</option>
                             ))}
                           </select>
                         </Field>
-                        {!["exists", "is_true"].includes(
-                          node.data.operator,
-                        ) && (
-                          <Field label="Compare with">
-                            <input
-                              value={node.data.value}
-                              onChange={(e) => patch({ value: e.target.value })}
-                              placeholder="Text, 123, or true"
-                            />
-                          </Field>
-                        )}
-                      </>
-                    )}
-                    {node.data.field === "mapped" && (
-                      <Field label="Provider mapping key">
-                        <input
-                          value={node.data.value}
-                          onChange={(e) => patch({ value: e.target.value })}
-                          placeholder="stripe_test or customer_id"
-                        />
-                      </Field>
-                    )}
-                    {node.data.field === "channel" && (
-                      <Field label="Channel">
+                      )}
+                    </>
+                  )}
+                  {node.type === "action" && (
+                    <>
+                      <Checks
+                        items={resources.actions.map((a: Row) => ({
+                          ...a,
+                          detail: `${a.kind} · ${a.enabled ? a.policy.mode : "disabled"}${a.stripe_mode ? ` · ${a.stripe_mode}` : ""}${a.mapping_key ? ` · mapping: ${a.mapping_key}` : ""}`,
+                          unavailable: !a.enabled,
+                        }))}
+                        selected={node.data.actionIds}
+                        onChange={(actionIds) => patch({ actionIds })}
+                      />
+                      <Field label="Action approval">
                         <select
-                          value={node.data.value}
-                          onChange={(e) => patch({ value: e.target.value })}
+                          value={node.data.approval}
+                          onChange={(e) => patch({ approval: e.target.value })}
                         >
-                          {["portal", "widget", "zendesk"].map((v) => (
-                            <option key={v}>{v}</option>
-                          ))}
+                          <option value="always">
+                            Always require staff approval
+                          </option>
+                          <option value="policy">
+                            Follow each action’s configured policy
+                          </option>
                         </select>
                       </Field>
-                    )}
-                  </>
-                )}
-                {node.type === "action" && (
-                  <>
-                    <Checks
-                      items={resources.actions.map((a: Row) => ({
-                        ...a,
-                        detail: `${a.kind} · ${a.enabled ? a.policy.mode : "disabled"}${a.stripe_mode ? ` · ${a.stripe_mode}` : ""}${a.mapping_key ? ` · mapping: ${a.mapping_key}` : ""}`,
-                        unavailable: !a.enabled,
-                      }))}
-                      selected={node.data.actionIds}
-                      onChange={(actionIds) => patch({ actionIds })}
-                    />
-                    <Field label="Action approval">
-                      <select
-                        value={node.data.approval}
-                        onChange={(e) => patch({ approval: e.target.value })}
-                      >
-                        <option value="always">
-                          Always require staff approval
-                        </option>
-                        <option value="policy">
-                          Follow each action’s configured policy
-                        </option>
-                      </select>
-                    </Field>
-                    <p className="wf-note">
-                      Policy limits, approved parameters, customer ownership,
-                      receipts, and uncertain-outcome handling cannot be
-                      bypassed by changing connections.
-                    </p>
-                  </>
-                )}
-                {(node.type === "custom" || node.type === "subflow") && (
-                  <>
-                    <Field label="Reusable component">
-                      <select
-                        value={node.data.componentId}
-                        onChange={(e) => {
-                          const c = resources.components.find(
-                            (c: Row) => c.id === e.target.value,
-                          );
-                          if (c)
-                            replace({
-                              ...def,
-                              nodes: def.nodes.map((n) =>
-                                n.id === node.id
-                                  ? ({
-                                      ...n,
-                                      title: c.name,
-                                      data: {
-                                        componentId: c.id,
-                                        version: c.revision,
-                                        inputs: {},
-                                      },
-                                    } as WorkflowNode)
-                                  : n,
-                              ),
-                            });
-                        }}
-                      >
-                        <option value="">
-                          Choose a saved{" "}
-                          {node.type === "subflow" ? "subflow" : "step"}
-                        </option>
-                        {resources.components
-                          ?.filter(
-                            (c: Row) =>
-                              (node.type === "subflow") ===
-                              (c.kind === "subflow"),
-                          )
-                          .map((c: Row) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name} · latest v{c.revision}
-                            </option>
-                          ))}
-                      </select>
-                    </Field>
-                    <p>
-                      Using version {node.data.version}. Updates are explicit;
-                      published runs keep their snapshot.
-                    </p>
-                    {resources.components?.some(
-                      (c: Row) =>
-                        c.id === node.data.componentId &&
-                        c.revision !== node.data.version,
-                    ) && (
-                      <button
-                        onClick={() =>
-                          patch({
-                            version: resources.components.find(
-                              (c: Row) => c.id === node.data.componentId,
-                            ).revision,
-                          })
-                        }
-                      >
-                        Use latest component version
-                      </button>
-                    )}
-                    {activeComponent && (
-                      <>
-                        <p>{activeComponent.description}</p>
-                        <MappingFields
-                          schema={activeComponent.inputSchema}
-                          values={node.data.inputs}
-                          onChange={(inputs) => patch({ inputs })}
-                          paths={variablePaths}
-                        />
-                        <details>
-                          <summary>Output fields</summary>
-                          <pre>
-                            {JSON.stringify(
-                              activeComponent.outputSchema,
-                              null,
-                              2,
-                            )}
-                          </pre>
-                          <p>
-                            Read results as{" "}
-                            <code>steps.{node.id}.output.field</code>.
-                          </p>
-                        </details>
-                      </>
-                    )}
-                  </>
-                )}
-                {node.type === "return" && (
-                  <>
-                    <Field label="Return outcome">
-                      <select
-                        value={node.data.outcome}
-                        onChange={(e) => patch({ outcome: e.target.value })}
-                      >
-                        <option value="done">done</option>
-                        <option value="failed">failed</option>
-                      </select>
-                    </Field>
-                    <MappingFields
-                      schema={(() => {
-                        try {
-                          return JSON.parse(subflowOutput);
-                        } catch {
-                          return EMPTY_SCHEMA;
-                        }
-                      })()}
-                      values={node.data.outputs}
-                      onChange={(outputs) => patch({ outputs })}
-                      label="Output"
-                      paths={variablePaths}
-                    />
-                  </>
-                )}
-                {node.type === "reply" && (
-                  <>
-                    <Field label="Reply content">
-                      <select
-                        value={node.data.content}
-                        onChange={(e) => patch({ content: e.target.value })}
-                      >
-                        <option value="agent">
-                          AI answer or confirmed action receipt
-                        </option>
-                        <option value="exact">Exact reply (no AI)</option>
-                        <option value="template">Reply template (no AI)</option>
-                      </select>
-                    </Field>
-                    {node.data.content !== "agent" && (
-                      <>
-                        <Field label="Customer reply">
-                          <textarea
-                            rows={6}
-                            value={node.data.text}
-                            maxLength={12000}
-                            onChange={(e) => patch({ text: e.target.value })}
-                            placeholder={
-                              node.data.content === "template"
-                                ? "Hi {{customer.name}}, your ticket is {{ticket.id}}."
-                                : "Your approved customer reply"
-                            }
-                          />
-                        </Field>
-                        {node.data.content === "template" && (
-                          <details>
-                            <summary>Available reply variables</summary>
-                            {variablePaths
-                              .filter((p) => p !== "message.text")
-                              .map((path) => (
-                                <button
-                                  key={path}
-                                  className="wf-variable"
-                                  onClick={() =>
-                                    patch({
-                                      text: node.data.text + `{{${path}}}`,
-                                    })
-                                  }
-                                >{`{{${path}}}`}</button>
-                              ))}
-                            <p>
-                              Only verified customer values and
-                              customer-approved step outputs can be inserted.
-                              Missing values cause a handoff.
-                            </p>
-                          </details>
-                        )}
-                      </>
-                    )}
-                    <Field label="Reply behavior">
-                      <select
-                        value={node.data.mode}
-                        onChange={(e) => patch({ mode: e.target.value })}
-                      >
-                        <option value="workspace">
-                          Follow workspace reply setting
-                        </option>
-                        <option value="review">
-                          Always save a draft for staff review
-                        </option>
-                      </select>
-                    </Field>
-                  </>
-                )}
-                {node.type === "handoff" && (
-                  <>
-                    <Field label="Customer handoff message">
-                      <textarea
-                        rows={4}
-                        value={node.data.message}
-                        maxLength={1000}
-                        onChange={(e) => patch({ message: e.target.value })}
-                      />
-                    </Field>
-                    <Field label="Assign to staff">
-                      <select
-                        value={node.data.assignedTo}
-                        onChange={(e) => patch({ assignedTo: e.target.value })}
-                      >
-                        <option value="">Keep current assignment</option>
-                        {resources.members.map((m: Row) => (
-                          <option key={m.id} value={m.id}>
-                            {m.name} · {m.role}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                    <Field label="Ticket priority">
-                      <select
-                        value={node.data.priority}
-                        onChange={(e) => patch({ priority: e.target.value })}
-                      >
-                        {["keep", "low", "normal", "high", "urgent"].map(
-                          (v) => (
-                            <option key={v} value={v}>
-                              {v === "keep" ? "Keep current priority" : v}
-                            </option>
-                          ),
-                        )}
-                      </select>
-                    </Field>
-                    <p className="wf-note">
-                      Channel settings choose the native inbox or Zendesk. This
-                      pauses the agent until staff resume it.
-                    </p>
-                  </>
-                )}
-                {!!PORTS[node.type].length && (
-                  <div className="wf-routing">
-                    <h3>Outcome connections</h3>
-                    {PORTS[node.type].map((port) => (
-                      <Field key={port} label={`Route ${port}`}>
+                      <p className="wf-note">
+                        Policy limits, approved parameters, customer ownership,
+                        receipts, and uncertain-outcome handling cannot be
+                        bypassed by changing connections.
+                      </p>
+                    </>
+                  )}
+                  {(node.type === "custom" || node.type === "subflow") && (
+                    <>
+                      <Field label="Reusable component">
                         <select
-                          value={
-                            def.edges.find(
-                              (e) => e.from === node.id && e.port === port,
-                            )?.to ?? ""
-                          }
-                          onChange={(e) =>
-                            connect(node.id, port, e.target.value)
-                          }
+                          value={node.data.componentId}
+                          onChange={(e) => {
+                            const c = resources.components.find(
+                              (c: Row) => c.id === e.target.value,
+                            );
+                            if (c)
+                              replace({
+                                ...def,
+                                nodes: def.nodes.map((n) =>
+                                  n.id === node.id
+                                    ? ({
+                                        ...n,
+                                        title: c.name,
+                                        data: {
+                                          componentId: c.id,
+                                          version: c.revision,
+                                          inputs: {},
+                                        },
+                                      } as WorkflowNode)
+                                    : n,
+                                ),
+                              });
+                          }}
                         >
-                          <option value="">Choose next step</option>
-                          {def.nodes
-                            .filter(
-                              (n) => n.id !== node.id && n.type !== "start",
+                          <option value="">
+                            Choose a saved{" "}
+                            {node.type === "subflow" ? "subflow" : "step"}
+                          </option>
+                          {resources.components
+                            ?.filter(
+                              (c: Row) =>
+                                (node.type === "subflow") ===
+                                (c.kind === "subflow"),
                             )
-                            .map((n) => (
-                              <option key={n.id} value={n.id}>
-                                {n.title}
+                            .map((c: Row) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name} · latest v{c.revision}
                               </option>
                             ))}
                         </select>
                       </Field>
-                    ))}
-                  </div>
-                )}
-                {node.type !== "start" && (
-                  <button
-                    className="danger"
-                    onClick={() => {
-                      replace({
-                        ...def,
-                        nodes: def.nodes.filter((n) => n.id !== node.id),
-                        edges: def.edges.filter(
-                          (e) => e.from !== node.id && e.to !== node.id,
-                        ),
-                      });
-                      setSelected("start");
-                      setLink(null);
-                    }}
-                  >
-                    Remove step
-                  </button>
-                )}
-              </fieldset>
-            </>
-          )}
-        </aside>
-      </div>
+                      <p>
+                        Using version {node.data.version}. Updates are explicit;
+                        published runs keep their snapshot.
+                      </p>
+                      {resources.components?.some(
+                        (c: Row) =>
+                          c.id === node.data.componentId &&
+                          c.revision !== node.data.version,
+                      ) && (
+                        <button
+                          onClick={() =>
+                            patch({
+                              version: resources.components.find(
+                                (c: Row) => c.id === node.data.componentId,
+                              ).revision,
+                            })
+                          }
+                        >
+                          Use latest component version
+                        </button>
+                      )}
+                      {activeComponent && (
+                        <>
+                          <p>{activeComponent.description}</p>
+                          <MappingFields
+                            schema={activeComponent.inputSchema}
+                            values={node.data.inputs}
+                            onChange={(inputs) => patch({ inputs })}
+                            paths={variablePaths}
+                          />
+                          <details>
+                            <summary>Output fields</summary>
+                            <pre>
+                              {JSON.stringify(
+                                activeComponent.outputSchema,
+                                null,
+                                2,
+                              )}
+                            </pre>
+                            <p>
+                              Read results as{" "}
+                              <code>steps.{node.id}.output.field</code>.
+                            </p>
+                          </details>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {node.type === "return" && (
+                    <>
+                      <Field label="Return outcome">
+                        <select
+                          value={node.data.outcome}
+                          onChange={(e) => patch({ outcome: e.target.value })}
+                        >
+                          <option value="done">done</option>
+                          <option value="failed">failed</option>
+                        </select>
+                      </Field>
+                      <MappingFields
+                        schema={(() => {
+                          try {
+                            return JSON.parse(subflowOutput);
+                          } catch {
+                            return EMPTY_SCHEMA;
+                          }
+                        })()}
+                        values={node.data.outputs}
+                        onChange={(outputs) => patch({ outputs })}
+                        label="Output"
+                        paths={variablePaths}
+                      />
+                    </>
+                  )}
+                  {node.type === "reply" && (
+                    <>
+                      <Field label="Reply content">
+                        <select
+                          value={node.data.content}
+                          onChange={(e) => patch({ content: e.target.value })}
+                        >
+                          <option value="agent">
+                            AI answer or confirmed action receipt
+                          </option>
+                          <option value="exact">Exact reply (no AI)</option>
+                          <option value="template">
+                            Reply template (no AI)
+                          </option>
+                        </select>
+                      </Field>
+                      {node.data.content !== "agent" && (
+                        <>
+                          <Field label="Customer reply">
+                            <textarea
+                              rows={6}
+                              value={node.data.text}
+                              maxLength={12000}
+                              onChange={(e) => patch({ text: e.target.value })}
+                              placeholder={
+                                node.data.content === "template"
+                                  ? "Hi {{customer.name}}, your ticket is {{ticket.id}}."
+                                  : "Your approved customer reply"
+                              }
+                            />
+                          </Field>
+                          {node.data.content === "template" && (
+                            <details>
+                              <summary>Available reply variables</summary>
+                              {variablePaths
+                                .filter((p) => p !== "message.text")
+                                .map((path) => (
+                                  <button
+                                    key={path}
+                                    className="wf-variable"
+                                    onClick={() =>
+                                      patch({
+                                        text: node.data.text + `{{${path}}}`,
+                                      })
+                                    }
+                                  >{`{{${path}}}`}</button>
+                                ))}
+                              <p>
+                                Only verified customer values and
+                                customer-approved step outputs can be inserted.
+                                Missing values cause a handoff.
+                              </p>
+                            </details>
+                          )}
+                        </>
+                      )}
+                      <Field label="Reply behavior">
+                        <select
+                          value={node.data.mode}
+                          onChange={(e) => patch({ mode: e.target.value })}
+                        >
+                          <option value="workspace">
+                            Follow workspace reply setting
+                          </option>
+                          <option value="review">
+                            Always save a draft for staff review
+                          </option>
+                        </select>
+                      </Field>
+                    </>
+                  )}
+                  {node.type === "handoff" && (
+                    <>
+                      <Field label="Customer handoff message">
+                        <textarea
+                          rows={4}
+                          value={node.data.message}
+                          maxLength={1000}
+                          onChange={(e) => patch({ message: e.target.value })}
+                        />
+                      </Field>
+                      <Field label="Assign to staff">
+                        <select
+                          value={node.data.assignedTo}
+                          onChange={(e) =>
+                            patch({ assignedTo: e.target.value })
+                          }
+                        >
+                          <option value="">Keep current assignment</option>
+                          {resources.members.map((m: Row) => (
+                            <option key={m.id} value={m.id}>
+                              {m.name} · {m.role}
+                            </option>
+                          ))}
+                        </select>
+                      </Field>
+                      <Field label="Ticket priority">
+                        <select
+                          value={node.data.priority}
+                          onChange={(e) => patch({ priority: e.target.value })}
+                        >
+                          {["keep", "low", "normal", "high", "urgent"].map(
+                            (v) => (
+                              <option key={v} value={v}>
+                                {v === "keep" ? "Keep current priority" : v}
+                              </option>
+                            ),
+                          )}
+                        </select>
+                      </Field>
+                      <p className="wf-note">
+                        Channel settings choose the native inbox or Zendesk.
+                        This pauses the agent until staff resume it.
+                      </p>
+                    </>
+                  )}
+                  {!!PORTS[node.type].length && (
+                    <div className="wf-routing">
+                      <h3>Outcome connections</h3>
+                      {PORTS[node.type].map((port) => (
+                        <Field key={port} label={`Route ${port}`}>
+                          <select
+                            value={
+                              def.edges.find(
+                                (e) => e.from === node.id && e.port === port,
+                              )?.to ?? ""
+                            }
+                            onChange={(e) =>
+                              connect(node.id, port, e.target.value)
+                            }
+                          >
+                            <option value="">Choose next step</option>
+                            {def.nodes
+                              .filter(
+                                (n) => n.id !== node.id && n.type !== "start",
+                              )
+                              .map((n) => (
+                                <option key={n.id} value={n.id}>
+                                  {n.title}
+                                </option>
+                              ))}
+                          </select>
+                        </Field>
+                      ))}
+                    </div>
+                  )}
+                  {node.type !== "start" && (
+                    <button
+                      className="danger"
+                      onClick={() => {
+                        replace({
+                          ...def,
+                          nodes: def.nodes.filter((n) => n.id !== node.id),
+                          edges: def.edges.filter(
+                            (e) => e.from !== node.id && e.to !== node.id,
+                          ),
+                        });
+                        setSelected("start");
+                        setLink(null);
+                      }}
+                    >
+                      Remove step
+                    </button>
+                  )}
+                </fieldset>
+              </>
+            )}
+          </aside>
+        </div>
+      </WorkflowFocus>
       {!!problems.length && (
         <div className="alert" role="status">
           <strong>Fix these connections before publishing</strong>

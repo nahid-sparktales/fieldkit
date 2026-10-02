@@ -313,6 +313,133 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   expect(
     await agentNode.evaluate((el) => (el as HTMLElement).style.left),
   ).not.toBe(oldLeft);
+  const expandEditor = page.getByRole("button", {
+    name: "Expand editor ⤢",
+    exact: true,
+  });
+  const editor = page.getByRole("dialog", {
+    name: "Customer support",
+    exact: true,
+  });
+  await expandEditor.click();
+  await expect(editor).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: "Close expanded editor" }),
+  ).toBeFocused();
+  await expect(editor.getByLabel("Selected step")).toHaveValue("agent");
+  await expect(editor.getByLabel("Step instructions")).toHaveValue(
+    "Keep the answer to two clear sentences.",
+  );
+  expect((await editor.boundingBox())!.width).toBeGreaterThan(1350);
+  await editor
+    .getByRole("button", { name: "Save draft", exact: true })
+    .press("Shift+Tab");
+  await expect(
+    editor.getByRole("button", { name: "Remove step", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
+    editor.getByRole("button", { name: "Save draft", exact: true }),
+  ).toBeFocused();
+  expect(
+    await page
+      .getByRole("button", { name: "Workflow", exact: true })
+      .evaluate((el) => Boolean(el.closest("[inert]"))),
+  ).toBe(true);
+  await editor.getByRole("button", { name: "Undo", exact: true }).click();
+  await expect(agentNode).toHaveCSS("left", oldLeft);
+  await editor.getByRole("button", { name: "Redo", exact: true }).click();
+  expect(
+    await agentNode.evaluate((el) => (el as HTMLElement).style.left),
+  ).not.toBe(oldLeft);
+  const canvas = editor.getByLabel("Scrollable workflow canvas");
+  const originalCanvasWidth = (await canvas.boundingBox())!.width;
+  await editor.getByRole("button", { name: "Hide step settings" }).click();
+  expect((await canvas.boundingBox())!.width).toBeGreaterThan(
+    originalCanvasWidth + 250,
+  );
+  await editor.getByRole("button", { name: "Show step settings" }).click();
+  await expect(editor.getByLabel("Step instructions")).toHaveValue(
+    "Keep the answer to two clear sentences.",
+  );
+  await editor
+    .getByRole("button", { name: "Fit workflow", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      canvas.evaluate((el) => {
+        const bounds = el.getBoundingClientRect();
+        return Array.from(el.querySelectorAll(".wf-node")).every((node) => {
+          const rect = node.getBoundingClientRect();
+          return (
+            rect.left >= bounds.left &&
+            rect.right <= bounds.right &&
+            rect.top >= bounds.top &&
+            rect.bottom <= bounds.bottom
+          );
+        });
+      }),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: "test-results/workflow-expanded.png",
+    animations: "disabled",
+  });
+  await editor.getByRole("button", { name: "Reset zoom to 100%" }).click();
+  await expect(editor.getByLabel("Zoom level")).toHaveText("100%");
+  await editor.getByRole("button", { name: "Zoom out", exact: true }).click();
+  await editor
+    .getByRole("button", { name: "Connect Agent decision answer", exact: true })
+    .click();
+  await page.keyboard.press("Escape");
+  await expect(editor).toBeVisible();
+  await expect(
+    editor.getByRole("button", { name: "Cancel connection" }),
+  ).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(editor).toHaveCount(0);
+  await expect(expandEditor).toBeFocused();
+  await expect(page.getByLabel("Zoom level")).toHaveText("90%");
+  await expect(page.getByLabel("Step instructions")).toHaveValue(
+    "Keep the answer to two clear sentences.",
+  );
+  expect(await page.evaluate(() => document.body.style.overflow)).not.toBe(
+    "hidden",
+  );
+  // Mobile opens on the canvas, with a separate settings view in the same editor.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expandEditor.click();
+  await expect(editor.getByLabel("Selected step")).not.toBeVisible();
+  await editor
+    .getByRole("button", { name: "Fit workflow", exact: true })
+    .click();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= window.innerWidth,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: "test-results/workflow-expanded-mobile.png",
+    animations: "disabled",
+  });
+  await editor.getByRole("button", { name: "Show step settings" }).click();
+  await expect(editor.getByLabel("Selected step")).toHaveValue("agent");
+  await expect(canvas).not.toBeVisible();
+  await expect(editor.getByLabel("Step instructions")).toHaveValue(
+    "Keep the answer to two clear sentences.",
+  );
+  await page.screenshot({
+    path: "test-results/workflow-expanded-mobile-settings.png",
+    animations: "disabled",
+  });
+  await editor.getByRole("button", { name: "Back to canvas" }).click();
+  await expect(
+    editor.getByRole("button", { name: "Show step settings" }),
+  ).toBeFocused();
+  await editor.getByRole("button", { name: "Close expanded editor" }).click();
+  await expect(expandEditor).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByRole("button", { name: "Show step settings" }).click();
   await page.getByLabel("Selected step").selectOption("knowledge");
   await page.getByLabel("Knowledge scope").selectOption("selected");
   await page.getByRole("checkbox", { name: /^returns\.txt/ }).check();
@@ -343,8 +470,9 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(page.getByLabel("Route empty", { exact: true })).toHaveValue(
     conditionId,
   );
-  const saveDraft = page.getByRole("button", {
-    name: "Save draft",
+  await expandEditor.click();
+  const saveDraft = editor.getByRole("button", {
+    name: /^(Save draft|Saving…)$/,
     exact: true,
   });
   let releaseSave!: () => void;
@@ -382,6 +510,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await stepName.fill(`${savedStepName} edited`);
   await expect(page.getByRole("status")).toHaveCount(0);
   await stepName.fill(savedStepName);
+  await editor.getByRole("button", { name: "Close expanded editor" }).click();
   await expect(
     page.getByRole("button", { name: "Publish workflow", exact: true }),
   ).toBeEnabled();

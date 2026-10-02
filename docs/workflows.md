@@ -2,6 +2,8 @@
 
 Open **Workflow** in the staff sidebar. Owners and admins can edit and test; agents can view the graph and version history. Until you publish, the existing built-in support flow remains active. Fresh workspaces receive a suggested support template, not an automatically published customization.
 
+Choose **Expand editor** for a full-screen canvas with step settings and draft saving. **Fit workflow** brings the whole graph into view; **100%** restores normal size. Hide step settings for more canvas space. On mobile, switch between the canvas and settings with **Show step settings** and **Back to canvas**. **Close expanded editor** or Escape returns to the page with your draft, selection, zoom, and undo history intact. If you are connecting steps, Escape cancels the connection first. Expanding or closing the editor does not save or publish changes.
+
 ## Build and publish
 
 1. Select a step to edit its settings in the inspector. Add steps from the palette. Drag a step's heading to move it, or focus the heading and use arrow keys.
