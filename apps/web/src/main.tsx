@@ -11,6 +11,11 @@ const AnalyticsPage = React.lazy(() =>
 );
 import { Portal } from "./Portal.js";
 import { MessageList, useConversationEvents } from "./conversation-ui.js";
+import { NotesPanel, FeedbackPanel, feedbackLabel } from "./InboxInsights.js";
+import { InboxQueue } from "./InboxQueue.js";
+import { CustomerProfile, CustomersPage } from "./CustomersPage.js";
+import { appLink } from "./customer-ui.js";
+import { SupportOptions } from "./SupportOptions.js";
 import { TicketEmailSettings } from "./TicketEmailSettings.js";
 import { request, api, useLoad } from "./request.js";
 import "@fontsource/dm-sans/latin-400.css";
@@ -40,10 +45,10 @@ import { useAction } from "./useAction.js";
 import { LoadingState, PreviewDialog } from "./ui.js";
 import "./refinements.css";
 import "./inbox.css";
+import "./customers.css";
 import {
   inboxStates,
   inboxState,
-  inboxTime,
   parameterLabel,
   actionParameter,
   statusTone,
@@ -77,6 +82,8 @@ function Icon({ name }: { name: string }) {
       "M10 13a5 5 0 007 0l3-3a5 5 0 00-7-7l-2 2 M14 11a5 5 0 00-7 0l-3 3a5 5 0 007 7l2-2",
     Actions: "M13 2L4 14h7l-1 8 10-13h-8z",
     Publish: "M12 3v12 M7 8l5-5 5 5 M4 14v7h16v-7",
+    Customers:
+      "M20 21v-2a6 6 0 00-6-6H8a6 6 0 00-6 6v2 M11 11a4 4 0 100-8 4 4 0 000 8 M17 11l2 2 4-4",
     Team: "M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2 M9 11a4 4 0 100-8 4 4 0 000 8 M18 3a4 4 0 010 8 M22 21v-2a4 4 0 00-3-4",
     Settings:
       "M12 8a4 4 0 100 8 4 4 0 000-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M5 19l2-2 M17 7l2-2",
@@ -373,7 +380,7 @@ function WorkspaceSetup({ done }: { done: () => void }) {
   );
 }
 const navigation = [
-  { label: "Support", items: ["Inbox", "Knowledge", "Analytics"] },
+  { label: "Support", items: ["Inbox", "Customers", "Knowledge", "Analytics"] },
   { label: "Agent", items: ["Workflow", "Test Lab", "Actions"] },
   {
     label: "Workspace",
@@ -384,6 +391,7 @@ const sections = navigation.flatMap((group) => group.items);
 const staffSections = [
   "Settings",
   "Inbox",
+  "Customers",
   "Knowledge",
   "Workflow",
   "Actions",
@@ -704,6 +712,8 @@ function App() {
                   }))
                 }
               />
+            ) : activeView === "Customers" ? (
+              <CustomersPage ws={ws} admin={role !== "agent"} />
             ) : activeView === "Knowledge" ? (
               <KnowledgePage
                 ws={ws}
@@ -1010,48 +1020,19 @@ function Inbox({
     update: (drafts: Record<string, InboxDraft>) => Record<string, InboxDraft>,
   ) => void;
 }) {
-  const l = useLoad(() => api(ws, "/conversations"), [ws]);
   const [selected, setSelected] = useState(
     new URLSearchParams(location.search).get("conversation") ?? "",
   );
-  const [showDetail, setShowDetail] = useState(Boolean(selected));
-  const [query, setQuery] = useState(""),
-    [status, setStatus] = useState("all"),
-    [assignment, setAssignment] = useState("all");
+  const [summary, setSummary] = useState<Row>();
+  const [showDetail, setShowDetail] = useState(Boolean(selected)),
+    [wide, setWide] = useState(false),
+    [version, setVersion] = useState(0);
   const listRef = useRef<HTMLElement>(null);
   const members = useLoad(() => api(ws, "/members"), [ws]);
-  const conversations: Row[] = l.data?.conversations ?? [];
-  const filtered = conversations.filter(
-    (c) =>
-      (status === "all" ||
-        inboxState(c as { status: string; mode: string }) === status) &&
-      (assignment === "all" ||
-        (assignment === "unassigned"
-          ? !c.assigned_to
-          : c.assigned_to === assignment)) &&
-      `${c.subject} ${c.customer_name ?? ""} ${c.last_message ?? ""}`
-        .toLowerCase()
-        .includes(query.trim().toLowerCase()),
-  );
-  useEffect(() => {
-    if (!selected && conversations.length) setSelected(conversations[0].id);
-  }, [l.data]);
-  // The selected thread streams updates; refresh the queue for new conversations too.
-  const reload = useRef(l.reload);
-  reload.current = l.reload;
-  useEffect(() => {
-    const refresh = () => {
-      if (!document.hidden) reload.current();
-    };
-    const timer = setInterval(refresh, 15000);
-    window.addEventListener("focus", refresh);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [ws]);
+  const refresh = () => setVersion((v) => v + 1);
   const back = () => {
     setShowDetail(false);
+    setWide(false);
     history.replaceState({}, "", `/?workspace=${ws}&view=inbox`);
     requestAnimationFrame(() =>
       listRef.current
@@ -1061,176 +1042,50 @@ function Inbox({
   };
   return (
     <div
-      className={`inbox-workspace ${showDetail ? "show-detail" : "show-queue"}`}
+      className={`inbox-workspace ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
     >
       <header className="inbox-heading">
         <div>
           <h1>Inbox</h1>
-          <p>A clear next step for every conversation.</p>
+          <p>Organize by customer. Keep every conversation in view.</p>
         </div>
-        <button
-          onClick={l.reload}
-          disabled={l.loading}
-          aria-label="Refresh inbox"
-        >
-          {l.loading ? "Refreshing…" : "↻ Refresh"}
-        </button>
-      </header>
-      <nav className="inbox-queues" aria-label="Inbox queues">
-        {[
-          {
-            id: "all",
-            label: "All conversations",
-            tone: "neutral",
-            symbol: "",
-          },
-          ...Object.entries(inboxStates).map(([id, value]) => ({
-            id,
-            ...value,
-          })),
-        ].map((s) => (
+        <div className="inbox-view-controls">
           <button
-            key={s.id}
-            className={`queue-filter ${s.tone}`}
-            aria-pressed={status === s.id}
-            onClick={() => {
-              setStatus(s.id);
-              setShowDetail(false);
-            }}
+            disabled={!selected}
+            className="queue-width-toggle"
+            aria-pressed={wide}
+            onClick={() => setWide(!wide)}
           >
-            {s.symbol && <span aria-hidden="true">{s.symbol}</span>} {s.label}
-            <span className="queue-count">
-              {s.id === "all"
-                ? conversations.length
-                : conversations.filter(
-                    (c) =>
-                      inboxState(c as { status: string; mode: string }) ===
-                      s.id,
-                  ).length}
-            </span>
+            {wide ? "Show conversation list" : "Expand conversation"}
           </button>
-        ))}
-      </nav>
-      <Alert>{l.error}</Alert>
+          <button onClick={refresh} aria-label="Refresh inbox">
+            ↻ Refresh
+          </button>
+        </div>
+      </header>
       <div className="inbox">
         <section
           className="conversation-list"
           aria-label="Conversation queue"
           ref={listRef}
         >
-          <div className="inbox-filters">
-            <input
-              type="search"
-              aria-label="Search conversations"
-              placeholder="Search conversations…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <select
-              aria-label="Filter by assignee"
-              value={assignment}
-              onChange={(e) => setAssignment(e.target.value)}
-            >
-              <option value="all">Everyone</option>
-              <option value="unassigned">Unassigned</option>
-              {members.data?.members.map((m: Row) => (
-                <option key={m.user_id} value={m.user_id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            <div className="queue-caption">
-              <span>
-                {filtered.length} conversation{filtered.length === 1 ? "" : "s"}
-                {conversations.length === 200 ? " · latest 200" : ""}
-              </span>
-              <span>Latest first</span>
-            </div>
-          </div>
-          <div className="conversation-items">
-            {!l.data && !l.error ? (
-              <LoadingState label="Loading conversations…" />
-            ) : filtered.length ? (
-              filtered.map((c) => (
-                <button
-                  key={c.id}
-                  aria-current={selected === c.id ? "true" : undefined}
-                  className={`conversation-card ${selected === c.id ? "active" : ""}`}
-                  onClick={() => {
-                    setSelected(c.id);
-                    setShowDetail(true);
-                    history.replaceState(
-                      {},
-                      "",
-                      `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
-                    );
-                  }}
-                >
-                  <div className="conversation-person">
-                    <span className="avatar small" aria-hidden="true">
-                      {(c.customer_name || "V")[0]}
-                    </span>
-                    <strong>{c.customer_name || "Visitor"}</strong>
-                    <time
-                      dateTime={c.updated_at}
-                      title={new Date(c.updated_at).toLocaleString()}
-                    >
-                      {inboxTime(c.updated_at)}
-                    </time>
-                  </div>
-                  <h3>{c.subject}</h3>
-                  <p className="conversation-preview">
-                    {drafts[c.id]?.body.trim() ? (
-                      <>
-                        <span className="draft-label">Draft: </span>
-                        {drafts[c.id].body}
-                      </>
-                    ) : (
-                      c.last_message || "No messages yet"
-                    )}
-                  </p>
-                  <div className="conversation-labels">
-                    <InboxStatus conversation={c} />
-                    {["high", "urgent"].includes(c.priority) && (
-                      <Badge value={c.priority} />
-                    )}
-                    <span className="conversation-channel">
-                      {c.external_id
-                        ? "Zendesk"
-                        : c.channel_kind === "widget"
-                          ? "Widget"
-                          : "Portal"}
-                    </span>
-                  </div>
-                </button>
-              ))
-            ) : (
-              <Empty
-                title={
-                  conversations.length
-                    ? "No matching conversations"
-                    : "Your inbox is ready"
-                }
-              >
-                <p>
-                  {conversations.length
-                    ? "Try another search, queue, or assignee."
-                    : "Messages from your portal, widget, and Zendesk will appear here."}
-                </p>
-                {conversations.length > 0 && (
-                  <button
-                    onClick={() => {
-                      setQuery("");
-                      setStatus("all");
-                      setAssignment("all");
-                    }}
-                  >
-                    Clear filters
-                  </button>
-                )}
-              </Empty>
-            )}
-          </div>
+          <InboxQueue
+            ws={ws}
+            selected={selected}
+            members={members.data?.members ?? []}
+            drafts={drafts}
+            version={version}
+            onSelect={(c) => {
+              setSelected(c.id);
+              setSummary(c);
+              setShowDetail(true);
+              history.replaceState(
+                {},
+                "",
+                `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
+              );
+            }}
+          />
         </section>
         {selected ? (
           <InboxConversation
@@ -1238,10 +1093,10 @@ function Inbox({
             ws={ws}
             role={role}
             id={selected}
-            summary={conversations.find((c) => c.id === selected)}
+            summary={summary}
             members={members.data?.members ?? []}
             membersError={members.error}
-            reloadQueue={l.reload}
+            reloadQueue={refresh}
             back={back}
             showDetail={showDetail}
             draft={drafts[selected]}
@@ -1265,8 +1120,9 @@ function Inbox({
           />
         ) : (
           <section className="conversation-detail">
-            <Empty title="Select a conversation">
-              Choose a ticket to see the full conversation and next steps.
+            <Empty title="Choose a customer or conversation">
+              Expand a customer to see their tickets and chats, or switch Group
+              by to Conversation.
             </Empty>
           </section>
         )}
@@ -1304,6 +1160,10 @@ function InboxConversation({
   const detail = useLoad(() => api(ws, `/conversations/${id}`), [ws, id]);
   const a = useAction();
   const [tab, setTab] = useState("conversation");
+  const [customerViewed, setCustomerViewed] = useState(false);
+  useEffect(() => {
+    if (tab === "customer") setCustomerViewed(true);
+  }, [tab]);
   const [now, setNow] = useState(Date.now());
   const heading = useRef<HTMLHeadingElement>(null),
     composer = useRef<HTMLTextAreaElement>(null);
@@ -1373,7 +1233,19 @@ function InboxConversation({
   const pending = detail.data.approvals.filter(
     (p: Row) => p.status === "pending",
   );
-  const customer = summary?.customer_name || "Visitor";
+  const customer =
+    detail.data.customer?.name || summary?.customer_name || "Visitor";
+  const feedback: Row[] = detail.data.feedback ?? [];
+  const notes = detail.data.messages.filter((m: Row) => m.role === "note");
+  const ticketTabs = [
+    ["conversation", "Conversation", pending.length],
+    ["customer", "Customer", 0],
+    ["notes", "Notes", notes.length],
+    ["feedback", "Feedback", feedback.length],
+    ["assistant", "✦ Support assistant", 0],
+    ["activity", "Activity & tools", 0],
+  ] as const;
+
   return (
     <section className="conversation-detail" aria-label="Selected conversation">
       <header className="ticket-header">
@@ -1385,7 +1257,13 @@ function InboxConversation({
             <span className="avatar small" aria-hidden="true">
               {customer[0]}
             </span>
-            <strong>{customer}</strong>
+            <button
+              className="customer-profile-trigger"
+              onClick={() => setTab("customer")}
+              aria-label={`View customer: ${customer}`}
+            >
+              {customer} ↗
+            </button>
             <span>
               {conv.external_id
                 ? `Zendesk #${conv.external_id}`
@@ -1465,7 +1343,7 @@ function InboxConversation({
         </span>
         <span>
           {conv.status === "resolved"
-            ? "Marked resolved by your team"
+            ? "Conversation closed"
             : conv.mode === "human"
               ? "Agent paused · your team is in control"
               : conv.status === "waiting_approval" && !pending.length
@@ -1475,6 +1353,18 @@ function InboxConversation({
                   : "Agent can reply automatically"}
         </span>
       </div>
+      {!!feedback.length && (
+        <button
+          className={`customer-feedback-summary ${feedback[0].resolved === false || feedback[0].rating === "bad" ? "negative" : ""}`}
+          onClick={() => setTab("feedback")}
+        >
+          <span>
+            Customer feedback: <strong>{feedbackLabel(feedback[0])}</strong>
+            {feedback[0].rating ? ` · ${feedback[0].rating} experience` : ""}
+          </span>
+          <span>View feedback →</span>
+        </button>
+      )}
       <Alert>{a.error || membersError || detail.error}</Alert>
       {a.success && (
         <p className="inbox-feedback" role="status">
@@ -1489,36 +1379,38 @@ function InboxConversation({
           if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
             return;
           e.preventDefault();
-          const tabs = ["conversation", "assistant", "activity"];
+          const tabs: string[] = ticketTabs.map(([key]) => key);
           const next =
             e.key === "Home"
               ? 0
               : e.key === "End"
-                ? 2
-                : (tabs.indexOf(tab) + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+                ? tabs.length - 1
+                : (tabs.indexOf(tab) +
+                    (e.key === "ArrowRight" ? 1 : tabs.length - 1)) %
+                  tabs.length;
           setTab(tabs[next]);
           e.currentTarget
             .querySelectorAll<HTMLButtonElement>('[role="tab"]')
             [next].focus();
         }}
       >
-        {[
-          ["conversation", "Conversation"],
-          ["assistant", "✦ Support assistant"],
-          ["activity", "Activity & tools"],
-        ].map(([value, label]) => (
+        {ticketTabs.map(([value, label, count]) => (
           <button
             key={value}
             id={`ticket-tab-${value}`}
             role="tab"
+            aria-label={label}
             aria-selected={tab === value}
             aria-controls={`ticket-panel-${value}`}
             tabIndex={tab === value ? 0 : -1}
             onClick={() => setTab(value)}
           >
             {label}
-            {value === "conversation" && pending.length > 0 && (
-              <span className="tab-count">{pending.length} to review</span>
+            {count > 0 && (
+              <span className="tab-count" aria-hidden="true">
+                {count}
+                {value === "conversation" ? " to review" : ""}
+              </span>
             )}
           </button>
         ))}
@@ -1621,7 +1513,7 @@ function InboxConversation({
                           decision: "reject",
                         });
                         refresh();
-                      }, "Action rejected.")
+                      }, "Action rejected. No message was sent. Your team is in control.")
                     }
                   >
                     Reject
@@ -1631,6 +1523,53 @@ function InboxConversation({
             </section>
           );
         })}
+      </div>
+      <div
+        className="ticket-panel customer-panel"
+        id="ticket-panel-customer"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-customer"
+        hidden={tab !== "customer"}
+        tabIndex={0}
+      >
+        {customerViewed && (
+          <CustomerProfile
+            key={conv.contact_id}
+            ws={ws}
+            id={conv.contact_id}
+            admin={role !== "agent"}
+            compact
+            currentConversation={id}
+            active={tab === "customer"}
+          />
+        )}
+      </div>
+      <div
+        className="ticket-panel notes-panel"
+        id="ticket-panel-notes"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-notes"
+        tabIndex={0}
+        hidden={tab !== "notes"}
+      >
+        <NotesPanel
+          messages={detail.data.messages}
+          compose={() => {
+            updateDraft({ note: true });
+            setTab("conversation");
+            requestAnimationFrame(() => composer.current?.focus());
+          }}
+        />
+      </div>
+      <div
+        className="ticket-panel feedback-panel"
+        id="ticket-panel-feedback"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-feedback"
+        tabIndex={0}
+        hidden={tab !== "feedback"}
+      >
+        <FeedbackPanel feedback={feedback} />
       </div>
       <div
         className="ticket-panel assistant-panel"
@@ -1746,6 +1685,7 @@ function InboxConversation({
       </div>
       <form
         className={`reply-form ${currentDraft.note ? "is-note" : ""}`}
+        hidden={tab !== "conversation"}
         onSubmit={(e) => {
           e.preventDefault();
           if (a.busy || !draft?.body.trim()) return;
@@ -3832,6 +3772,14 @@ function PublishPage({
       ) : (
         <>
           <Alert>{l.error || a.error}</Alert>
+          {l.data && (
+            <SupportOptions
+              ws={ws}
+              owner={owner}
+              channels={l.data.channels}
+              saved={l.reload}
+            />
+          )}
           <TicketEmailSettings ws={ws} />
           {l.data?.channels.map((channel: Row) => (
             <section className="panel" key={channel.id}>
@@ -3865,7 +3813,10 @@ function PublishPage({
                       ws,
                       `/channels/${channel.id}`,
                       {
-                        published: d.get("published") === "on",
+                        published:
+                          channel.kind === "widget"
+                            ? channel.published
+                            : d.get("published") === "on",
                         settings: {
                           origins: String(d.get("origins") ?? "")
                             .split("\n")
@@ -3902,14 +3853,23 @@ function PublishPage({
                     </select>
                   </Field>
                 )}
-                <label className="checkbox">
-                  <input
-                    name="published"
-                    type="checkbox"
-                    defaultChecked={channel.published}
-                  />
-                  Publish this channel
-                </label>
+                {channel.kind !== "widget" && (
+                  <label className="checkbox">
+                    <input
+                      name="published"
+                      type="checkbox"
+                      defaultChecked={channel.published}
+                    />
+                    Publish this channel
+                  </label>
+                )}
+                {channel.kind === "widget" && (
+                  <p className="muted">
+                    Turn the chatbot on or off in Support options above. It
+                    appears as a pop-up in your help center and can also be
+                    embedded on your website.
+                  </p>
+                )}
                 <button className="primary" disabled={a.busy}>
                   Save channel
                 </button>
@@ -4058,19 +4018,13 @@ function ServiceCredentials({ ws }: { ws: string }) {
   );
 }
 function TeamPage({ ws }: { ws: string }) {
-  const l = useLoad(
-      async () => ({
-        ...(await api(ws, "/members")),
-        ...(await api(ws, "/contacts")),
-      }),
-      [ws],
-    ),
+  const l = useLoad(() => api(ws, "/members"), [ws]),
     a = useAction();
   return (
     <>
       <Heading eyebrow="PEOPLE & PERMISSIONS" title="Team">
-        Invite teammates and review which customer identities can access
-        connected accounts.
+        Manage staff access to this workspace. Customer profiles and linked
+        accounts are in Customers.
       </Heading>
       <Alert>{l.error || a.error}</Alert>
       {a.success && <p className="success">{a.success}</p>}
@@ -4116,64 +4070,12 @@ function TeamPage({ ws }: { ws: string }) {
           ))}
         </div>
       </section>
-      <section className="panel">
-        <h2>Reviewed customer mappings</h2>
-        <p className="muted">
-          An email match alone does not authorize billing changes. Map a
-          verified customer to their provider record after reviewing ownership.
-        </p>
-        {l.data?.contacts.length ? (
-          l.data.contacts.map((contact: Row) => (
-            <details className="contact-mapping" key={contact.id}>
-              <summary>
-                {contact.name || "Visitor"} ·{" "}
-                {contact.email ?? contact.external_id ?? contact.id}{" "}
-                <Badge value={contact.verified ? "verified" : "unverified"} />
-              </summary>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const d = new FormData(e.currentTarget);
-                  void a.run(async () => {
-                    await api(
-                      ws,
-                      `/contacts/${contact.id}/mapping`,
-                      {
-                        mappings: JSON.parse(String(d.get("mappings"))),
-                        ...(d.get("userId") ? { userId: d.get("userId") } : {}),
-                      },
-                      "PUT",
-                    );
-                    l.reload();
-                  }, "Reviewed mapping saved.");
-                }}
-              >
-                <Field
-                  label="Provider identities"
-                  hint={
-                    'For Stripe use "stripe_test" or "stripe_live" with its cus_ ID. Custom actions use their configured mapping key.'
-                  }
-                >
-                  <textarea
-                    name="mappings"
-                    className="code-editor"
-                    defaultValue={JSON.stringify(contact.mappings, null, 2)}
-                  />
-                </Field>
-                <Field label="Verified portal user ID (optional)">
-                  <input name="userId" defaultValue={contact.user_id ?? ""} />
-                </Field>
-                <button disabled={a.busy}>Save reviewed mapping</button>
-              </form>
-            </details>
-          ))
-        ) : (
-          <Empty title="Customer identities will appear here">
-            Verified portal users, signed website identities, and Zendesk
-            requesters are kept separate until explicitly linked.
-          </Empty>
-        )}
-      </section>
+      <p className="muted">
+        Looking for a customer?{" "}
+        <a href={`/?workspace=${ws}&view=customers`} onClick={appLink}>
+          Open Customers →
+        </a>
+      </p>
     </>
   );
 }

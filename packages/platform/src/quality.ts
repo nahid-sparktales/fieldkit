@@ -668,10 +668,28 @@ export class Quality {
     const d = FeedbackInput.parse(raw);
     return this.db.tx(async (q) => {
       const current = await this.db.one(
-        "SELECT status FROM conversations WHERE id=$1 FOR UPDATE",
-        [id],
+        "SELECT status,external_id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        [p.workspaceId, id],
         q,
       );
+      const prior = await this.db.one(
+        "SELECT * FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND source='native' ORDER BY updated_at DESC LIMIT 1",
+        [p.workspaceId, id],
+        q,
+      );
+      if (prior) {
+        if (
+          prior.message_id === d.messageId &&
+          prior.resolved === d.resolved &&
+          prior.rating === d.rating &&
+          prior.comment === d.comment
+        )
+          return prior;
+        throw new HttpError(
+          409,
+          "Feedback has already been sent for this conversation",
+        );
+      }
       if (current?.status !== "resolved")
         throw new HttpError(
           409,
@@ -686,13 +704,7 @@ export class Quality {
         400,
         "Choose the latest delivered support answer in your closed conversation",
       );
-      const prior = await this.db.one(
-        "SELECT * FROM customer_feedback WHERE workspace_id=$1 AND source='native' AND external_id=$2",
-        [p.workspaceId, d.messageId],
-        q,
-      );
       const history = [
-        ...(prior?.raw.history ?? []),
         {
           resolved: d.resolved,
           rating: d.rating,
@@ -701,9 +713,9 @@ export class Quality {
         },
       ];
       const saved = await this.db.one(
-        "INSERT INTO customer_feedback(id,workspace_id,conversation_id,message_id,contact_id,source,external_id,resolved,rating,comment,raw) VALUES($1,$2,$3,$4,$5,'native',$4,$6,$7,$8,$9) ON CONFLICT(workspace_id,source,external_id) DO UPDATE SET resolved=$6,rating=$7,comment=$8,raw=$9,updated_at=now() RETURNING *",
+        "INSERT INTO customer_feedback(id,workspace_id,conversation_id,message_id,contact_id,source,external_id,resolved,rating,comment,raw) VALUES($1,$2,$3,$4,$5,'native',$4,$6,$7,$8,$9) RETURNING *",
         [
-          prior?.id ?? uid(),
+          uid(),
           p.workspaceId,
           id,
           d.messageId,
@@ -725,19 +737,33 @@ export class Quality {
           d.messageId,
           q,
         );
-      if (
-        prior &&
-        digest([prior.resolved, prior.rating, prior.comment]) !==
-          digest([d.resolved, d.rating, d.comment])
-      )
+      if (!d.resolved && !current.external_id) {
         await q.query(
-          "UPDATE knowledge_gaps SET revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id IN(SELECT gap_id FROM gap_occurrences WHERE workspace_id=$1 AND event_key=$2)",
-          [p.workspaceId, `feedback:${d.messageId}`],
+          "UPDATE conversations SET status='open',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2",
+          [p.workspaceId, id],
         );
+        await q.query(
+          "UPDATE approvals SET status='stale' WHERE status='pending' AND run_id IN(SELECT id FROM runs WHERE workspace_id=$1 AND conversation_id=$2)",
+          [p.workspaceId, id],
+        );
+        await this.db.event(
+          q,
+          p.workspaceId,
+          "conversation.updated",
+          {
+            previousStatus: "resolved",
+            status: "open",
+            actorType: "customer",
+            reason: "unresolved_feedback",
+          },
+          id,
+          true,
+        );
+      }
       await this.db.event(
         q,
         p.workspaceId,
-        "feedback.updated",
+        "feedback.submitted",
         { messageId: d.messageId, resolved: d.resolved, rating: d.rating },
         id,
         true,

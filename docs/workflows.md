@@ -1,8 +1,19 @@
-# Visual agent workflows
+# Guided and visual agent workflows
 
 Open **Workflow** in the staff sidebar. Owners and admins can edit and test; agents can view the graph and version history. Until you publish, the existing built-in support flow remains active. Fresh workspaces receive a suggested support template, not an automatically published customization.
 
 Choose **Expand editor** for a full-screen canvas with step settings and draft saving. **Fit workflow** brings the whole graph into view; **100%** restores normal size. Hide step settings for more canvas space. On mobile, switch between the canvas and settings with **Show step settings** and **Back to canvas**. **Close expanded editor** or Escape returns to the page with your draft, selection, zoom, and undo history intact. If you are connecting steps, Escape cancels the connection first. Expanding or closing the editor does not save or publish changes.
+
+## Guided steps
+
+Choose **Guided steps** above the editor for a readable list instead of a canvas. This is a second view of the same LangGraph definition: switching views does not convert the workflow, save it, publish it, or drop advanced settings. Your preferred view is remembered in this browser.
+
+1. Open **Start from a template** to choose knowledge answers, support with account actions, human handoff, or a saved reply without AI. Template replacement asks for confirmation, affects only the draft, and can be undone. A saved-reply template needs your reply text before it is valid. Templates are for channel workflows; reusable subflows keep their own Start/Return setup.
+2. Select a step to edit its resources, instructions, action approval behavior, reply, or reusable component. The same settings are available in both views. Outcome links take you to the next step; the list shows branches and joins rather than claiming every step always runs.
+3. Under **What happens next?**, choose the next step for each plain-language outcome. Open **Add a new step here** to insert on that specific route. Its first outcome continues to the former destination; other outcomes remain unset for you to choose. Adding a terminal reply or handoff ends that path. Existing downstream steps remain visible and must be reconnected or removed if they become unreachable.
+4. Use Undo/Redo to revise the draft. Unconnected steps and missing outcomes remain visible, and the existing validation blocks publication until the graph is complete. Save, test, and publish with the same controls as the visual editor.
+
+On narrow screens, select a step to show its settings and choose **Back to steps** to return. **Expand editor** also supports the guided view. Customer lookups, action permissions, fixed API steps, code runner isolation, and immutable component versions work exactly as in the graph editor.
 
 ## Build and publish
 

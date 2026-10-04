@@ -59,21 +59,31 @@ function ClosedFeedback({
   identity,
   id,
   detail,
+  onSubmitted,
+  onRefresh,
 }: {
   identity: Identity;
   id: string;
   detail: Row;
+  onSubmitted: (resolved: boolean) => void;
+  onRefresh: () => void;
 }) {
-  const last = detail.messages.at(-1);
-  return detail.conversation.status === "resolved" &&
-    last?.delivered_at &&
-    ["assistant", "staff"].includes(last.role) ? (
+  const last = detail.messages.at(-1),
+    feedback = detail.feedback?.find((f: Row) => f.source === "native");
+  return feedback ||
+    (detail.conversation.status === "resolved" &&
+      last?.delivered_at &&
+      ["assistant", "staff"].includes(last.role)) ? (
     <ConversationFeedback
-      key={last.id}
+      key={id}
       ws={identity.workspaceId}
       id={id}
       message={last}
+      feedback={feedback}
       bearer={identity.token}
+      external={Boolean(detail.conversation.external_id)}
+      onSubmitted={onSubmitted}
+      onRefresh={onRefresh}
     />
   ) : null;
 }
@@ -104,6 +114,11 @@ export function Portal({
     ),
     [query, setQuery] = useState(""),
     [article, setArticle] = useState<Row | null>(null);
+  useEffect(() => {
+    const refresh = () => info.reload();
+    window.addEventListener("focus", refresh);
+    return () => window.removeEventListener("focus", refresh);
+  }, [slug, widget]);
   const unsent = useRef(false);
   const onDraftChange = useCallback((dirty: boolean) => {
     unsent.current = dirty;
@@ -184,6 +199,12 @@ export function Portal({
   return (
     <div
       className={`${widget ? "widget-page" : "portal-page"} branded-portal customer-support`}
+      onKeyDown={(e) => {
+        if (widget && window.parent !== window && e.key === "Escape") {
+          e.preventDefault();
+          window.parent.postMessage({ type: "fieldkit:close" }, "*");
+        }
+      }}
       onClickCapture={(e) => {
         const target = e.target as HTMLElement;
         if (unsent.current && target.closest(".portal-header")) {
@@ -213,15 +234,17 @@ export function Portal({
             >
               Help center
             </button>
-            <button
-              aria-current={view === "tickets" ? "page" : undefined}
-              onClick={() => {
-                setView("tickets");
-                setSelected("");
-              }}
-            >
-              My tickets
-            </button>
+            {(brand.ticketsEnabled || identity) && (
+              <button
+                aria-current={view === "tickets" ? "page" : undefined}
+                onClick={() => {
+                  setView("tickets");
+                  setSelected("");
+                }}
+              >
+                My tickets
+              </button>
+            )}
             {identity ? (
               <>
                 <button onClick={() => setView("profile")}>
@@ -242,7 +265,7 @@ export function Portal({
               </>
             ) : (
               <button onClick={() => setAuthOpen(true)}>
-                Sign in / Create account
+                {brand.ticketsEnabled ? "Sign in / Create account" : "Sign in"}
               </button>
             )}
           </nav>
@@ -259,22 +282,20 @@ export function Portal({
           <Notice action={a} />
         </div>
       ) : widget ? (
-        <LiveChat slug={slug} brand={brand} onDraftChange={onDraftChange} />
+        <LiveChat
+          slug={slug}
+          brand={brand}
+          onDraftChange={onDraftChange}
+          onClose={
+            window.parent !== window
+              ? () => window.parent.postMessage({ type: "fieldkit:close" }, "*")
+              : undefined
+          }
+        />
       ) : view === "profile" && identity ? (
         <div className="portal-content">
           <button onClick={() => setView("home")}>← Back to help center</button>
           <ProfileSettings />
-        </div>
-      ) : view === "chat" ? (
-        <div className="portal-content support-chat-page">
-          <button onClick={() => setView("home")}>← Back to help center</button>
-          <LiveChat
-            key={identity?.contactId ?? "visitor"}
-            slug={slug}
-            brand={brand}
-            onDraftChange={onDraftChange}
-            account={identity ?? undefined}
-          />
         </div>
       ) : view === "tickets" || view === "new" ? (
         <main className="portal-content ticket-page">
@@ -294,9 +315,13 @@ export function Portal({
                 <div>
                   <span className="eyebrow">YOUR SUPPORT REQUESTS</span>
                   <h1>{view === "new" ? "Submit a ticket" : "My tickets"}</h1>
-                  <p>Send a message. We’ll email you when support replies.</p>
+                  <p>
+                    {brand.ticketsEnabled
+                      ? "Send a message. We’ll email you when support replies."
+                      : "Your previous conversations and replies are still available."}
+                  </p>
                 </div>
-                {view !== "new" && identity && (
+                {view !== "new" && identity && brand.ticketsEnabled && (
                   <button className="primary" onClick={() => setView("new")}>
                     New ticket
                   </button>
@@ -309,14 +334,15 @@ export function Portal({
                   </span>
                   <h2>Keep your requests in one place.</h2>
                   <p>
-                    Sign in with a verified email to submit tickets, receive
-                    replies, and see your history.
+                    {brand.ticketsEnabled
+                      ? "Sign in with a verified email to submit tickets, receive replies, and see your history."
+                      : "Sign in to view and reply to your previous conversations."}
                   </p>
                   <button className="primary" onClick={() => setAuthOpen(true)}>
                     Sign in to continue
                   </button>
                 </section>
-              ) : view === "new" ? (
+              ) : view === "new" && brand.ticketsEnabled ? (
                 <NewTicket
                   identity={identity}
                   onDraftChange={onDraftChange}
@@ -357,15 +383,18 @@ export function Portal({
                     <div className="support-empty">
                       <h2>No tickets yet</h2>
                       <p>
-                        Need a hand? Send your first request to the support
-                        team.
+                        {brand.ticketsEnabled
+                          ? "Need a hand? Send your first request to the support team."
+                          : "Any previous support conversations will appear here. New tickets are currently unavailable."}
                       </p>
-                      <button
-                        className="primary"
-                        onClick={() => setView("new")}
-                      >
-                        Submit a ticket
-                      </button>
+                      {brand.ticketsEnabled && (
+                        <button
+                          className="primary"
+                          onClick={() => setView("new")}
+                        >
+                          Submit a ticket
+                        </button>
+                      )}
                     </div>
                   )}
                 </section>
@@ -422,8 +451,8 @@ export function Portal({
                     {!articles.loading && !articles.data?.articles.length && (
                       <p className="muted">
                         {query
-                          ? "No matching articles. Try another search or contact support below."
-                          : "Our help library is growing. Contact support below."}
+                          ? "No matching articles. Try a different search."
+                          : "There are no help articles yet."}
                       </p>
                     )}
                   </div>
@@ -431,49 +460,124 @@ export function Portal({
                 {articles.error && <p role="alert">{articles.error}</p>}
               </section>
             )}
-            <section className="support-choices" aria-label="Contact support">
-              <div className="support-choice">
-                <span className="support-symbol" aria-hidden="true">
-                  ✉
-                </span>
-                <h2>Send us a message</h2>
-                <p>
-                  For detailed questions or account help. Submit a ticket and
-                  get a reply by email. Your history stays here.
-                </p>
-                <button
-                  className="primary"
-                  onClick={() => {
-                    setSelected("");
-                    setView("new");
-                  }}
-                >
-                  Submit a ticket
-                </button>
-              </div>
-              {brand.chatEnabled && (
+            {brand.ticketsEnabled && (
+              <section className="support-choices" aria-label="Contact support">
                 <div className="support-choice">
                   <span className="support-symbol" aria-hidden="true">
-                    ✦
+                    ✉
                   </span>
-                  <h2>Chat with our assistant</h2>
+                  <h2>Send us a message</h2>
                   <p>
-                    Get help from our approved guides in a live conversation.
-                    The team can take over when you need a person.
+                    For detailed questions or account help. Submit a ticket and
+                    get a reply by email. Your history stays here.
                   </p>
-                  <button onClick={() => setView("chat")}>Chat now</button>
-                  <small>
-                    AI-assisted · No account needed for general questions
-                  </small>
+                  <button
+                    className="primary"
+                    onClick={() => {
+                      setSelected("");
+                      setView("new");
+                    }}
+                  >
+                    Submit a ticket
+                  </button>
                 </div>
-              )}
-            </section>
+              </section>
+            )}
             <Notice action={a} />
           </main>
         </>
       )}
       <PortalFooter config={appearance.config} />
+      {!widget && brand.chatEnabled && !authOpen && (
+        <FloatingChat
+          key={identity?.contactId ?? "visitor"}
+          slug={slug}
+          brand={brand}
+          account={identity ?? undefined}
+        />
+      )}
     </div>
+  );
+}
+const keepChatDraft = () => {};
+function FloatingChat({
+  slug,
+  brand,
+  account,
+}: {
+  slug: string;
+  brand: Row;
+  account?: Identity;
+}) {
+  const [open, setOpen] = useState(false),
+    [started, setStarted] = useState(false);
+  const launcher = useRef<HTMLButtonElement>(null),
+    panel = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (open)
+      panel.current?.querySelector<HTMLButtonElement>(".chat-close")?.focus();
+  }, [open]);
+  function close() {
+    setOpen(false);
+    launcher.current?.focus();
+  }
+  return (
+    <aside className="support-chat-float" aria-label="Support chatbot">
+      <div
+        id="support-chat-panel"
+        ref={panel}
+        role="dialog"
+        aria-label="Support chat"
+        hidden={!open}
+        className="support-chat-popup"
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            e.stopPropagation();
+            close();
+          }
+        }}
+      >
+        {started && (
+          <LiveChat
+            slug={slug}
+            brand={brand}
+            account={account}
+            onDraftChange={keepChatDraft}
+            onClose={close}
+          />
+        )}
+      </div>
+      <button
+        ref={launcher}
+        type="button"
+        className="support-chat-launcher"
+        aria-label={open ? "Minimize support chat" : "Open support chat"}
+        aria-expanded={open}
+        aria-controls="support-chat-panel"
+        onClick={() => {
+          if (open) close();
+          else {
+            setStarted(true);
+            setOpen(true);
+          }
+        }}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="24"
+          height="24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden="true"
+        >
+          <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-2 2V11.5a9.5 9.5 0 0 1 19 0Z" />
+          <path d="M7 10h10M7 14h6" />
+        </svg>
+        <span>{open ? "Minimize chat" : "Chat with us"}</span>
+      </button>
+    </aside>
   );
 }
 function NewTicket({
@@ -669,7 +773,17 @@ function TicketThread({
       <section className="ticket-correspondence" aria-label="Ticket messages">
         <MessageList messages={l.data.messages} />
       </section>
-      <ClosedFeedback identity={identity} id={id} detail={l.data} />
+      <ClosedFeedback
+        identity={identity}
+        id={id}
+        detail={l.data}
+        onRefresh={l.reload}
+        onSubmitted={(resolved) => {
+          l.reload();
+          onChange();
+          if (!resolved) setReply(true);
+        }}
+      />
       <section className="ticket-reply">
         <Notice action={a} error={l.error} />
         {reply ? (
@@ -764,11 +878,13 @@ function LiveChat({
   brand,
   account,
   onDraftChange,
+  onClose,
 }: {
   onDraftChange: (dirty: boolean) => void;
   slug: string;
   brand: Row;
   account?: Identity;
+  onClose?: () => void;
 }) {
   const storageKey = `fieldkit-chat:${slug}:${account?.contactId ?? "visitor"}`;
   const [reopening, setReopening] = useState(false);
@@ -794,6 +910,7 @@ function LiveChat({
     [body, setBody] = useState("");
   const a = useAction(),
     key = useRef(crypto.randomUUID()),
+    composer = useRef<HTMLTextAreaElement>(null),
     end = useRef<HTMLDivElement>(null),
     scroll = useRef<HTMLDivElement>(null),
     nearBottom = useRef(true);
@@ -861,38 +978,43 @@ function LiveChat({
   }, [config.data]);
   async function send(e: FormEvent) {
     e.preventDefault();
-    await a.run(async () => {
-      let identity = session;
-      if (!identity) {
-        identity = await request(`/v2/public/${slug}/widget/session`, {
-          channel: "widget",
-        });
-        setSession(identity);
-      }
-      if (!identity) return;
-      if (selected)
-        await api(
-          identity.workspaceId,
-          `/conversations/${selected}/messages`,
-          { body, requestKey: key.current },
-          undefined,
-          identity.token,
-        );
-      else {
-        const c = await api(
-          identity.workspaceId,
-          "/conversations",
-          { body, requestKey: key.current, channelId: config.data.channelId },
-          undefined,
-          identity.token,
-        );
-        setSelected(c.id);
-      }
-      setBody("");
-      key.current = crypto.randomUUID();
-      nearBottom.current = true;
-      l.reload();
-    });
+    await a.run(
+      async () => {
+        let identity = session;
+        if (!identity) {
+          identity = await request(`/v2/public/${slug}/widget/session`, {
+            channel: "widget",
+          });
+          setSession(identity);
+        }
+        if (!identity) return;
+        if (selected)
+          await api(
+            identity.workspaceId,
+            `/conversations/${selected}/messages`,
+            { body, requestKey: key.current },
+            undefined,
+            identity.token,
+          );
+        else {
+          const c = await api(
+            identity.workspaceId,
+            "/conversations",
+            { body, requestKey: key.current, channelId: config.data.channelId },
+            undefined,
+            identity.token,
+          );
+          setSelected(c.id);
+        }
+        setBody("");
+        key.current = crypto.randomUUID();
+        nearBottom.current = true;
+        l.reload();
+      },
+      l.data?.conversation.mode === "human"
+        ? "Message sent. Waiting for the support team to reply."
+        : "Message sent.",
+    );
   }
   const closed = l.data?.conversation.status === "resolved",
     human = l.data?.conversation.mode === "human",
@@ -912,20 +1034,35 @@ function LiveChat({
           <h2>Support chat</h2>
           <small>AI-assisted · A person can take over</small>
         </div>
-        {selected && (
-          <button
-            onClick={() => {
-              if (body && !confirm("Discard your draft and start a new chat?"))
-                return;
-              setSelected("");
-              if (!account) setSession(undefined);
-              setBody("");
-              a.setError("");
-            }}
-          >
-            New chat
-          </button>
-        )}
+        <div className="chat-header-actions">
+          {selected && (
+            <button
+              onClick={() => {
+                if (
+                  body &&
+                  !confirm("Discard your draft and start a new chat?")
+                )
+                  return;
+                setSelected("");
+                if (!account) setSession(undefined);
+                setBody("");
+                a.setError("");
+              }}
+            >
+              New chat
+            </button>
+          )}
+          {onClose && (
+            <button
+              type="button"
+              className="chat-close"
+              aria-label="Minimize support chat"
+              onClick={onClose}
+            >
+              ×
+            </button>
+          )}
+        </div>
       </header>
       <div
         className="live-chat-messages"
@@ -950,7 +1087,11 @@ function LiveChat({
               pass your question to the team.
             </p>
             <small>
-              For account-specific help, sign in and submit a ticket.
+              {account
+                ? "You’re signed in. Your conversation is saved to your support account."
+                : brand.ticketsEnabled
+                  ? "For account-specific help, sign in and submit a ticket."
+                  : "General questions don’t need an account. The team may need to verify your identity for account-specific help."}
             </small>
           </div>
         ) : l.data ? (
@@ -962,15 +1103,28 @@ function LiveChat({
               </div>
             ) : human ? (
               <div className="chat-state">
-                Your conversation is with the support team. You can add details
-                while you wait.
+                {waiting
+                  ? "Your message was sent to the support team. Waiting for a person to reply."
+                  : "A person is handling this conversation. You can add details below; the assistant is paused."}
               </div>
             ) : waiting ? (
               <div className="chat-state" role="status">
                 Your message was received. Waiting for a response…
               </div>
             ) : null}
-            <ClosedFeedback identity={session!} id={selected} detail={l.data} />
+            <ClosedFeedback
+              identity={session!}
+              id={selected}
+              detail={l.data}
+              onRefresh={l.reload}
+              onSubmitted={(resolved) => {
+                l.reload();
+                if (!resolved) {
+                  setReopening(true);
+                  requestAnimationFrame(() => composer.current?.focus());
+                }
+              }}
+            />
           </>
         ) : (
           !l.error && <p role="status">Loading conversation…</p>
@@ -993,6 +1147,8 @@ function LiveChat({
       ) : (
         <form className="chat-composer" onSubmit={send}>
           <textarea
+            ref={composer}
+            autoFocus={reopening}
             disabled={a.busy}
             aria-label="Your message"
             placeholder={
@@ -1005,6 +1161,7 @@ function LiveChat({
             onChange={(e) => {
               setBody(e.target.value);
               key.current = crypto.randomUUID();
+              a.setSuccess("");
             }}
             onKeyDown={(e) => {
               if (

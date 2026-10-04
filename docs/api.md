@@ -195,10 +195,31 @@ The staff-only approval objects in conversation detail include `action_name` and
 
 `GET/PUT /v2/workspaces/:ws/workflow` and `POST .../workflow/publish` accept `?channel=default|portal|widget|zendesk` (default: `default`). Each profile has its own optimistic draft revision; `inheritedVersion` identifies a fallback publication. Existing version endpoints use workspace-unique version numbers.
 
-`POST .../conversations/:id/status` accepts `{ "status": "open" | "resolved" }` from the owning customer/visitor only, for native conversations. It preserves takeover and invalidates pending work. Feedback writes require a resolved conversation and its latest delivered assistant/staff reply. Public message reads exclude internal and undelivered replies.
+`POST .../conversations/:id/status` accepts `{ "status": "open" | "resolved" }` from the owning customer/visitor only, for native conversations. It preserves takeover and invalidates pending work. The first feedback write requires a resolved conversation and its latest delivered assistant/staff reply. Native feedback can be sent once per conversation: an identical retry returns the existing row; any changed or additional submission returns 409. Negative resolution feedback reopens native conversations while preserving agent/human mode; linked Zendesk ticket state remains authoritative. Conversation detail includes feedback summaries (resolution, rating, comment, source, timestamps) behind its existing access checks. Staff-only list metadata includes feedback counts and the latest resolution/rating. Public message reads exclude internal and undelivered replies.
 
 First-party portal requests use `X-Fieldkit-Audience: customer` with the verified session to act as that user's workspace contact, including when the user is also staff. It can only reduce privileges and requires a prior `/v2/public/:slug/join`. Widget credentials are channel-bound; anonymous portal sessions are no longer issued. Public portal configuration includes `chatEnabled` and `emailReplies`; `/join` includes the verified account email and portal channel ID.
 
 Administrators use `GET/PUT/DELETE .../ticket-email` for inbound configuration and recent delivery/rejection status. PUT accepts `{ "address": "support@inbound.example.com" }`, replaces credentials, revokes prior reply addresses, and returns the webhook password once. `POST .../ticket-email/:id/retry` explicitly retries an unknown/failed SMTP attempt. Staff conversation details include `emailDeliveries` and `inboundEmails`; customers cannot read these operational records.
 
 `POST /v2/webhooks/email/:workspaceId` accepts Postmark inbound JSON with HTTP Basic Auth. Authenticate before parsing; body limit 256 KiB. See [email setup](customer-support.md) for required fields, ownership, deduplication, and limitations.
+
+### Support availability
+
+`PUT /v2/workspaces/:workspaceId/support-options` accepts `{ "mode": "both" | "tickets" | "chat" | "none" }` and requires the owner role. It atomically sets new-ticket availability on the portal and publication of the widget, preserving channel origins and handoff settings. Enabling chat runs the normal publication readiness checks. The help center publication toggle remains separate. `GET /v2/public/:slug` returns `ticketsEnabled` and `chatEnabled`; disabled tickets are rejected at conversation creation even with an existing customer session. Existing tickets can still receive replies. Disabling chat revokes widget credentials and pauses its automated conversations using the normal unpublish behavior. No database migration is needed; existing portal settings default to allowing tickets.
+
+## Customer directory and grouped staff inbox
+
+All of these resources require a current staff session in the workspace. Customers, widget visitors, and service credentials cannot read them.
+
+| Resource under `/v2/workspaces/:workspaceId` | Method | Behavior |
+| --- | --- | --- |
+| `/inbox` | GET | Full retained inbox, filtered and paginated; defaults to customer grouping. |
+| `/customers` | GET | Searchable customer directory with open/total conversation counts. |
+| `/customers/:id` | GET | Identity, reviewed mappings, and customer support totals. |
+| `/customers/:id/conversations` | GET | Paginated support history; same filters as the inbox, scoped to this customer. |
+| `/customers/:id/notes` | GET | Paginated private customer notes plus internal notes from their conversations. |
+| `/customers/:id/notes` | POST | Add `{body, requestKey}`; exact retries return the same note. No customer message or workflow is created. |
+
+Inbox queries accept `type=all|ticket|chat`, `group=customer|conversation`, `state=all|human|approval|agent|resolved`, `assignee=all|unassigned|<staff ID>`, `q`, optional `contactId`, and one-based `page`. The page size is 40. Grouping happens before pagination; results include `total` (groups or rows), `conversation_total`, counts by status, and grouped customer counts. Ticket type includes Zendesk; chat type follows the widget channel even after handoff. Search matches name, email, or conversation subject, without treating percent signs as wildcards.
+
+The customer directory accepts `q`, `kind=all|verified|visitor`, and `page`; notes accept `page`. Existing `/contacts/:id/mapping` remains the owner/admin-only identity mapping operation. New profile notes are staff-only audit events, are excluded from knowledge retrieval and customer message APIs, and follow the workspace retention period. Deleting a conversation removes its internal-note evidence; customer-wide notes remain until retention or deletion of the customer/workspace. Schema 12 adds only the notes table and query indexes.

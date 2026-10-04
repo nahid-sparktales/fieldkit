@@ -130,11 +130,13 @@ export async function verifyCustomerSupport(staff: Page, customer: Page) {
   await customer.screenshot({
     path: "test-results/ticket-email-mobile.png",
     fullPage: true,
+    animations: "disabled",
   });
   await customer.setViewportSize({ width: 1440, height: 1000 });
   await customer.screenshot({
     path: "test-results/ticket-email-desktop.png",
     fullPage: true,
+    animations: "disabled",
   });
   const def = defaultWorkflow();
   const node = def.nodes.find((n) => n.type === "reply")!;
@@ -176,7 +178,31 @@ export async function verifyCustomerSupport(staff: Page, customer: Page) {
   await customer
     .getByRole("button", { name: "Help center", exact: true })
     .click();
-  await customer.getByRole("button", { name: "Chat now", exact: true }).click();
+  await customer
+    .getByRole("button", { name: "Open support chat", exact: true })
+    .click();
+  const popup = customer.getByRole("dialog", {
+    name: "Support chat",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await expect(
+    popup.getByRole("button", { name: "Minimize support chat", exact: true }),
+  ).toBeFocused();
+  await customer
+    .getByLabel("Your message", { exact: true })
+    .fill("Draft kept while minimized");
+  await customer.getByLabel("Your message", { exact: true }).press("Escape");
+  await expect(popup).toBeHidden();
+  await expect(
+    customer.getByRole("button", { name: "Open support chat", exact: true }),
+  ).toBeFocused();
+  await customer
+    .getByRole("button", { name: "Open support chat", exact: true })
+    .click();
+  await expect(
+    customer.getByLabel("Your message", { exact: true }),
+  ).toHaveValue("Draft kept while minimized");
   await customer
     .getByLabel("Your message", { exact: true })
     .fill("What is the return policy?");
@@ -194,27 +220,152 @@ export async function verifyCustomerSupport(staff: Page, customer: Page) {
     customer.getByRole("heading", { name: "Did this solve your issue?" }),
   ).toBeVisible();
   await customer.reload();
-  await customer.getByRole("button", { name: "Chat now", exact: true }).click();
+  await customer
+    .getByRole("button", { name: "Open support chat", exact: true })
+    .click();
   await expect(
     customer.getByText("This reply uses the live chat workflow.", {
       exact: true,
     }),
   ).toBeVisible();
+  await popup
+    .getByRole("radio", { name: "No, I still need help", exact: true })
+    .check();
+  await popup
+    .getByText("Add an experience rating or comment (optional)")
+    .click();
+  await popup
+    .getByLabel("Feedback comment (optional)")
+    .fill("The answer did not cover my situation.");
+  await popup
+    .getByRole("button", { name: "Send feedback", exact: true })
+    .click();
+  await expect(
+    popup.getByRole("heading", { name: "Feedback sent", exact: true }),
+  ).toBeVisible();
+  await expect(
+    popup.getByRole("button", { name: "Send feedback", exact: true }),
+  ).toHaveCount(0);
+  const composer = popup.getByLabel("Your message", { exact: true });
+  await expect(composer).toBeVisible();
+  await expect(composer).toBeFocused();
+  await composer.fill("Could you explain returns for a gift?");
+  await customer.route(
+    "**/conversations/*/messages",
+    (route) =>
+      route.fulfill({
+        status: 503,
+        json: { error: "Temporary follow-up failure" },
+      }),
+    { times: 1 },
+  );
+  await composer.press("Enter");
+  await expect(
+    popup.getByText("Temporary follow-up failure", { exact: true }),
+  ).toBeVisible();
+  await expect(composer).toHaveValue("Could you explain returns for a gift?");
+  await composer.press("Enter");
+  await expect(
+    popup.getByText("Could you explain returns for a gift?", { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    popup.getByText("This reply uses the live chat workflow.", { exact: true }),
+  ).toHaveCount(2, { timeout: 15000 });
+  await popup.getByRole("button", { name: "End chat", exact: true }).click();
+  await customer.reload();
+  await customer
+    .getByRole("button", { name: "Open support chat", exact: true })
+    .click();
+  await expect(
+    popup.getByRole("heading", { name: "Feedback sent", exact: true }),
+  ).toBeVisible();
+  await expect(
+    popup.getByRole("button", { name: "Send feedback", exact: true }),
+  ).toHaveCount(0);
+  const conversations = await staff.request.get(
+    `/v2/workspaces/${ws}/conversations`,
+  );
+  const chat = (await conversations.json()).conversations.find(
+    (c: any) => c.channel_kind === "widget" && c.feedback_resolved === false,
+  );
+  expect(chat).toBeTruthy();
+  await staff.goto(`/?workspace=${ws}&view=inbox&conversation=${chat.id}`);
+  await staff.getByRole("tab", { name: "Feedback", exact: true }).click();
+  const feedbackPanel = staff.getByRole("region", {
+    name: "Customer feedback",
+    exact: true,
+  });
+  await expect(
+    feedbackPanel.getByText("The answer did not cover my situation.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await staff.screenshot({
+    path: "test-results/inbox-unresolved-feedback.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   await customer.setViewportSize({ width: 390, height: 844 });
   expect(
     await customer.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  const box = await popup.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.y).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  expect(box!.y + box!.height).toBeLessThanOrEqual(844);
   await customer.screenshot({
     path: "test-results/chat-mobile.png",
     fullPage: true,
+    animations: "disabled",
   });
   await customer.setViewportSize({ width: 1440, height: 1000 });
   await customer.screenshot({
     path: "test-results/chat-desktop.png",
     fullPage: true,
+    animations: "disabled",
   });
+  await staff.getByRole("button", { name: "Publish", exact: true }).click();
+  for (const option of [
+    { label: "Tickets only", tickets: true, chat: false },
+    { label: "Chatbot only", tickets: false, chat: true },
+    { label: "Neither", tickets: false, chat: false },
+    { label: "Tickets & chatbot", tickets: true, chat: true },
+  ]) {
+    await staff.getByRole("radio", { name: new RegExp(option.label) }).check();
+    await staff
+      .getByRole("button", { name: "Save support options", exact: true })
+      .click();
+    await expect(
+      staff.getByText("Support options saved.", { exact: true }),
+    ).toBeVisible();
+    await customer.reload();
+    await expect(
+      customer.getByRole("button", { name: "Submit a ticket", exact: true }),
+    ).toHaveCount(option.tickets ? 1 : 0);
+    await expect(
+      customer.getByRole("button", { name: "Open support chat", exact: true }),
+    ).toHaveCount(option.chat ? 1 : 0);
+    await expect(
+      customer.getByRole("heading", { name: "Browse our knowledge" }),
+    ).toBeVisible();
+  }
+  await staff.setViewportSize({ width: 390, height: 844 });
+  await staff.locator(".support-options").scrollIntoViewIfNeeded();
+  expect(
+    await staff.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await staff.screenshot({
+    path: "test-results/support-options-mobile.png",
+    fullPage: false,
+    animations: "disabled",
+  });
+  await staff.setViewportSize({ width: 1440, height: 1000 });
   await staff.getByRole("button", { name: "Knowledge", exact: true }).click();
   await staff.getByRole("button", { name: "Gaps", exact: true }).click();
 }

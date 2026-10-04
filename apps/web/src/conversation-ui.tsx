@@ -63,7 +63,7 @@ export function MessageList({ messages }: { messages: Row[] }) {
               {m.role === "assistant"
                 ? "FieldKit"
                 : m.role === "note"
-                  ? "Internal note"
+                  ? `Internal note${m.author_name ? " · " + m.author_name : ""}`
                   : m.role === "staff"
                     ? "Support team"
                     : "Customer"}

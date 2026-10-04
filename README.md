@@ -23,7 +23,7 @@ Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of t
 - **Test Lab:** repeatable multi-turn suites, fixture-based account/API reads, workflow/model comparisons, immutable run snapshots, separate rules/AI/staff assessments, token caps, and durable cancellation/retry.
 - **Knowledge → Gaps:** grouped unanswered questions, feedback and staff flags; bounded AI analysis, owner opt-in nightly analysis, private FAQ suggestions, and regression-test imports.
 - **Analytics:** native resolution and satisfaction feedback, delivered response times, handoffs/reopens, channel/date filters, conversation drill-down, and purpose-attributed tokens/reservations. Zendesk CSAT imports are read-only and still require real-account release verification. [Quality guide](docs/quality.md).
-- **Workflow:** visually edit the agent's actual LangGraph with draggable steps, outcome connections, customer-account lookup, selected knowledge/FAQs, model instructions, conditions, existing actions, approvals, exact replies, variable templates, and staff handoff. Reuse versioned subflows and Python/JavaScript/API steps with mapped inputs, outputs, and run logs. Save drafts, test routes without executing actions, publish immutable versions, and restore an earlier version as a new draft. See the [workflow guide](docs/workflows.md).
+- **Workflow:** choose a guided step builder with starter templates and plain-language outcome menus, or visually edit the agent's actual LangGraph with draggable steps, outcome connections, customer-account lookup, selected knowledge/FAQs, model instructions, conditions, existing actions, approvals, exact replies, variable templates, and staff handoff. Reuse versioned subflows and Python/JavaScript/API steps with mapped inputs, outputs, and run logs. Save drafts, test routes without executing actions, publish immutable versions, and restore an earlier version as a new draft. See the [workflow guide](docs/workflows.md).
 - Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.
 - Separate Stripe test/live connections, purchase/subscription retrieval, full or partial refunds, and selected-subscription cancellation at period end. Fixed-destination custom APIs with schemas, reviewed customer mappings, exact approvals, automatic limits, durable operation IDs, and outcome lookup.
 - A `/v2` API, event streams, authenticated SDK/CLI/MCP, durable PostgreSQL jobs, a separate worker, health checks, and Docker Compose packaging.
@@ -56,7 +56,7 @@ Proxy the public domain to `127.0.0.1:4317` with streaming enabled. PostgreSQL i
 
 Open the app, register, verify your email, and create the first workspace with `FIELDKIT_SETUP_TOKEN` from `.env`. Invite staff from Team. Connect your model providers in **Connections**, select response and embedding models in **Settings**, add knowledge, approve customer-safe sources, configure actions, and test the agent. Use **Workflow** to customize and publish its graph, then publish a portal/widget or connect Zendesk. Replies initially require staff review; automatic replies are an explicit workspace setting. Account-changing actions initially require approval independently of reply mode.
 
-In **Workflow**, select a step to choose its knowledge, account data, model instructions, or allowed actions. Drag steps and connect their outcomes, save a draft, test its route, and publish a version when ready. Only routes reaching model/embedding steps use model quota. Previews can read a selected verified customer's account and run isolated code, but never perform account writes or send replies. [Full workflow guide →](docs/workflows.md)
+In **Workflow**, choose **Guided steps** for a readable step list and starter templates. Select a step, choose **What happens next?**, or insert a step on an outcome. **Visual graph** provides the canvas; both views edit the same draft, including custom components, account settings, and action approvals. Save a draft, test its route, and publish a version when ready. Only routes reaching model/embedding steps use model quota. Previews can read a selected verified customer's account and run isolated code, but never perform account writes or send replies. [Full workflow guide →](docs/workflows.md)
 
 ## Verification status
 
@@ -81,7 +81,7 @@ For local development, configure PostgreSQL 17 with pgvector, run `npm run migra
 ## Guides
 
 - [Test Lab, knowledge gaps, feedback, and analytics](docs/quality.md)
-- [Visual LangGraph workflow editor](docs/workflows.md)
+- [Guided and visual LangGraph workflow editors](docs/workflows.md)
 - [Custom replies, Python/JavaScript/API steps, subflows, and runner setup](docs/workflow-components.md)
 - [Model providers and self-hosted vLLM](docs/models.md)
 - [Integrations, identities, and custom actions](docs/integrations.md)
@@ -96,4 +96,8 @@ One installation on one server and one agent configuration per workspace are the
 
 ### Ticket support and live chat
 
-The help center separates **Submit a ticket** from **Chat now**. Tickets use a subject, message history, waiting states, and queued email notifications; the live assistant uses the widget channel. Feedback appears only after closure. Choose independent ticket/email, chat, and Zendesk graphs in **Workflow → Channel workflow**. Configure direct email replies and delivery recovery in **Publish → Email support**. See [customer support and email setup](docs/customer-support.md) for SMTP, Postmark inbound, security boundaries, and the local captured-email walkthrough.
+Owners choose **tickets, chatbot, both, or neither** in **Publish → Channels**. The help center separates **Submit a ticket** from the bottom-right **Chat with us** pop-up; articles and existing ticket history remain available when new tickets are turned off. Tickets use a subject, message history, waiting states, and queued email notifications; the live assistant uses the widget channel. Feedback appears only after closure. Choose independent ticket/email, chat, and Zendesk graphs in **Workflow → Channel workflow**. Configure direct email replies and delivery recovery in **Publish → Email support**. See [customer support and email setup](docs/customer-support.md) for SMTP, Postmark inbound, security boundaries, and the local captured-email walkthrough.
+
+The staff inbox includes searchable **Notes** and **Feedback** tabs alongside the message timeline, plus an expanded conversation view. Customers send feedback once after closing a conversation; “still need help” reopens native conversations for follow-up. Internal notes and rejected action proposals do not send customer notifications.
+
+Organize the inbox by **customer** or **conversation**, with **Tickets** and **Chatbot** filters. The separate **Customers** section brings together account identity, support history, private customer notes, and reviewed provider links. Open the same profile from a ticket’s **Customer** tab; **Team** is reserved for staff access.

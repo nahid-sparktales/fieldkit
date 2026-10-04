@@ -1,5 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { verifyCustomerSupport } from "./customer-support-journey.js";
+import { verifyCustomers } from "./customers-journey.js";
+import { verifyGuidedWorkflow } from "./guided-workflow-journey.js";
 import { verifyInbox } from "./inbox-journey.js";
 import { readFile } from "node:fs/promises";
 import {
@@ -647,6 +649,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     fullPage: true,
   });
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
+  await page.getByLabel("Group inbox by").selectOption("conversation");
+  await page
+    .getByRole("region", { name: "Conversation queue" })
+    .getByRole("button", { name: /What is your return policy/ })
+    .click();
   await expect(
     page.getByRole("heading", { name: "What is your return policy?" }).last(),
   ).toBeVisible();
@@ -665,13 +672,19 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .getByLabel("Experience (optional)", { exact: true })
     .selectOption("good");
   await customer
-    .getByRole("button", { name: "Save feedback", exact: true })
+    .getByRole("button", { name: "Send feedback", exact: true })
     .click();
   await expect(
-    customer.getByText("Thank you. Your feedback has been saved.", {
-      exact: true,
-    }),
+    customer.getByText(
+      "Thank you. Your feedback has been sent to the support team.",
+      {
+        exact: true,
+      },
+    ),
   ).toBeVisible();
+  await expect(
+    customer.getByRole("button", { name: "Send feedback", exact: true }),
+  ).toHaveCount(0);
   await page.getByRole("button", { name: "Reopen", exact: true }).click();
   await page.getByRole("button", { name: "Take over", exact: true }).click();
   await expect(
@@ -1059,6 +1072,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .getByRole("button", { name: "Clear filters", exact: true })
     .click();
   await page
+    .getByRole("region", { name: "Conversation queue" })
+    .locator(".conversation-card")
+    .first()
+    .click();
+  await page
     .getByRole("tab", { name: "Activity & tools", exact: true })
     .click();
   await page
@@ -1083,6 +1101,8 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     fullPage: true,
   });
   await verifyCustomerSupport(page, customer);
+  await verifyCustomers(page, customer);
+  await verifyGuidedWorkflow(page);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(

@@ -256,6 +256,8 @@ export async function createApp(
             appearance,
             origins: channel.settings.origins ?? [],
             channelId: channel.id,
+            ticketsEnabled:
+              !!portal && portal.settings.ticketsEnabled !== false,
           });
           return;
         }
@@ -395,6 +397,7 @@ export async function createApp(
             brandColor: appearance.config.accentColor,
             appearance,
             channelId: portal.id,
+            ticketsEnabled: portal.settings.ticketsEnabled !== false,
             chatEnabled: !!(await app.db.one(
               "SELECT id FROM channels WHERE workspace_id=$1 AND kind='widget' AND published",
               [ws.id],
@@ -528,6 +531,10 @@ export async function createApp(
               [ws],
             ),
           });
+          return;
+        }
+        if (suffix === "/support-options" && method === "PUT") {
+          json(res, await app.updateSupportOptions(p, await body(req)));
           return;
         }
         if (suffix === "/settings" && method === "PUT") {
@@ -742,6 +749,48 @@ export async function createApp(
           });
           return;
         }
+        if (suffix === "/inbox" && method === "GET") {
+          json(
+            res,
+            await app.customers.inbox(p, Object.fromEntries(url.searchParams)),
+          );
+          return;
+        }
+        if (suffix === "/customers" && method === "GET") {
+          json(
+            res,
+            await app.customers.list(p, Object.fromEntries(url.searchParams)),
+          );
+          return;
+        }
+        m = suffix.match(/^\/customers\/([^/]+)(?:\/(notes|conversations))?$/);
+        if (m && method === "GET") {
+          if (m[2] === "notes")
+            json(
+              res,
+              await app.customers.notes(
+                p,
+                m[1],
+                Object.fromEntries(url.searchParams),
+              ),
+            );
+          else if (m[2] === "conversations") {
+            await app.customers.contact(p, m[1]);
+            json(
+              res,
+              await app.customers.inbox(p, {
+                ...Object.fromEntries(url.searchParams),
+                contactId: m[1],
+                group: "conversation",
+              }),
+            );
+          } else json(res, await app.customers.detail(p, m[1]));
+          return;
+        }
+        if (m?.[2] === "notes" && method === "POST") {
+          json(res, await app.customers.addNote(p, m[1], await body(req)), 201);
+          return;
+        }
         m = suffix.match(/^\/contacts\/([^/]+)\/mapping$/);
         if (m && method === "PUT") {
           requireAdmin(p);
@@ -858,7 +907,10 @@ export async function createApp(
             conversations: await app.db.rows(
               `SELECT c.*,ct.name customer_name,ch.kind channel_kind,
                  latest.body last_message,latest.role last_message_role,
-                 CASE WHEN $2::boolean THEN approval.expires_at END approval_expires_at
+                 CASE WHEN $2::boolean THEN approval.expires_at END approval_expires_at,
+                 CASE WHEN $2::boolean THEN (SELECT count(*)::int FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id) END feedback_count,
+                 CASE WHEN $2::boolean THEN (SELECT resolved FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id ORDER BY updated_at DESC LIMIT 1) END feedback_resolved,
+                 CASE WHEN $2::boolean THEN (SELECT rating FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id ORDER BY updated_at DESC LIMIT 1) END feedback_rating
                FROM conversations c
                JOIN contacts ct ON ct.id=c.contact_id AND ct.workspace_id=c.workspace_id
                LEFT JOIN channels ch ON ch.id=c.channel_id AND ch.workspace_id=c.workspace_id
@@ -1025,11 +1077,19 @@ export async function createApp(
                 )?.kind,
               },
               messages: await app.db.rows(
-                "SELECT * FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR (role NOT IN ('note','system') AND (role='customer' OR delivered_at IS NOT NULL))) ORDER BY created_at,id",
+                `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY m.created_at,m.id`,
+                [ws, id, staff(p)],
+              ),
+              feedback: await app.db.rows(
+                "SELECT id,message_id,source,resolved,rating,comment,answered_at,updated_at FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR source='native') ORDER BY updated_at DESC",
                 [ws, id, staff(p)],
               ),
               ...(staff(p)
                 ? {
+                    customer: await app.db.one(
+                      "SELECT id,name,email,verified FROM contacts WHERE workspace_id=$1 AND id=$2",
+                      [ws, conv.contact_id],
+                    ),
                     emailDeliveries: await app.db.rows(
                       "SELECT id,status,error,created_at,sent_at FROM ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
                       [ws, id],

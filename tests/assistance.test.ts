@@ -337,12 +337,10 @@ test("workflows reject other tenants, lost roles, stale conversations and fabric
     conversationId: w.conv.id,
   }))!;
   model.assistHook = async () => {
-    await app.message(
-      w.owner,
-      w.conv.id,
-      { body: "New detail", requestKey: uid() },
-      true,
-    );
+    await app.message(w.customer, w.conv.id, {
+      body: "New detail",
+      requestKey: uid(),
+    });
   };
   await app.assistance.advance(w.ws.id, stale.id);
   assert.equal((await task(stale.id))!.status, "failed");

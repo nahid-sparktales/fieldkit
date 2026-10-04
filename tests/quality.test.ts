@@ -272,51 +272,49 @@ test("knowledge changes, revoked access, cancellation and interrupted attempts c
     /administrator access/,
   );
 });
-test("feedback updates preserve history without inflating counts; follow-ups invalidate resolution", async () => {
+test("feedback is sent once per conversation with idempotent retries; follow-ups invalidate confirmation", async () => {
   const w = await setup(),
     { c, m } = await answer(w);
   assert.ok(m.delivered_at);
-  await assert.rejects(
-    app.quality.feedback(w.customer, c.id, { messageId: m.id, resolved: true }),
-    /closed/,
-  );
-  await app.customerStatus(w.customer, c.id, "resolved");
-  await app.quality.feedback(w.customer, c.id, {
-    messageId: m.id,
-    resolved: true,
-    rating: "good",
-  });
-  await app.quality.feedback(w.customer, c.id, {
+  const input = {
     messageId: m.id,
     resolved: true,
     rating: "good",
     comment: "Thanks",
-  });
+  };
+  await assert.rejects(app.quality.feedback(w.customer, c.id, input), /closed/);
+  await app.customerStatus(w.customer, c.id, "resolved");
+  const [first, retry] = await Promise.all([
+    app.quality.feedback(w.customer, c.id, input),
+    app.quality.feedback(w.customer, c.id, input),
+  ]);
+  assert.equal(first.id, retry.id);
+  await assert.rejects(
+    app.quality.feedback(w.customer, c.id, { ...input, resolved: false }),
+    /already been sent/,
+  );
+  const feedback = await app.quality.feedback(w.customer, c.id);
+  assert.equal(feedback.length, 1);
+  assert.equal(feedback[0].raw.history.length, 1);
+  assert.equal(
+    (
+      await app.db.rows(
+        "SELECT id FROM events WHERE conversation_id=$1 AND kind='feedback.submitted'",
+        [c.id],
+      )
+    ).length,
+    1,
+  );
   let metrics = await app.quality.analytics(w.owner, {});
   assert.equal(metrics.totals!.confirmed_resolution, 1);
   assert.equal(metrics.satisfaction[0].rated, 1);
-  assert.equal(
-    (await app.quality.feedback(w.customer, c.id))[0].raw.history.length,
-    2,
-  );
-  await app.quality.feedback(w.customer, c.id, {
-    messageId: m.id,
-    resolved: false,
-    rating: "bad",
-  });
-  await app.quality.feedback(w.customer, c.id, {
-    messageId: m.id,
-    resolved: false,
-    rating: "bad",
-  });
-  assert.equal((await app.quality.gaps(w.owner))[0].occurrences, 1);
   await app.message(w.customer, c.id, {
     body: "One more issue",
     requestKey: uid(),
   });
   metrics = await app.quality.analytics(w.owner, {});
   assert.equal(metrics.totals!.confirmed_resolution, 0);
-  assert.equal(metrics.satisfaction[0].bad, 1);
+  assert.equal(metrics.satisfaction[0].good, 1);
   await app.control(w.owner, c.id, { status: "resolved" });
   await app.control(w.owner, c.id, { status: "open" });
   metrics = await app.quality.analytics(w.owner, {});
@@ -324,22 +322,68 @@ test("feedback updates preserve history without inflating counts; follow-ups inv
   assert.equal(metrics.totals!.staff_resolved, 1);
   assert.equal(metrics.totals!.confirmed_resolution, 0);
   const other = await setup();
-  await assert.rejects(
-    app.quality.feedback(other.customer, c.id, {
-      messageId: m.id,
-      resolved: true,
-    }),
-  );
+  await assert.rejects(app.quality.feedback(other.customer, c.id, input));
   await assert.rejects(
     app.quality.feedback(
       { ...w.customer, contactId: other.customer.contactId },
       c.id,
-      { messageId: m.id, resolved: true },
+      input,
     ),
   );
   await assert.rejects(
-    app.quality.feedback(w.owner, c.id, { messageId: m.id, resolved: true }),
+    app.quality.feedback(w.owner, c.id, input),
     /Only the customer/,
+  );
+});
+test("unresolved feedback reopens once without running a turn, and the follow-up receives an answer", async () => {
+  const w = await setup(),
+    { c, m } = await answer(w);
+  await app.customerStatus(w.customer, c.id, "resolved");
+  const input = {
+    messageId: m.id,
+    resolved: false,
+    rating: "bad",
+    comment: "Please help",
+  };
+  await app.quality.feedback(w.customer, c.id, input);
+  await app.quality.feedback(w.customer, c.id, input);
+  assert.deepEqual(
+    await app.db.one("SELECT status,mode FROM conversations WHERE id=$1", [
+      c.id,
+    ]),
+    { status: "open", mode: "agent" },
+  );
+  assert.equal(
+    (await app.db.rows("SELECT id FROM runs WHERE conversation_id=$1", [c.id]))
+      .length,
+    1,
+  );
+  assert.equal((await app.quality.gaps(w.owner))[0].occurrences, 1);
+  await app.message(w.customer, c.id, {
+    body: "What about returns?",
+    requestKey: uid(),
+  });
+  const run = (await app.db.one(
+    "SELECT id FROM runs WHERE conversation_id=$1 ORDER BY created_at DESC LIMIT 1",
+    [c.id],
+  ))!;
+  await app.agent.advance(w.ws.id, run.id);
+  const replies = await app.db.rows(
+    "SELECT id FROM messages WHERE conversation_id=$1 AND role='assistant' AND delivered_at IS NOT NULL ORDER BY created_at",
+    [c.id],
+  );
+  assert.equal(replies.length, 2);
+  await app.customerStatus(w.customer, c.id, "resolved");
+  await assert.rejects(
+    app.quality.feedback(w.customer, c.id, {
+      ...input,
+      messageId: replies[1].id,
+    }),
+    /already been sent/,
+  );
+  assert.equal(
+    (await app.quality.analytics(w.owner, {})).satisfaction[0].bad,
+    1,
   );
 });
 test("gap analysis is incremental, grounded and private; merges and resolution require staff decisions", async () => {
