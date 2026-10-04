@@ -862,3 +862,51 @@ td select {
     animation: none;
   }
 }
+
+/* Locally bundled provider marks retain their original proportions. */
+.provider-logo {
+  background: #fff;
+  color: #253d33;
+  border: 1px solid #e1e8e3;
+}
+.provider-logo img,
+.provider-logo svg {
+  display: block;
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+}
+.google-setup {
+  border: 1px solid #dbe5de;
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.google-setup h3 {
+  margin-top: 0;
+  font-size: 15px;
+}
+.google-setup ul {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.google-setup li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.google-setup p {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.google-setup code {
+  overflow-wrap: anywhere;
+}
+.google-setup summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}

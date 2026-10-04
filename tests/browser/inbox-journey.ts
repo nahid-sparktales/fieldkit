@@ -163,14 +163,60 @@ export async function verifyInbox(page: Page, customer: Page) {
     fullPage: true,
   });
   const thread = page.getByRole("region", { name: "Selected conversation" });
-  const originalWidth = (await thread.boundingBox())!.width;
+  const composerBox = (await page.locator(".reply-form").boundingBox())!;
+  const transcriptBox = (await page
+    .locator("#ticket-panel-conversation")
+    .boundingBox())!;
+  expect(composerBox.height).toBeLessThan(120);
+  expect(transcriptBox.height).toBeGreaterThan(composerBox.height * 1.5);
+  await reply.focus();
+  expect(
+    Math.abs(
+      (await page.locator(".reply-form").boundingBox())!.height -
+        composerBox.height,
+    ),
+  ).toBeLessThan(1);
+  const size = page.getByRole("slider", {
+    name: "Conversation size",
+    exact: true,
+  });
+  await size.fill("50");
+  const compactHeight = (await thread.boundingBox())!.height;
+  await size.focus();
+  await size.press("End");
+  await expect(size).toHaveValue("80");
+  expect((await thread.boundingBox())!.height).toBeGreaterThan(compactHeight);
+  await size.fill("70");
+  const originalBox = (await thread.boundingBox())!;
+  const queueBox = (await queue.boundingBox())!;
+  expect(queueBox.y).toBeGreaterThanOrEqual(
+    originalBox.y + originalBox.height - 1,
+  );
+  expect(Math.abs(queueBox.width - originalBox.width)).toBeLessThan(3);
+  await expect(
+    page.getByRole("button", { name: "Mark as unread", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Mark as unread", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Mark as read", exact: true }),
+  ).toBeVisible();
+  const sections = queue.getByRole("group", { name: "Inbox sections" });
+  await sections.getByRole("button", { name: /^Unread/ }).click();
+  await expect(original).toBeVisible();
+  await page.getByRole("button", { name: "Mark as read", exact: true }).click();
+  await expect(original).toHaveCount(0);
+  await sections.getByRole("button", { name: /^Read / }).click();
+  await expect(original).toBeVisible();
+  await sections.getByRole("button", { name: /^Open/ }).click();
   await reply.fill("Draft while expanded");
   await page
     .getByRole("button", { name: "Expand conversation", exact: true })
     .click();
   await expect(queue).toBeHidden();
-  expect((await thread.boundingBox())!.width).toBeGreaterThan(
-    originalWidth + 200,
+  expect((await thread.boundingBox())!.height).toBeGreaterThan(
+    originalBox.height + 200,
   );
   await expect(reply).toHaveValue("Draft while expanded");
   await page.screenshot({
@@ -199,6 +245,7 @@ export async function verifyInbox(page: Page, customer: Page) {
   await page.screenshot({
     path: "test-results/inbox-mobile-queue.png",
     fullPage: true,
+    animations: "disabled",
   });
   await shipping.click();
   await expect(reply).toHaveValue("Shipping draft kept separately");

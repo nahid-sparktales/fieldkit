@@ -3,6 +3,11 @@ import assert from "node:assert/strict";
 import { Platform } from "../packages/platform/src/platform.js";
 import { uid } from "../packages/platform/src/db.js";
 import {
+  customerMessageCursor,
+  inboxReadState,
+  setInboxRead,
+} from "../packages/platform/src/inbox-read.js";
+import {
   testConfig,
   resetDatabase,
   workspace,
@@ -20,6 +25,178 @@ before(async () => {
   await app.migrate();
 });
 after(() => app.close());
+test("inbox read markers are personal snapshots, preserve closed state, and reject unauthorized or invalid acknowledgements", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  const colleague = {
+    ...w.owner,
+    userId: "other-reader",
+    role: "agent" as const,
+  };
+  await app.db.pool.query(
+    "INSERT INTO memberships(workspace_id,user_id,role) VALUES($1,$2,'agent')",
+    [w.ws.id, colleague.userId],
+  );
+  const [ticket, closed] = await seed(w, 2);
+  await app.db.pool.query(
+    "UPDATE conversations SET status='resolved' WHERE id=$1",
+    [closed.id],
+  );
+  const insert = async (role = "customer") => {
+    const m = await app.db.one(
+      "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key) VALUES($1,$2,$3,$4,'Read receipt test',$1) RETURNING *",
+      [uid(), w.ws.id, ticket.id, role],
+    );
+    return m!;
+  };
+  const first = await insert();
+  await insert("note");
+  assert.equal(
+    customerMessageCursor(
+      await app.db.rows("SELECT * FROM messages WHERE conversation_id=$1", [
+        ticket.id,
+      ]),
+    ),
+    first.inbox_sequence,
+  );
+  const before = await app.db.one(
+    "SELECT revision,status,mode,updated_at FROM conversations WHERE id=$1",
+    [ticket.id],
+  );
+  assert.deepEqual((await app.customers.inbox(w.owner, {}))!.section_counts, {
+    all: 2,
+    open: 1,
+    unread: 1,
+    read: 0,
+    closed: 1,
+  });
+  const second = await insert();
+  assert.equal(
+    (
+      await setInboxRead(app.db, w.owner, ticket.id, {
+        read: true,
+        cursor: first.inbox_sequence,
+      })
+    ).unread,
+    true,
+  );
+  assert.equal(
+    (
+      await setInboxRead(app.db, w.owner, ticket.id, {
+        read: true,
+        cursor: second.inbox_sequence,
+      })
+    ).unread,
+    false,
+  );
+  await setInboxRead(app.db, w.owner, ticket.id, {
+    read: true,
+    cursor: first.inbox_sequence,
+  });
+  assert.equal(
+    (await inboxReadState(app.db, w.owner, ticket.id, second.inbox_sequence))
+      .unread,
+    false,
+  );
+  assert.equal(
+    (await inboxReadState(app.db, colleague, ticket.id, second.inbox_sequence))
+      .unread,
+    true,
+  );
+  assert.equal(
+    (await app.customers.inbox(w.owner, { section: "read" }))!
+      .conversation_total,
+    1,
+  );
+  assert.equal(
+    (await app.customers.inbox(colleague, { section: "unread" }))!
+      .conversation_total,
+    1,
+  );
+  await setInboxRead(app.db, w.owner, closed.id, { read: true, cursor: "0" });
+  assert.equal(
+    (await app.customers.inbox(w.owner, { section: "read" }))!
+      .conversation_total,
+    1,
+  );
+  assert.equal(
+    (await app.customers.inbox(w.owner, { section: "closed" }))!
+      .conversation_total,
+    1,
+  );
+  await setInboxRead(app.db, w.owner, ticket.id, { read: false });
+  assert.equal(
+    (await app.customers.inbox(w.owner, { section: "unread" }))!
+      .conversation_total,
+    1,
+  );
+  assert.deepEqual(
+    await app.db.one(
+      "SELECT revision,status,mode,updated_at FROM conversations WHERE id=$1",
+      [ticket.id],
+    ),
+    before,
+  );
+  for (const principal of [
+    w.customer,
+    { ...w.owner, role: "service" as const },
+    other.owner,
+  ]) {
+    await assert.rejects(
+      setInboxRead(app.db, principal, ticket.id, { read: false }),
+      /Staff access|not found/i,
+    );
+  }
+  for (const cursor of [
+    "abc",
+    "-1",
+    "9223372036854775808",
+    String(BigInt(second.inbox_sequence) + 1000n),
+  ]) {
+    await assert.rejects(
+      setInboxRead(app.db, w.owner, ticket.id, { read: true, cursor }),
+    );
+  }
+  for (const table of ["runs", "operations", "deliveries", "ticket_emails"]) {
+    assert.equal(
+      (
+        await app.db.rows(`SELECT id FROM ${table} WHERE workspace_id=$1`, [
+          w.ws.id,
+        ])
+      ).length,
+      0,
+    );
+  }
+  await setInboxRead(app.db, colleague, ticket.id, {
+    read: true,
+    cursor: second.inbox_sequence,
+  });
+  await app.db.pool.query(
+    "DELETE FROM memberships WHERE workspace_id=$1 AND user_id=$2",
+    [w.ws.id, colleague.userId],
+  );
+  assert.equal(
+    (
+      await app.db.rows(
+        "SELECT * FROM conversation_reads WHERE workspace_id=$1 AND user_id=$2",
+        [w.ws.id, colleague.userId],
+      )
+    ).length,
+    0,
+  );
+  await app.db.pool.query("DELETE FROM conversations WHERE workspace_id=$1", [
+    w.ws.id,
+  ]);
+  assert.equal(
+    (
+      await app.db.rows(
+        "SELECT * FROM conversation_reads WHERE workspace_id=$1",
+        [w.ws.id],
+      )
+    ).length,
+    0,
+  );
+});
 async function seed(
   w: Awaited<ReturnType<typeof workspace>>,
   count: number,

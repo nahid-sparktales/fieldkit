@@ -31,6 +31,7 @@ export function InboxQueue({
     [query, setQuery] = useState(""),
     [search, setSearch] = useState(""),
     [status, setStatus] = useState("all"),
+    [section, setSection] = useState("open"),
     [assignment, setAssignment] = useState("all"),
     [page, setPage] = useState(1),
     [expanded, setExpanded] = useState("");
@@ -52,6 +53,7 @@ export function InboxQueue({
     group,
     q: search,
     state: status,
+    section,
     assignee: assignment,
     page: String(page),
   }).toString();
@@ -77,6 +79,29 @@ export function InboxQueue({
   const rows: Row[] = l.data?.conversations ?? [];
   return (
     <>
+      <div className="inbox-sections" role="group" aria-label="Inbox sections">
+        {[
+          ["open", "Open"],
+          ["unread", "Unread"],
+          ["read", "Read"],
+          ["closed", "Closed"],
+          ["all", "All conversations"],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            aria-pressed={section === key}
+            onClick={() => {
+              change(setSection, key);
+              setStatus("all");
+            }}
+          >
+            {label} <span>{l.data?.section_counts?.[key] ?? "–"}</span>
+          </button>
+        ))}
+        <span className="read-explainer">
+          Read status is just for you · Closed means resolved
+        </span>
+      </div>
       <div className="inbox-filters">
         <div
           className="inbox-types"
@@ -136,7 +161,12 @@ export function InboxQueue({
         <select
           aria-label="Inbox status"
           value={status}
-          onChange={(e) => change(setStatus, e.target.value)}
+          onChange={(e) => {
+            change(setStatus, e.target.value);
+            if (e.target.value === "resolved") setSection("closed");
+            else if (section === "closed" && e.target.value !== "all")
+              setSection("open");
+          }}
         >
           <option value="all">
             All statuses ·{" "}
@@ -192,7 +222,14 @@ export function InboxQueue({
                   {(c.customer_name || "V")[0]}
                 </span>
                 <span className="customer-group-info">
-                  <strong>{c.customer_name || "Visitor"}</strong>
+                  <strong>
+                    {c.customer_name || "Visitor"}
+                    {c.group_unread > 0 && (
+                      <span className="unread-label">
+                        {c.group_unread} unread
+                      </span>
+                    )}
+                  </strong>
                   <span>
                     {c.customer_email ||
                       `Visitor · ${c.contact_id.slice(0, 8)}`}
@@ -234,7 +271,7 @@ export function InboxQueue({
                   selected={selected}
                   drafts={drafts}
                   onSelect={onSelect}
-                  version={`${version}:${c.updated_at}:${c.group_count}`}
+                  version={`${version}:${c.updated_at}:${c.group_count}:${c.group_unread}`}
                 />
               )}
             </section>
@@ -250,6 +287,7 @@ export function InboxQueue({
                 setSearch("");
                 setType("all");
                 setStatus("all");
+                setSection("open");
                 setAssignment("all");
                 setPage(1);
               }}

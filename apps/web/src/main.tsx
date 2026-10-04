@@ -12,6 +12,8 @@ const AnalyticsPage = React.lazy(() =>
 import { Portal } from "./Portal.js";
 import { MessageList, useConversationEvents } from "./conversation-ui.js";
 import { NotesPanel, FeedbackPanel, feedbackLabel } from "./InboxInsights.js";
+import { ConnectorLogo } from "./ConnectorLogo.js";
+import { InboxReadControl } from "./InboxReadControl.js";
 import { InboxQueue } from "./InboxQueue.js";
 import { CustomerProfile, CustomersPage } from "./CustomersPage.js";
 import { appLink } from "./customer-ui.js";
@@ -46,6 +48,7 @@ import { LoadingState, PreviewDialog } from "./ui.js";
 import "./refinements.css";
 import "./inbox.css";
 import "./customers.css";
+import "./inbox-layout.css";
 import {
   inboxStates,
   inboxState,
@@ -1026,6 +1029,7 @@ function Inbox({
   const [summary, setSummary] = useState<Row>();
   const [showDetail, setShowDetail] = useState(Boolean(selected)),
     [wide, setWide] = useState(false),
+    [conversationSize, setConversationSize] = useState(70),
     [version, setVersion] = useState(0);
   const listRef = useRef<HTMLElement>(null);
   const members = useLoad(() => api(ws, "/members"), [ws]);
@@ -1042,14 +1046,32 @@ function Inbox({
   };
   return (
     <div
-      className={`inbox-workspace ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
+      className={`inbox-workspace inbox-stacked ${selected ? "has-selection" : "no-selection"} ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
+      style={
+        {
+          "--viewer-fr": `${conversationSize / (100 - conversationSize)}fr`,
+        } as React.CSSProperties
+      }
     >
       <header className="inbox-heading">
         <div>
           <h1>Inbox</h1>
-          <p>Organize by customer. Keep every conversation in view.</p>
+          <p>Read and reply above. Find the next conversation below.</p>
         </div>
         <div className="inbox-view-controls">
+          {selected && !wide && (
+            <label className="inbox-size-control">
+              <span>Conversation size</span>
+              <input
+                type="range"
+                min="50"
+                max="80"
+                step="5"
+                value={conversationSize}
+                onChange={(e) => setConversationSize(Number(e.target.value))}
+              />
+            </label>
+          )}
           <button
             disabled={!selected}
             className="queue-width-toggle"
@@ -1064,29 +1086,6 @@ function Inbox({
         </div>
       </header>
       <div className="inbox">
-        <section
-          className="conversation-list"
-          aria-label="Conversation queue"
-          ref={listRef}
-        >
-          <InboxQueue
-            ws={ws}
-            selected={selected}
-            members={members.data?.members ?? []}
-            drafts={drafts}
-            version={version}
-            onSelect={(c) => {
-              setSelected(c.id);
-              setSummary(c);
-              setShowDetail(true);
-              history.replaceState(
-                {},
-                "",
-                `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
-              );
-            }}
-          />
-        </section>
         {selected ? (
           <InboxConversation
             key={selected}
@@ -1126,6 +1125,29 @@ function Inbox({
             </Empty>
           </section>
         )}
+        <section
+          className="conversation-list"
+          aria-label="Conversation queue"
+          ref={listRef}
+        >
+          <InboxQueue
+            ws={ws}
+            selected={selected}
+            members={members.data?.members ?? []}
+            drafts={drafts}
+            version={version}
+            onSelect={(c) => {
+              setSelected(c.id);
+              setSummary(c);
+              setShowDetail(true);
+              history.replaceState(
+                {},
+                "",
+                `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
+              );
+            }}
+          />
+        </section>
       </div>
     </div>
   );
@@ -1293,6 +1315,13 @@ function InboxConversation({
         </button>
       </header>
       <div className="conversation-controls">
+        <InboxReadControl
+          ws={ws}
+          id={id}
+          state={detail.data.read_state}
+          active={showDetail && tab === "conversation"}
+          onChange={reloadQueue}
+        />
         <InboxStatus
           conversation={{
             ...conv,
@@ -3148,41 +3177,35 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
   const providers = [
     ...Object.entries(MODEL_PROVIDERS).map(([id, p]) => ({
       id,
-      letter: p.name[0],
       name: p.name,
       description: p.description,
     })),
     {
       id: "zendesk",
-      letter: "Z",
       name: "Zendesk",
       description:
         "Bring AI capabilities to your existing helpdesk and conversations.",
     },
     {
       id: "stripe_test",
-      letter: "S",
       name: "Stripe test",
       description:
         "Read verified billing records and perform approved account actions.",
     },
     {
       id: "stripe_live",
-      letter: "S",
       name: "Stripe live",
       description:
         "A separate live connection. Actions must explicitly select live mode.",
     },
     {
       id: "notion",
-      letter: "N",
       name: "Notion",
       description:
         "Keep the pages you choose connected to your knowledge library.",
     },
     {
       id: "google",
-      letter: "G",
       name: "Google Drive",
       description: "Import selected files without opening your entire Drive.",
     },
@@ -3227,9 +3250,7 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                   disabled={a.busy}
                   onClick={() => setSelected(provider.id)}
                 >
-                  <span className={`provider-logo ${provider.id}`}>
-                    {provider.letter}
-                  </span>
+                  <ConnectorLogo provider={provider.id} />
                   <h3>{provider.name}</h3>
                   <p>{provider.description}</p>
                   <Badge value={row?.status ?? "not connected"} />
@@ -3399,6 +3420,52 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                     <span>.zendesk.com</span>
                   </div>
                 </Field>
+              )}
+              {selected === "google" && l.data?.googleSetup && (
+                <div className="google-setup">
+                  <h3>Google Drive setup</h3>
+                  <ul>
+                    {Object.entries(l.data.googleSetup.checks).map(
+                      ([label, ready]) => (
+                        <li key={label}>
+                          <span
+                            className={`badge ${ready ? "good" : "warning"}`}
+                          >
+                            {ready ? "Configured" : "Missing"}
+                          </span>{" "}
+                          {label}
+                        </li>
+                      ),
+                    )}
+                  </ul>
+                  <p>
+                    Connect your account, then choose individual files in
+                    Knowledge. Only selected files are available to FieldKit.
+                  </p>
+                  <details>
+                    <summary>Server setup details</summary>
+                    <p>
+                      Enable Google Drive API and Google Picker API in the same
+                      Cloud project. Set the OAuth web client and restricted
+                      Picker key in your server environment, then restart the
+                      app and worker.
+                    </p>
+                    <p>
+                      Authorized origin:{" "}
+                      <code>{l.data.googleSetup.origin}</code>
+                    </p>
+                    <p>
+                      Redirect URI:{" "}
+                      <code>{l.data.googleSetup.callbackUrl}</code>
+                    </p>
+                    <p>
+                      <code>GOOGLE_CLIENT_ID</code>,{" "}
+                      <code>GOOGLE_CLIENT_SECRET</code>,{" "}
+                      <code>GOOGLE_PICKER_KEY</code>, <code>GOOGLE_APP_ID</code>{" "}
+                      (numeric project number).
+                    </p>
+                  </details>
+                </div>
               )}
               <p className="muted">
                 {l.data?.oauth[selected]

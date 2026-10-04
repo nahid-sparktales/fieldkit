@@ -1,5 +1,6 @@
 import { CUSTOMER_SUPPORT_SCHEMA } from "./customer-support-schema.js";
 import { CUSTOMER_SCHEMA } from "./customer-schema.js";
+import { INBOX_READ_SCHEMA } from "./inbox-read.js";
 import { QUALITY_SCHEMA } from "./quality-schema.js";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { PgBoss } from "pg-boss";
@@ -88,8 +89,9 @@ export class Database {
     await this.pool.query(QUALITY_SCHEMA);
     await this.pool.query(CUSTOMER_SUPPORT_SCHEMA);
     await this.pool.query(CUSTOMER_SCHEMA);
+    await this.pool.query(INBOX_READ_SCHEMA);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(12) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(13) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();

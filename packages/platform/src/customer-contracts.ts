@@ -4,6 +4,7 @@ export const InboxQuery = z
   .object({
     type: z.enum(["all", "ticket", "chat"]).default("all"),
     group: z.enum(["conversation", "customer"]).default("customer"),
+    section: z.enum(["all", "open", "unread", "read", "closed"]).default("all"),
     state: z
       .enum(["all", "human", "approval", "agent", "resolved"])
       .default("all"),

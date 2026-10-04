@@ -83,6 +83,40 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   ).toBeVisible();
 
   await page.getByRole("button", { name: "Connections", exact: true }).click();
+  await expect(page.locator(".provider-logo img")).toHaveCount(11);
+  expect(
+    await page
+      .locator(".provider-logo img")
+      .evaluateAll((images) =>
+        images.every(
+          (image) =>
+            (image as HTMLImageElement).complete &&
+            (image as HTMLImageElement).naturalWidth > 0,
+        ),
+      ),
+  ).toBe(true);
+  await page
+    .locator(".connection-card")
+    .filter({
+      has: page.getByRole("heading", { name: "Google Drive", exact: true }),
+    })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Google Drive setup", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Connect with Google ↗", exact: true }),
+  ).toBeDisabled();
+  await expect(page.locator(".google-setup .badge.warning")).toHaveCount(3);
+  await page.screenshot({
+    path: "test-results/connection-logos.png",
+    fullPage: true,
+  });
+  await page
+    .locator(".connection-card")
+    .filter({ has: page.getByRole("heading", { name: "OpenAI", exact: true }) })
+    .click();
+
   await page
     .getByLabel("API key", { exact: true })
     .fill("test-key-placeholder");

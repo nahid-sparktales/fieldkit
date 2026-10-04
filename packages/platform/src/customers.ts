@@ -41,17 +41,24 @@ export class Customers {
       d.state,
       PAGE_SIZE,
       (d.page - 1) * PAGE_SIZE,
+      p.userId,
+      d.section,
     ];
     const cte = `WITH base AS (
       SELECT c.*,ct.name customer_name,ct.email customer_email,ch.kind channel_kind,
-      ${typeSQL} conversation_type,${stateSQL} inbox_state
+      ${typeSQL} conversation_type,${stateSQL} inbox_state,
+      (cr.user_id IS NULL OR coalesce(latest.cursor,0)>cr.customer_sequence) unread
       FROM conversations c JOIN contacts ct ON ct.workspace_id=c.workspace_id AND ct.id=c.contact_id
       LEFT JOIN channels ch ON ch.workspace_id=c.workspace_id AND ch.id=c.channel_id
+      LEFT JOIN conversation_reads cr ON cr.workspace_id=c.workspace_id AND cr.conversation_id=c.id AND cr.user_id=$9
+      LEFT JOIN LATERAL (SELECT max(inbox_sequence) cursor FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='customer') latest ON true
       WHERE c.workspace_id=$1 AND ($2='all' OR ${typeSQL}=$2)
       AND ($3='all' OR ($3='unassigned' AND c.assigned_to IS NULL) OR c.assigned_to=$3)
       AND ($4='' OR strpos(lower(c.subject||' '||ct.name||' '||coalesce(ct.email,'')),lower($4))>0)
       AND ($5::text IS NULL OR c.contact_id=$5)
-    ), filtered AS (SELECT * FROM base WHERE $6='all' OR inbox_state=$6)`;
+    ), section AS (SELECT * FROM base WHERE $10='all' OR ($10='closed' AND status='resolved')
+      OR (status<>'resolved' AND ($10='open' OR ($10='unread' AND unread) OR ($10='read' AND NOT unread)))),
+    filtered AS (SELECT * FROM section WHERE $6='all' OR inbox_state=$6)`;
     // Group before pagination: one prolific customer cannot consume every queue slot.
     const grouped = d.group === "customer";
     const result = await this.db.one(
@@ -62,11 +69,15 @@ export class Customers {
       count(*) FILTER(WHERE conversation_type='chat') OVER(PARTITION BY contact_id)::int group_chats,
       count(*) FILTER(WHERE inbox_state='human') OVER(PARTITION BY contact_id)::int group_human,
       count(*) FILTER(WHERE inbox_state='approval') OVER(PARTITION BY contact_id)::int group_approval,
+      count(*) FILTER(WHERE unread) OVER(PARTITION BY contact_id)::int group_unread,
       row_number() OVER(PARTITION BY contact_id ORDER BY updated_at DESC,id DESC) position FROM filtered f
     ), page AS (SELECT * FROM items ${grouped ? "WHERE position=1" : ""} ORDER BY updated_at DESC,id DESC LIMIT $7 OFFSET $8)
     SELECT (SELECT count(${grouped ? "DISTINCT contact_id" : "*"})::int FROM filtered) total,
     (SELECT count(*)::int FROM filtered) conversation_total,
-    (SELECT coalesce(jsonb_object_agg(inbox_state,n),'{}') FROM (SELECT inbox_state,count(*)::int n FROM base GROUP BY inbox_state) counts) counts,
+    (SELECT coalesce(jsonb_object_agg(inbox_state,n),'{}') FROM (SELECT inbox_state,count(*)::int n FROM section GROUP BY inbox_state) counts) counts,
+    (SELECT jsonb_build_object('all',count(*),'open',count(*) FILTER(WHERE status<>'resolved'),
+      'closed',count(*) FILTER(WHERE status='resolved'),'unread',count(*) FILTER(WHERE status<>'resolved' AND unread),
+      'read',count(*) FILTER(WHERE status<>'resolved' AND NOT unread)) FROM base) section_counts,
     coalesce((SELECT jsonb_agg(row_to_json(p) ORDER BY p.updated_at DESC,p.id DESC) FROM page p),'[]') conversations`,
       args,
     );

@@ -101,3 +101,9 @@ Owners choose **tickets, chatbot, both, or neither** in **Publish → Channels**
 The staff inbox includes searchable **Notes** and **Feedback** tabs alongside the message timeline, plus an expanded conversation view. Customers send feedback once after closing a conversation; “still need help” reopens native conversations for follow-up. Internal notes and rejected action proposals do not send customer notifications.
 
 Organize the inbox by **customer** or **conversation**, with **Tickets** and **Chatbot** filters. The separate **Customers** section brings together account identity, support history, private customer notes, and reviewed provider links. Open the same profile from a ticket’s **Customer** tab; **Team** is reserved for staff access.
+
+### Inbox layout and read sections
+
+The desktop inbox places the conversation above a full-width queue. A compact composer keeps replies and internal notes close at hand while reserving more space for the transcript. Use **Open**, **Unread**, **Read**, **Closed**, or **All conversations**, then filter tickets/chatbot, customer, assignment, or status. Opening the conversation marks its loaded customer messages read for you; **Mark as unread** keeps it in your follow-up queue. Read does not mean resolved. The **Conversation size** slider adjusts the space between the viewer and queue. **Expand conversation** gives the viewer the full workspace, preserving unsent drafts. On mobile, switch between the queue and conversation with the back button.
+
+Connections use locally bundled provider logos. Google Drive setup shows which OAuth/Picker settings are missing; see [Google integration setup](docs/integrations.md) for the required Cloud configuration. The offline store sandbox continues using local provider doubles and does not use live Google credentials.

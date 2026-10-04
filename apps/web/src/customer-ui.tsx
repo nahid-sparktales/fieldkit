@@ -94,7 +94,7 @@ export function ConversationCard({
   return (
     <button
       aria-current={selected === c.id ? "true" : undefined}
-      className={`conversation-card ${selected === c.id ? "active" : ""} ${compact ? "grouped-ticket" : ""}`}
+      className={`conversation-card ${selected === c.id ? "active" : ""} ${compact ? "grouped-ticket" : ""} ${c.unread ? "is-unread" : ""}`}
       onClick={() => onSelect(c)}
     >
       <div className="conversation-person">
@@ -116,7 +116,10 @@ export function ConversationCard({
           {inboxTime(c.updated_at)}
         </time>
       </div>
-      <h3>{c.subject}</h3>
+      <h3>
+        {c.unread && <span className="unread-dot" aria-label="Unread" />}
+        {c.subject}
+      </h3>
       <p className="conversation-preview">
         {draft?.trim() ? (
           <>

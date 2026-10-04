@@ -1,3 +1,8 @@
+import {
+  customerMessageCursor,
+  inboxReadState,
+  setInboxRead,
+} from "../../packages/platform/src/inbox-read.js";
 import { WorkflowChannel } from "../../packages/platform/src/channel-workflows.js";
 import { usageContext } from "../../packages/platform/src/usage-context.js";
 import { readableText } from "../../packages/platform/src/branding-contracts.js";
@@ -1067,6 +1072,10 @@ export async function createApp(
             tail = m[2];
           if (!tail && method === "GET") {
             const conv = await conversation(app.db, p, id);
+            const messages = await app.db.rows(
+              `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY m.created_at,m.id`,
+              [ws, id, staff(p)],
+            );
             json(res, {
               conversation: {
                 ...conv,
@@ -1076,16 +1085,19 @@ export async function createApp(
                   ])
                 )?.kind,
               },
-              messages: await app.db.rows(
-                `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY m.created_at,m.id`,
-                [ws, id, staff(p)],
-              ),
+              messages,
               feedback: await app.db.rows(
                 "SELECT id,message_id,source,resolved,rating,comment,answered_at,updated_at FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR source='native') ORDER BY updated_at DESC",
                 [ws, id, staff(p)],
               ),
               ...(staff(p)
                 ? {
+                    read_state: await inboxReadState(
+                      app.db,
+                      p,
+                      id,
+                      customerMessageCursor(messages),
+                    ),
                     customer: await app.db.one(
                       "SELECT id,name,email,verified FROM contacts WHERE workspace_id=$1 AND id=$2",
                       [ws, conv.contact_id],
@@ -1109,6 +1121,10 @@ export async function createApp(
                   }
                 : {}),
             });
+            return;
+          }
+          if (tail === "/read" && method === "PUT") {
+            json(res, await setInboxRead(app.db, p, id, await body(req)));
             return;
           }
           if (tail === "/messages" && method === "POST") {
@@ -1457,7 +1473,23 @@ export async function createApp(
             oauth: {
               zendesk: !!(c.ZENDESK_CLIENT_ID && c.ZENDESK_CLIENT_SECRET),
               notion: !!(c.NOTION_CLIENT_ID && c.NOTION_CLIENT_SECRET),
-              google: !!(c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET),
+              google: !!(
+                c.GOOGLE_CLIENT_ID &&
+                c.GOOGLE_CLIENT_SECRET &&
+                c.GOOGLE_PICKER_KEY &&
+                c.GOOGLE_APP_ID
+              ),
+            },
+            googleSetup: {
+              checks: {
+                "OAuth client": !!(
+                  c.GOOGLE_CLIENT_ID && c.GOOGLE_CLIENT_SECRET
+                ),
+                "Picker API key": !!c.GOOGLE_PICKER_KEY,
+                "Project number": !!c.GOOGLE_APP_ID,
+              },
+              origin: c.FIELDKIT_URL,
+              callbackUrl: `${c.FIELDKIT_URL}/v2/oauth/google/callback`,
             },
             webhookUrl: `${c.FIELDKIT_URL}/v2/webhooks/zendesk/${ws}`,
           });

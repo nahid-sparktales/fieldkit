@@ -28,11 +28,11 @@ Either share selected pages with an internal integration and connect its token, 
 
 ## Google Drive
 
-Enable Google Drive API and Picker API in one Google Cloud project. Configure a web OAuth client with callback `/v2/oauth/google/callback`; set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_PICKER_KEY`, and `GOOGLE_APP_ID` (project number). Restrict the Picker browser key to your HTTPS origin and the required APIs. Complete Google's consent/verification requirements for the intended users.
+Enable Google Drive API and Picker API in one Google Cloud project. Configure a web OAuth client with callback `/v2/oauth/google/callback`; set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_PICKER_KEY`, and `GOOGLE_APP_ID` (project number). Restrict the Picker browser key to your app origin (HTTPS in production; for local development, for example `http://localhost:4318/*`) and `https://docs.google.com/*`, because Picker renders in a Google iframe. Restrict its APIs to Google Picker API and Google Drive API. Complete Google's consent/verification requirements for the intended users.
 
 Connect Google, then use **Choose Drive files** in Knowledge. FieldKit requests only `drive.file`, which grants access to files selected/shared with the application. It does not enumerate a user's entire Drive. Native Google documents export to text, spreadsheets to CSV; supported binary documents use the file extractor. Removed, inaccessible, unsupported, and empty files fail visibly and are excluded from retrieval.
 
-[Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server).
+[Picker setup and restrictions](https://developers.google.com/workspace/drive/picker/guides/web-picker), [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server).
 
 ## Stripe App restricted keys
 

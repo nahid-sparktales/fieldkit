@@ -5,6 +5,10 @@ export async function verifyCustomers(staff: Page, customer: Page) {
   await staff.goto(`/?workspace=${ws}&view=inbox`);
   await staff.getByLabel("Group inbox by").selectOption("customer");
   const queue = staff.getByRole("region", { name: "Conversation queue" });
+  await queue
+    .getByRole("group", { name: "Inbox sections" })
+    .getByRole("button", { name: /^All conversations/ })
+    .click();
   const groups = queue.locator(".customer-group-toggle");
   await expect(groups).toHaveCount(1);
   await expect(groups).toContainText("A real customer");
