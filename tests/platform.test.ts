@@ -27,7 +27,10 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { FieldKitClient } from "../packages/sdk/src/index.js";
 import { token, tokenHash } from "../packages/platform/src/security.js";
-import { newWorkflowNode } from "../packages/platform/src/workflow-definition.js";
+import {
+  defaultWorkflow,
+  newWorkflowNode,
+} from "../packages/platform/src/workflow-definition.js";
 
 const c = testConfig(),
   model = new TestModel(),
@@ -1060,6 +1063,110 @@ test("refund pauses for an exact approval, rejects an agent role, and confirms o
   await app.agent.advance(w.ws.id, run.id);
   assert.equal(providers.writes, 1);
 });
+test("rejecting an approval stops legacy and configured workflows without customer messages or provider deliveries", async () => {
+  for (const configured of [false, true]) {
+    providers.writes = 0;
+    const w = await workspace(app);
+    const action = await refundAction(w.ws.id);
+    if (configured) {
+      const current = await app.workflows.get(w.owner);
+      const draft = await app.workflows.save(w.owner, {
+        revision: current.revision,
+        definition: defaultWorkflow([action.id]),
+      });
+      await app.workflows.publish(w.owner, draft.revision);
+    }
+    const { conv, run } = await runText(w, "Please refund this charge");
+    assert.equal(run.status, "waiting_approval");
+    const a = await app.db.one("SELECT * FROM approvals WHERE run_id=$1", [
+      run.id,
+    ]);
+    const revision = (
+      await app.db.one("SELECT revision FROM conversations WHERE id=$1", [
+        conv.id,
+      ])
+    ).revision;
+    await app.message(
+      w.owner,
+      conv.id,
+      { body: "Checking this proposal privately", requestKey: uid() },
+      true,
+    );
+    assert.equal(
+      (await app.db.one("SELECT status FROM approvals WHERE id=$1", [a.id]))
+        .status,
+      "pending",
+    );
+    assert.equal(
+      (
+        await app.db.one("SELECT revision FROM conversations WHERE id=$1", [
+          conv.id,
+        ])
+      ).revision,
+      revision,
+    );
+    // A now-disabled action must still be rejectable.
+    await app.db.pool.query(
+      "UPDATE actions SET enabled=false,revision=revision+1 WHERE id=$1",
+      [action.id],
+    );
+    await app.decide(w.owner, a.id, a.hash, "reject");
+    await app.agent.advance(w.ws.id, run.id);
+    await app.agent.advance(w.ws.id, run.id);
+    assert.equal(providers.writes, 0);
+    assert.deepEqual(
+      await app.db.one("SELECT status,mode FROM conversations WHERE id=$1", [
+        conv.id,
+      ]),
+      { status: "needs_staff", mode: "human" },
+    );
+    assert.equal(
+      (await app.db.one("SELECT status FROM runs WHERE id=$1", [run.id]))
+        .status,
+      "handed_off",
+    );
+    assert.equal(
+      (await app.db.one("SELECT status FROM approvals WHERE id=$1", [a.id]))
+        .status,
+      "rejected",
+    );
+    for (const table of ["operations", "deliveries", "ticket_emails"])
+      assert.equal(
+        (
+          await app.db.rows(`SELECT id FROM ${table} WHERE workspace_id=$1`, [
+            w.ws.id,
+          ])
+        ).length,
+        0,
+      );
+    assert.equal(
+      (
+        await app.db.rows(
+          "SELECT id FROM messages WHERE conversation_id=$1 AND role='assistant'",
+          [conv.id],
+        )
+      ).length,
+      0,
+    );
+    await assert.rejects(
+      app.decide(w.owner, a.id, a.hash, "approve"),
+      /already has a decision/,
+    );
+    const followup = await app.message(w.customer, conv.id, {
+      body: "Any update?",
+      requestKey: uid(),
+    });
+    assert.ok(followup.id);
+    assert.equal(
+      (
+        await app.db.rows("SELECT id FROM runs WHERE conversation_id=$1", [
+          conv.id,
+        ])
+      ).length,
+      1,
+    );
+  }
+});
 test("stale policy, another customer’s charge, and ambiguous/changed ownership prevent writes", async () => {
   providers.refunds = [];
   providers.writes = 0;
@@ -1858,4 +1965,33 @@ test("inbox previews exclude private notes and remain scoped to the authenticate
     { headers: customerHeaders },
   );
   assert.equal(reduced.status, 403);
+});
+
+test("public help centers advertise only enabled contact options and reject disabled widget sessions", async () => {
+  const w = await workspace(app);
+  for (const mode of ["both", "tickets", "chat", "none"] as const) {
+    await app.updateSupportOptions(w.owner, { mode });
+    const publicInfo = await fetch(`${c.FIELDKIT_URL}/v2/public/${w.ws.slug}`);
+    assert.equal(publicInfo.status, 200);
+    const info = await publicInfo.json();
+    assert.equal(info.ticketsEnabled, mode === "both" || mode === "tickets");
+    assert.equal(info.chatEnabled, mode === "both" || mode === "chat");
+    const widget = await fetch(
+      `${c.FIELDKIT_URL}/v2/public/${w.ws.slug}/widget/config`,
+    );
+    assert.equal(widget.status, info.chatEnabled ? 200 : 404);
+    const session = await fetch(
+      `${c.FIELDKIT_URL}/v2/public/${w.ws.slug}/widget/session`,
+      {
+        method: "POST",
+        headers: { Origin: c.FIELDKIT_URL, "Content-Type": "application/json" },
+        body: JSON.stringify({ channel: "widget" }),
+      },
+    );
+    assert.equal(session.status, info.chatEnabled ? 200 : 404);
+    const articles = await fetch(
+      `${c.FIELDKIT_URL}/v2/public/${w.ws.slug}/articles`,
+    );
+    assert.equal(articles.status, 200);
+  }
 });

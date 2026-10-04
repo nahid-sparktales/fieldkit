@@ -201,17 +201,15 @@ export async function verifyBrandedPortal(page: Page) {
 }
 
 export async function verifyBrandedWidget(staff: Page, widgetPage: Page) {
-  const channel = staff
-    .locator("section.panel")
-    .filter({
-      has: staff.getByRole("heading", {
-        name: "Embedded chatbot",
-        exact: true,
-      }),
-    });
-  await channel.getByLabel("Publish this channel").check();
-  await channel
-    .getByRole("button", { name: "Save channel", exact: true })
+  const channel = staff.locator("section.panel").filter({
+    has: staff.getByRole("heading", {
+      name: "Embedded chatbot",
+      exact: true,
+    }),
+  });
+  await staff.getByRole("radio", { name: /Tickets & chatbot/ }).check();
+  await staff
+    .getByRole("button", { name: "Save support options", exact: true })
     .click();
   await expect(channel.getByText("published", { exact: true })).toBeVisible();
   await staff.getByRole("button", { name: "Appearance", exact: true }).click();
@@ -230,7 +228,10 @@ export async function verifyBrandedWidget(staff: Page, widgetPage: Page) {
   await expect(
     widgetPage.getByRole("button", { name: "Send", exact: true }),
   ).toHaveCSS("color", "rgb(0, 0, 0)");
-  await expect(widgetPage.locator(".live-chat")).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(widgetPage.locator(".live-chat")).toHaveCSS(
+    "background-color",
+    "rgb(255, 255, 255)",
+  );
   await staff.getByRole("button", { name: "Ocean", exact: true }).click();
   await staff
     .getByRole("button", { name: "Save appearance", exact: true })

@@ -1,15 +1,18 @@
+import { SupportOptionsInput } from "./support-options.js";
+import { Customers } from "./customers.js";
 import { TicketEmail, queueTicketEmail } from "./ticket-email.js";
 import { Quality } from "./quality.js";
 import { Branding } from "./branding.js";
 import { FeedbackSync } from "./feedback-sync.js";
 import type { CodeRunner } from "./code-runner.js";
 import type { Config } from "./config.js";
-import { Database, uid } from "./db.js";
+import { Database, uid, type Queryable } from "./db.js";
 import {
   createAuth,
   type Mailer,
   type Principal,
   requireAdmin,
+  requireOwner,
   requireStaff,
   staff,
   conversation,
@@ -48,6 +51,7 @@ export class Platform {
   branding: Branding;
   feedbackSync: FeedbackSync;
   ticketEmail: TicketEmail;
+  customers: Customers;
   constructor(
     public config: Config,
     options: {
@@ -58,6 +62,7 @@ export class Platform {
     } = {},
   ) {
     this.db = new Database(config);
+    this.customers = new Customers(this.db);
     this.branding = new Branding(this.db);
     this.auth = createAuth(this.db, options.mailer);
     this.connections = new Connections(this.db, options.fetch);
@@ -243,6 +248,10 @@ export class Platform {
     for (const ws of await this.db.rows("SELECT id,settings FROM workspaces")) {
       const days = Settings.parse(ws.settings).retentionDays;
       await this.quality.retain(ws.id, days);
+      await this.db.pool.query(
+        "DELETE FROM contact_notes WHERE workspace_id=$1 AND created_at<now()-($2::int*interval '1 day')",
+        [ws.id, days],
+      );
       const old = await this.db.rows(
         "SELECT c.id FROM conversations c WHERE c.workspace_id=$1 AND c.status='resolved' AND c.updated_at<now()-($2::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.conversation_id=c.id AND o.status IN ('prepared','sent','unknown'))",
         [ws.id, days],
@@ -366,61 +375,130 @@ export class Platform {
           "Origins must be exact HTTPS origins without a path; local HTTP development origins are supported",
         );
     }
-    if (data.published) {
-      if (!this.config.SMTP_URL)
-        throw new HttpError(
-          409,
-          "Configure SMTP before publishing customer-facing channels",
-        );
-      const settings = Settings.parse(
-        requireValue(
-          await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [
-            p.workspaceId,
-          ]),
-        ).settings,
+    if (data.published)
+      await this.validateChannelPublication(
+        p.workspaceId,
+        channel.kind,
+        data.settings.handoff,
       );
-      await this.db.connection(p.workspaceId, settings.responseProvider);
-      await this.connections.embeddingConfig(p.workspaceId);
-      if (data.settings.handoff === "zendesk" || channel.kind === "zendesk") {
-        const connection = await this.db.connection(p.workspaceId, "zendesk");
-        requireValue(
-          this.connections.secret(connection).webhookSecret,
-          409,
-          "Configure the Zendesk webhook signing secret before publishing",
-        );
-      }
-    }
     return this.db.tx(async (q) => {
-      const saved = requireValue(
-        (
-          await this.db.rows(
-            "UPDATE channels SET published=$1,settings=$2 WHERE workspace_id=$3 AND id=$4 RETURNING *",
-            [data.published, data.settings, p.workspaceId, id],
-            q,
-          )
-        )[0],
+      const current = requireValue(
+        await this.db.one(
+          "SELECT * FROM channels WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+          [p.workspaceId, id],
+          q,
+        ),
       );
-      if (!data.published) {
+      return this.saveChannel(
+        p,
+        current,
+        data.published,
+        {
+          ...data.settings,
+          ...(current.kind === "portal"
+            ? { ticketsEnabled: current.settings.ticketsEnabled !== false }
+            : {}),
+        },
+        q,
+      );
+    });
+  }
+  private async validateChannelPublication(
+    ws: string,
+    kind: string,
+    handoff: string,
+  ) {
+    if (!this.config.SMTP_URL)
+      throw new HttpError(
+        409,
+        "Configure SMTP before publishing customer-facing channels",
+      );
+    const settings = Settings.parse(
+      requireValue(
+        await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [ws]),
+      ).settings,
+    );
+    await this.db.connection(ws, settings.responseProvider);
+    await this.connections.embeddingConfig(ws);
+    if (handoff === "zendesk" || kind === "zendesk") {
+      const connection = await this.db.connection(ws, "zendesk");
+      requireValue(
+        this.connections.secret(connection).webhookSecret,
+        409,
+        "Configure the Zendesk webhook signing secret before publishing",
+      );
+    }
+  }
+  private async saveChannel(
+    p: Principal,
+    channel: any,
+    published: boolean,
+    settings: Record<string, unknown>,
+    q: Queryable,
+  ) {
+    const id = channel.id,
+      ws = p.workspaceId;
+    const saved = requireValue(
+      (
+        await this.db.rows(
+          "UPDATE channels SET published=$1,settings=$2 WHERE workspace_id=$3 AND id=$4 RETURNING *",
+          [published, settings, ws, id],
+          q,
+        )
+      )[0],
+    );
+    if (!published) {
+      await q.query(
+        "UPDATE conversations SET mode='human',revision=revision+1 WHERE workspace_id=$1 AND channel_id=$2 AND mode='agent'",
+        [ws, id],
+      );
+      await q.query(
+        "UPDATE approvals SET status='stale' WHERE status='pending' AND run_id IN (SELECT r.id FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE c.workspace_id=$1 AND c.channel_id=$2)",
+        [ws, id],
+      );
+      if (channel.kind === "widget")
         await q.query(
-          "UPDATE conversations SET mode='human',revision=revision+1 WHERE workspace_id=$1 AND channel_id=$2 AND mode='agent'",
-          [p.workspaceId, id],
+          "DELETE FROM credentials WHERE workspace_id=$1 AND kind='widget'",
+          [ws],
         );
-        await q.query(
-          "UPDATE approvals SET status='stale' WHERE status='pending' AND run_id IN (SELECT r.id FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE c.workspace_id=$1 AND c.channel_id=$2)",
-          [p.workspaceId, id],
+    }
+    await this.db.event(q, ws, "channel.updated", {
+      channelId: id,
+      published,
+      actor: p.userId,
+    });
+    return saved;
+  }
+  async updateSupportOptions(p: Principal, input: unknown) {
+    requireOwner(p);
+    const { mode } = SupportOptionsInput.parse(input);
+    const ticketsEnabled = mode === "both" || mode === "tickets";
+    const chatEnabled = mode === "both" || mode === "chat";
+    return this.db.tx(async (q) => {
+      const channels = await this.db.rows(
+        "SELECT * FROM channels WHERE workspace_id=$1 AND kind IN ('portal','widget') ORDER BY kind FOR UPDATE",
+        [p.workspaceId],
+        q,
+      );
+      const portal = requireValue(channels.find((c) => c.kind === "portal"));
+      const widget = requireValue(channels.find((c) => c.kind === "widget"));
+      if (chatEnabled && !widget.published)
+        await this.validateChannelPublication(
+          p.workspaceId,
+          "widget",
+          widget.settings.handoff,
         );
-        if (channel.kind === "widget")
-          await q.query(
-            "DELETE FROM credentials WHERE workspace_id=$1 AND kind='widget'",
-            [p.workspaceId],
-          );
-      }
-      await this.db.event(q, p.workspaceId, "channel.updated", {
-        channelId: id,
-        published: data.published,
+      await q.query(
+        "UPDATE channels SET settings=jsonb_set(settings,'{ticketsEnabled}',$1::jsonb) WHERE id=$2",
+        [JSON.stringify(ticketsEnabled), portal.id],
+      );
+      if (widget.published !== chatEnabled)
+        await this.saveChannel(p, widget, chatEnabled, widget.settings, q);
+      await this.db.event(q, p.workspaceId, "support_options.updated", {
+        mode,
         actor: p.userId,
       });
-      return saved;
+      return { mode };
     });
   }
   async newConversation(
@@ -445,27 +523,38 @@ export class Platform {
         [p.workspaceId, contactId],
       ),
     );
-    const channel = input.channelId
-      ? await this.db.one(
-          "SELECT * FROM channels WHERE workspace_id=$1 AND id=$2",
-          [p.workspaceId, input.channelId],
-        )
-      : await this.db.one(
-          "SELECT * FROM channels WHERE workspace_id=$1 AND kind='portal'",
-          [p.workspaceId],
-        );
-    if (!channel || (!staff(p) && !channel.published))
-      throw new HttpError(403, "This support channel is not published");
-    if (
-      !staff(p) &&
-      ((p.channelId && p.channelId !== channel.id) ||
-        (channel.kind === "portal" && p.role !== "customer"))
-    )
-      throw new HttpError(
-        403,
-        "Sign in with a verified account to submit a ticket",
-      );
     return this.db.tx(async (q) => {
+      const channel = input.channelId
+        ? await this.db.one(
+            "SELECT * FROM channels WHERE workspace_id=$1 AND id=$2 FOR SHARE",
+            [p.workspaceId, input.channelId],
+            q,
+          )
+        : await this.db.one(
+            "SELECT * FROM channels WHERE workspace_id=$1 AND kind='portal' FOR SHARE",
+            [p.workspaceId],
+            q,
+          );
+      if (!channel || (!staff(p) && !channel.published))
+        throw new HttpError(403, "This support channel is not published");
+      if (
+        !staff(p) &&
+        ((p.channelId && p.channelId !== channel.id) ||
+          (channel.kind === "portal" && p.role !== "customer"))
+      )
+        throw new HttpError(
+          403,
+          "Sign in with a verified account to submit a ticket",
+        );
+      if (
+        !staff(p) &&
+        channel.kind === "portal" &&
+        channel.settings.ticketsEnabled === false
+      )
+        throw new HttpError(
+          403,
+          "New support tickets are not available. You can still reply to an existing request.",
+        );
       await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `${p.workspaceId}:${contactId}:${message.requestKey}`,
       ]);
@@ -560,6 +649,24 @@ export class Platform {
           q,
         )
       )[0];
+      if (note) {
+        if (conv.external_id)
+          await this.support.queue(q, p.workspaceId, id, {
+            body: data.body,
+            messageId: msg.id,
+            public: false,
+            customer: false,
+          });
+        await this.db.event(
+          q,
+          p.workspaceId,
+          "message.created",
+          { messageId: msg.id, actorType: "note" },
+          id,
+          false,
+        );
+        return msg;
+      }
       if (!conv.external_id && role === "staff")
         await q.query("UPDATE messages SET delivered_at=now() WHERE id=$1", [
           msg.id,
@@ -754,15 +861,60 @@ export class Platform {
           409,
           "Conversation changed; this approval is stale",
         );
-      await this.actions.revalidate(p.workspaceId, a.proposal, q);
+      if (decision === "approve")
+        await this.actions.revalidate(p.workspaceId, a.proposal, q);
       await q.query(
         "UPDATE approvals SET status=$1,decision_by=$2,decision_at=now() WHERE id=$3",
         [decision === "approve" ? "approved" : "rejected", p.userId, id],
       );
-      await this.db.enqueue(q, "turn", {
-        workspaceId: p.workspaceId,
-        runId: a.run_id,
-      });
+      if (decision === "approve") {
+        await this.db.enqueue(q, "turn", {
+          workspaceId: p.workspaceId,
+          runId: a.run_id,
+        });
+      } else {
+        // A staff rejection is an internal decision, never a customer reply.
+        const changed = await q.query(
+          "UPDATE conversations SET mode='human',status='needs_staff',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND mode='agent' AND revision=$3 RETURNING id",
+          [p.workspaceId, conv.id, run.revision],
+        );
+        if (!changed.rowCount)
+          throw new HttpError(
+            409,
+            "Conversation changed; this approval is stale",
+          );
+        await q.query(
+          "UPDATE runs SET status='handed_off',state=$2,updated_at=now() WHERE id=$1",
+          [
+            run.id,
+            {
+              ...run.state,
+              route: "handoff",
+              response: "",
+              error: "Action proposal rejected by staff",
+              rejectionId: id,
+            },
+          ],
+        );
+        await this.db.event(
+          q,
+          p.workspaceId,
+          "conversation.updated",
+          {
+            previousStatus: conv.status,
+            status: "needs_staff",
+            previousMode: conv.mode,
+            mode: "human",
+            actorType: "staff",
+            runId: run.id,
+            workflowVersion: run.workflow_version ?? null,
+            handoffCategory: "staff_review",
+            handoffReason: "Action proposal rejected by staff",
+          },
+          conv.id,
+          true,
+        );
+      }
       await this.db.event(
         q,
         p.workspaceId,

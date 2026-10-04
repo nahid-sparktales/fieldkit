@@ -23,6 +23,7 @@
       if (/^#[0-9a-f]{6}$/i.test(config.brandTextColor))
         button.style.color = config.brandTextColor;
       frame.title = `${config.name} support`;
+      document.body.append(root);
     })
     .catch(() => {});
   button.onclick = () => {
@@ -33,9 +34,18 @@
     if (open) frame.focus();
   };
   shadow.append(frame, button);
-  document.body.append(root);
   let identity = script.dataset.identity;
   window.addEventListener("message", (event) => {
+    if (
+      event.origin === origin &&
+      event.source === frame.contentWindow &&
+      event.data?.type === "fieldkit:close"
+    ) {
+      frame.style.display = "none";
+      button.textContent = "Need a hand?";
+      button.setAttribute("aria-expanded", "false");
+      button.focus();
+    }
     if (
       event.origin === origin &&
       event.source === frame.contentWindow &&

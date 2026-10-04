@@ -112,7 +112,7 @@ test("channel workflows inherit the published default and independently select i
     /administrator/,
   );
 });
-test("closed-only feedback accepts the latest delivered staff reply, reopening preserves takeover and invalidates feedback submission", async () => {
+test("unresolved feedback on a staff reply reopens without resuming the agent and cannot be changed", async () => {
   const w = await workspace(app),
     c = await ticket(w);
   const m = await app.message(w.owner, c.id, {
@@ -120,13 +120,16 @@ test("closed-only feedback accepts the latest delivered staff reply, reopening p
     requestKey: uid(),
   });
   await assert.rejects(
-    app.quality.feedback(w.customer, c.id, { messageId: m.id, resolved: true }),
+    app.quality.feedback(w.customer, c.id, {
+      messageId: m.id,
+      resolved: false,
+    }),
     /closed/,
   );
   await app.customerStatus(w.customer, c.id, "resolved");
   await app.quality.feedback(w.customer, c.id, {
     messageId: m.id,
-    resolved: true,
+    resolved: false,
   });
   const other = await workspace(app);
   await assert.rejects(
@@ -145,7 +148,61 @@ test("closed-only feedback accepts the latest delivered staff reply, reopening p
   await app.customerStatus(w.customer, c.id, "resolved");
   await assert.rejects(
     app.quality.feedback(w.customer, c.id, { messageId: m.id, resolved: true }),
-    /latest delivered/,
+    /already been sent/,
+  );
+});
+test("internal notes do not reopen closed conversations or interrupt pending agent turns", async () => {
+  const w = await workspace(app);
+  await knowledge(app, w.ws.id);
+  const c = await ticket(w);
+  const before = await app.db.one(
+    "SELECT status,mode,revision FROM conversations WHERE id=$1",
+    [c.id],
+  );
+  const run = (await app.db.one(
+    "SELECT id FROM runs WHERE conversation_id=$1",
+    [c.id],
+  ))!;
+  await app.message(
+    w.owner,
+    c.id,
+    { body: "Private context while agent is running", requestKey: uid() },
+    true,
+  );
+  assert.deepEqual(
+    await app.db.one(
+      "SELECT status,mode,revision FROM conversations WHERE id=$1",
+      [c.id],
+    ),
+    before,
+  );
+  await app.agent.advance(w.ws.id, run.id);
+  assert.equal(
+    (await app.db.one("SELECT status FROM runs WHERE id=$1", [run.id]))?.status,
+    "completed",
+  );
+  await app.customerStatus(w.customer, c.id, "resolved");
+  const closed = await app.db.one(
+    "SELECT status,mode,revision FROM conversations WHERE id=$1",
+    [c.id],
+  );
+  await app.message(
+    w.owner,
+    c.id,
+    { body: "Post-resolution reminder", requestKey: uid() },
+    true,
+  );
+  assert.deepEqual(
+    await app.db.one(
+      "SELECT status,mode,revision FROM conversations WHERE id=$1",
+      [c.id],
+    ),
+    closed,
+  );
+  assert.equal(
+    (await app.db.rows("SELECT id FROM runs WHERE conversation_id=$1", [c.id]))
+      .length,
+    1,
   );
 });
 test("outbound public ticket emails are durable, deduplicated, private and support safe threaded inbound replies", async () => {
@@ -350,4 +407,99 @@ test("uncertain SMTP attempts require explicit recovery; revoked contacts skip d
     [c.id],
   );
   assert.notEqual(route?.token_hash, tokenHash("guess"));
+});
+
+test("owners choose ticket/chat offerings atomically, with existing ticket continuity and chat revocation", async () => {
+  const w = await workspace(app),
+    other = await workspace(app);
+  const original = await ticket(w);
+  const channels = () =>
+    app.db.rows("SELECT * FROM channels WHERE workspace_id=$1 ORDER BY kind", [
+      w.ws.id,
+    ]);
+  const widget = (await channels()).find((c) => c.kind === "widget")!;
+  for (const role of ["admin", "agent", "customer"] as const)
+    await assert.rejects(
+      app.updateSupportOptions({ ...w.owner, role }, { mode: "none" }),
+      /owner access/,
+    );
+  await assert.rejects(app.updateSupportOptions(w.owner, { mode: "anything" }));
+  await app.updateSupportOptions(w.owner, { mode: "both" });
+  const chat = await app.newConversation(w.customer, {
+    body: "Chat request",
+    requestKey: uid(),
+    channelId: widget.id,
+  });
+  await app.db.pool.query(
+    "INSERT INTO credentials(hash,workspace_id,contact_id,kind,channel_id,expires_at) VALUES($1,$2,$3,'widget',$4,now()+interval '1 hour')",
+    [tokenHash(uid()), w.ws.id, w.contactId, widget.id],
+  );
+  await app.updateSupportOptions(w.owner, { mode: "tickets" });
+  assert.equal(
+    (await app.db.one("SELECT mode FROM conversations WHERE id=$1", [chat.id]))
+      ?.mode,
+    "human",
+  );
+  assert.equal(
+    (
+      await app.db.rows(
+        "SELECT * FROM credentials WHERE workspace_id=$1 AND kind='widget'",
+        [w.ws.id],
+      )
+    ).length,
+    0,
+  );
+  await assert.rejects(
+    app.newConversation(w.customer, {
+      body: "Hidden chat",
+      requestKey: uid(),
+      channelId: widget.id,
+    }),
+    /not published/,
+  );
+  await ticket(w);
+  await app.updateSupportOptions(w.owner, { mode: "chat" });
+  await assert.rejects(ticket(w), /New support tickets are not available/);
+  await app.newConversation(w.customer, {
+    body: "Chat still offered",
+    requestKey: uid(),
+    channelId: widget.id,
+  });
+  await app.updateSupportOptions(w.owner, { mode: "none" });
+  await assert.rejects(ticket(w), /New support tickets are not available/);
+  await app.message(w.customer, original.id, {
+    body: "Following up on an existing ticket",
+    requestKey: uid(),
+  });
+  // Changing handoff/publication must not silently turn tickets back on.
+  await app.publishChannel(w.owner, w.channelId, {
+    published: true,
+    settings: { origins: [], handoff: "native" },
+  });
+  await assert.rejects(ticket(w), /New support tickets are not available/);
+  assert.equal(
+    (await channels()).find((c) => c.kind === "portal")!.published,
+    true,
+  );
+  assert.equal(
+    (await app.db.one("SELECT settings FROM channels WHERE id=$1", [
+      other.channelId,
+    ]))!.settings.ticketsEnabled,
+    undefined,
+  );
+  // A missing model prevents enabling chat and rolls back the whole choice.
+  await app.db.pool.query(
+    "UPDATE connections SET status='disconnected' WHERE workspace_id=$1 AND provider='openai'",
+    [w.ws.id],
+  );
+  await assert.rejects(app.updateSupportOptions(w.owner, { mode: "both" }));
+  assert.equal(
+    (await channels()).find((c) => c.kind === "portal")!.settings
+      .ticketsEnabled,
+    false,
+  );
+  assert.equal(
+    (await channels()).find((c) => c.kind === "widget")!.published,
+    false,
+  );
 });

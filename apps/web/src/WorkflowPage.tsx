@@ -12,7 +12,6 @@ import {
   WorkflowDefinition,
   NODE_LABELS,
   PORTS,
-  defaultWorkflow,
   newWorkflowNode,
   workflowProblems,
   type Workflow,
@@ -23,6 +22,14 @@ import "./workflow.css";
 import { WorkflowFocus } from "./WorkflowFocus.js";
 import { useAction } from "./useAction.js";
 import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
+
+import { GuidedWorkflow, GuidedInsertion } from "./GuidedWorkflow.js";
+import {
+  workflowTemplate,
+  insertWorkflowStep,
+  outcomeLabel,
+  type WorkflowTemplate,
+} from "./workflow-guidance.js";
 
 type Row = Record<string, any>;
 const descriptions: Record<NodeType, string> = {
@@ -128,7 +135,25 @@ function WorkflowEditor({
     [saved, setSaved] = useState("");
   const [selected, setSelected] = useState("start"),
     [expanded, setExpanded] = useState(false),
-    [showInspector, setShowInspector] = useState(true);
+    [showInspector, setShowInspector] = useState(() => {
+      try {
+        return (
+          !matchMedia("(max-width: 760px)").matches ||
+          localStorage.getItem("fieldkit.workflow.editor") !== "guided"
+        );
+      } catch {
+        return true;
+      }
+    });
+  const [editorMode, setEditorMode] = useState<"graph" | "guided">(() => {
+    try {
+      return localStorage.getItem("fieldkit.workflow.editor") === "guided"
+        ? "guided"
+        : "graph";
+    } catch {
+      return "graph";
+    }
+  });
   const canvas = useRef<HTMLDivElement>(null),
     expandToggle = useRef<HTMLButtonElement>(null),
     inspectorToggle = useRef<HTMLButtonElement>(null);
@@ -203,6 +228,12 @@ function WorkflowEditor({
     setLoaded(data);
     setDefinition(data.draft);
     setSaved(JSON.stringify(data.draft));
+    setSelected((id) =>
+      data.draft.nodes.some((n: WorkflowNode) => n.id === id)
+        ? id
+        : (data.draft.nodes.find((n: WorkflowNode) => n.type === "start")?.id ??
+          "start"),
+    );
     setPast([]);
     setFuture([]);
   };
@@ -310,11 +341,42 @@ function WorkflowEditor({
       }),
     );
   };
-  const pathNodes = new Set(test?.trace.map((s: Row) => s.nodeId) ?? []);
+  const pathNodes = new Set<string>(
+    test?.trace.map((s: Row) => s.nodeId) ?? [],
+  );
   const pathEdges = new Set(
     test?.trace.map((s: Row) => `${s.nodeId}:${s.outcome}`) ?? [],
   );
   const canEdit = admin && !busy;
+  const chooseTemplate = (kind: WorkflowTemplate) => {
+    if (
+      !confirm(
+        "Replace this draft with a template? You can Undo this. The published workflow will not change.",
+      )
+    )
+      return;
+    replace(
+      workflowTemplate(
+        kind,
+        resources.actions.filter((a: Row) => a.enabled).map((a: Row) => a.id),
+      ),
+    );
+    setSelected(kind === "reply" ? "reply" : "start");
+    setLink(null);
+  };
+  const selectGuidedStep = (id: string) => {
+    setSelected(id);
+    setShowInspector(true);
+    requestAnimationFrame(() => {
+      const inspector = document.getElementById(inspectorId);
+      if (inspector) inspector.scrollTop = 0;
+      inspector
+        ?.querySelector<HTMLInputElement>("input")
+        ?.focus({ preventScroll: true });
+      if (!expanded && matchMedia("(max-width: 760px)").matches)
+        inspector?.scrollIntoView({ block: "start" });
+    });
+  };
   const refreshResources = async () => {
     const data = await request("/workflow");
     setLoaded((old) => (old ? { ...old, resources: data.resources } : data));
@@ -438,7 +500,7 @@ function WorkflowEditor({
           <span className="eyebrow">LANGGRAPH WORKFLOW</span>
           <h1>Design how your agent helps.</h1>
           <p>
-            Connect steps, choose their resources, and test the route before
+            Build with guided steps or a visual graph, and test the route before
             publishing.
           </p>
         </div>
@@ -636,68 +698,126 @@ function WorkflowEditor({
             {success}
           </p>
         )}
-        <div className="wf-palette" aria-label="Workflow step palette">
-          {(Object.keys(NODE_LABELS) as NodeType[])
-            .filter(
-              (t) =>
-                !["start", "task", "scope"].includes(t) &&
-                (t !== "return" || editingSubflow),
-            )
-            .map((type) => (
+        <div
+          className="wf-editor-mode"
+          role="group"
+          aria-label="Workflow editor view"
+        >
+          <div className="button-row">
+            {(
+              [
+                ["guided", "Guided steps"],
+                ["graph", "Visual graph"],
+              ] as const
+            ).map(([value, label]) => (
               <button
-                key={type}
-                disabled={!canEdit || def.nodes.length >= 24}
+                key={value}
+                aria-pressed={editorMode === value}
                 onClick={() => {
-                  const id = `step-${crypto.randomUUID().slice(0, 8)}`,
-                    n = newWorkflowNode(
-                      type,
-                      id,
-                      80 + (def.nodes.length % 3) * 310,
-                      100 + Math.floor(def.nodes.length / 3) * 230,
-                    );
-                  replace({ ...def, nodes: [...def.nodes, n] });
-                  setSelected(id);
+                  setEditorMode(value);
+                  setLink(null);
+                  if (matchMedia("(max-width: 760px)").matches)
+                    setShowInspector(value !== "guided" && !expanded);
+                  try {
+                    localStorage.setItem("fieldkit.workflow.editor", value);
+                  } catch {}
                 }}
               >
-                ＋ {NODE_LABELS[type]}
+                {label}
               </button>
             ))}
+          </div>
+          <div className="wf-mode-actions wf-view-controls">
+            <span>Two views of the same draft. Switch at any time.</span>
+            <button
+              hidden={expanded}
+              ref={expandToggle}
+              onClick={() => {
+                if (matchMedia("(max-width: 760px)").matches)
+                  setShowInspector(false);
+                setExpanded(true);
+              }}
+              aria-haspopup="dialog"
+            >
+              Expand editor ⤢
+            </button>
+          </div>
         </div>
+        {editorMode === "graph" && (
+          <div className="wf-palette" aria-label="Workflow step palette">
+            {(Object.keys(NODE_LABELS) as NodeType[])
+              .filter(
+                (t) =>
+                  !["start", "task", "scope"].includes(t) &&
+                  (t !== "return" || editingSubflow),
+              )
+              .map((type) => (
+                <button
+                  key={type}
+                  disabled={!canEdit || def.nodes.length >= 24}
+                  onClick={() => {
+                    const id = `step-${crypto.randomUUID().slice(0, 8)}`,
+                      n = newWorkflowNode(
+                        type,
+                        id,
+                        80 + (def.nodes.length % 3) * 310,
+                        100 + Math.floor(def.nodes.length / 3) * 230,
+                      );
+                    replace({ ...def, nodes: [...def.nodes, n] });
+                    setSelected(id);
+                  }}
+                >
+                  ＋ {NODE_LABELS[type]}
+                </button>
+              ))}
+          </div>
+        )}
         <div
-          className={`wf-editor${showInspector ? "" : " wf-inspector-hidden"}`}
+          className={`wf-editor${showInspector ? "" : " wf-inspector-hidden"}${editorMode === "guided" ? " wf-guided-editor" : ""}`}
         >
           <section className="wf-map-panel" aria-label="Workflow map">
             <div className="wf-map-tools">
               <div className="button-row">
-                <button
-                  aria-label="Zoom out"
-                  onClick={() => changeZoom(zoom - 0.1)}
-                  disabled={zoom <= 0.05}
-                >
-                  −
-                </button>
-                <span className="wf-zoom-level" aria-label="Zoom level">
-                  {Math.round(zoom * 100)}%
-                </span>
-                <button
-                  aria-label="Zoom in"
-                  onClick={() => changeZoom(zoom + 0.1)}
-                  disabled={zoom >= 1.4}
-                >
-                  ＋
-                </button>
-                <button onClick={fitWorkflow}>Fit workflow</button>
-                <button
-                  onClick={() => changeZoom(1)}
-                  aria-label="Reset zoom to 100%"
-                >
-                  100%
-                </button>
+                {editorMode === "graph" && (
+                  <>
+                    <button
+                      aria-label="Zoom out"
+                      onClick={() => changeZoom(zoom - 0.1)}
+                      disabled={zoom <= 0.05}
+                    >
+                      −
+                    </button>
+                    <span className="wf-zoom-level" aria-label="Zoom level">
+                      {Math.round(zoom * 100)}%
+                    </span>
+                    <button
+                      aria-label="Zoom in"
+                      onClick={() => changeZoom(zoom + 0.1)}
+                      disabled={zoom >= 1.4}
+                    >
+                      ＋
+                    </button>
+                    <button onClick={fitWorkflow}>Fit workflow</button>
+                    <button
+                      onClick={() => changeZoom(1)}
+                      aria-label="Reset zoom to 100%"
+                    >
+                      100%
+                    </button>
+                  </>
+                )}
                 <button
                   disabled={!canEdit || !past.length}
                   onClick={() => {
                     setFuture([def, ...future]);
-                    setDefinition(past.at(-1)!);
+                    const prior = past.at(-1)!;
+                    setDefinition(prior);
+                    if (!prior.nodes.some((n) => n.id === selected))
+                      setSelected(
+                        prior.nodes.find((n) => n.type === "start")?.id ??
+                          "start",
+                      );
+                    setSuccess("");
                     setPast(past.slice(0, -1));
                     setTest(null);
                   }}
@@ -709,6 +829,12 @@ function WorkflowEditor({
                   onClick={() => {
                     setPast([...past, def]);
                     setDefinition(future[0]);
+                    if (!future[0].nodes.some((n) => n.id === selected))
+                      setSelected(
+                        future[0].nodes.find((n) => n.type === "start")?.id ??
+                          "start",
+                      );
+                    setSuccess("");
                     setFuture(future.slice(1));
                     setTest(null);
                   }}
@@ -725,240 +851,245 @@ function WorkflowEditor({
                 >
                   {showInspector ? "Hide step settings" : "Show step settings"}
                 </button>
-                <button
-                  hidden={expanded}
-                  ref={expandToggle}
-                  onClick={() => {
-                    if (matchMedia("(max-width: 760px)").matches)
-                      setShowInspector(false);
-                    setExpanded(true);
-                  }}
-                  aria-haspopup="dialog"
-                >
-                  Expand editor ⤢
-                </button>
               </div>
               <span className="wf-canvas-hint">
-                {link
-                  ? `Connect ${link.port}: select a step’s input`
-                  : "Drag a step to move it. Connect an outcome to an input."}
+                {editorMode === "guided"
+                  ? "Choose a step to change its settings and next steps."
+                  : link
+                    ? `Connect ${link.port}: select a step’s input`
+                    : "Drag a step to move it. Connect an outcome to an input."}
               </span>
               {link && (
                 <button onClick={() => setLink(null)}>Cancel connection</button>
               )}
             </div>
-            <div
-              className="wf-canvas-scroll"
-              ref={canvas}
-              tabIndex={0}
-              aria-label="Scrollable workflow canvas"
-              onKeyDown={(e) => {
-                if (e.key === "Escape" && link) {
-                  e.preventDefault();
-                  setLink(null);
-                }
-              }}
-            >
-              <div style={{ width: width * zoom, height: height * zoom }}>
-                <div
-                  className="wf-canvas"
-                  style={{ width, height, transform: `scale(${zoom})` }}
-                >
-                  <svg
-                    width={width}
-                    height={height}
-                    className="wf-lines"
-                    aria-hidden="true"
+            {editorMode === "guided" ? (
+              <GuidedWorkflow
+                definition={def}
+                selected={selected}
+                canEdit={canEdit}
+                subflow={Boolean(editingSubflow)}
+                visited={pathNodes}
+                onSelect={selectGuidedStep}
+                onTemplate={chooseTemplate}
+              />
+            ) : (
+              <div
+                className="wf-canvas-scroll"
+                ref={canvas}
+                tabIndex={0}
+                aria-label="Scrollable workflow canvas"
+                onKeyDown={(e) => {
+                  if (e.key === "Escape" && link) {
+                    e.preventDefault();
+                    setLink(null);
+                  }
+                }}
+              >
+                <div style={{ width: width * zoom, height: height * zoom }}>
+                  <div
+                    className="wf-canvas"
+                    style={{ width, height, transform: `scale(${zoom})` }}
                   >
-                    <defs>
-                      <marker
-                        id="wf-arrow"
-                        markerWidth="8"
-                        markerHeight="8"
-                        refX="7"
-                        refY="4"
-                        orient="auto"
-                      >
-                        <path d="M0 0L8 4L0 8" fill="currentColor" />
-                      </marker>
-                    </defs>
-                    {def.edges.map((e) => {
-                      const from = def.nodes.find((n) => n.id === e.from),
-                        to = def.nodes.find((n) => n.id === e.to);
-                      if (!from || !to) return null;
-                      const x = from.x + 240,
-                        y = from.y + 77 + PORTS[from.type].indexOf(e.port) * 25,
-                        tx = to.x + 120,
-                        ty = to.y - 7;
-                      return (
-                        <path
-                          key={`${e.from}:${e.port}:${e.to}`}
-                          className={
-                            pathEdges.has(`${e.from}:${e.port}`)
-                              ? "visited"
-                              : ""
-                          }
-                          d={`M${x} ${y} C${x + 70} ${y},${tx} ${ty - 70},${tx} ${ty}`}
-                          markerEnd="url(#wf-arrow)"
-                        />
-                      );
-                    })}
-                  </svg>
-                  {def.nodes.map((n) => (
-                    <article
-                      key={n.id}
-                      className={`wf-node ${n.type} ${selected === n.id ? "selected" : ""} ${pathNodes.has(n.id) ? "visited" : ""}`}
-                      style={{ left: n.x, top: n.y }}
+                    <svg
+                      width={width}
+                      height={height}
+                      className="wf-lines"
+                      aria-hidden="true"
                     >
-                      {n.type !== "start" && (
-                        <button
-                          className="wf-input"
-                          aria-label={`Connect to ${n.title}`}
-                          disabled={!canEdit}
-                          onPointerUp={() => {
-                            if (link) connect(link.from, link.port, n.id);
-                          }}
-                          onClick={() => {
-                            if (link) connect(link.from, link.port, n.id);
-                            else setSelected(n.id);
-                          }}
+                      <defs>
+                        <marker
+                          id="wf-arrow"
+                          markerWidth="8"
+                          markerHeight="8"
+                          refX="7"
+                          refY="4"
+                          orient="auto"
                         >
-                          ●
-                        </button>
-                      )}
-                      <button
-                        className="wf-node-title"
-                        aria-label={`Select ${n.title}`}
-                        onClick={() => setSelected(n.id)}
-                        onPointerDown={(e) => {
-                          setSelected(n.id);
-                          if (!canEdit || e.button !== 0) return;
-                          drag.current = {
-                            id: n.id,
-                            x: n.x,
-                            y: n.y,
-                            clientX: e.clientX,
-                            clientY: e.clientY,
-                          };
-                          setPast((p) => [...p.slice(-29), def]);
-                          setFuture([]);
-                          e.currentTarget.setPointerCapture(e.pointerId);
-                        }}
-                        onPointerMove={(e) => {
-                          const d = drag.current;
-                          if (!d || !canEdit) return;
-                          const x = Math.max(
-                              0,
-                              Math.min(
-                                4000,
-                                Math.round(
-                                  (d.x + (e.clientX - d.clientX) / zoom) / 10,
-                                ) * 10,
-                              ),
-                            ),
-                            y = Math.max(
-                              0,
-                              Math.min(
-                                3000,
-                                Math.round(
-                                  (d.y + (e.clientY - d.clientY) / zoom) / 10,
-                                ) * 10,
-                              ),
-                            );
-                          setDefinition((current) =>
-                            current
-                              ? {
-                                  ...current,
-                                  nodes: current.nodes.map((v) =>
-                                    v.id === d.id ? { ...v, x, y } : v,
-                                  ),
-                                }
-                              : current,
-                          );
-                        }}
-                        onPointerUp={() => {
-                          drag.current = null;
-                        }}
-                        onPointerCancel={() => {
-                          drag.current = null;
-                        }}
-                        onKeyDown={(e) => {
-                          if (
-                            !canEdit ||
-                            ![
-                              "ArrowUp",
-                              "ArrowDown",
-                              "ArrowLeft",
-                              "ArrowRight",
-                            ].includes(e.key)
-                          )
-                            return;
-                          e.preventDefault();
-                          replace({
-                            ...def,
-                            nodes: def.nodes.map((v) =>
-                              v.id === n.id
-                                ? {
-                                    ...v,
-                                    x: Math.max(
-                                      0,
-                                      Math.min(
-                                        4000,
-                                        v.x +
-                                          (e.key === "ArrowRight"
-                                            ? 20
-                                            : e.key === "ArrowLeft"
-                                              ? -20
-                                              : 0),
-                                      ),
-                                    ),
-                                    y: Math.max(
-                                      0,
-                                      Math.min(
-                                        3000,
-                                        v.y +
-                                          (e.key === "ArrowDown"
-                                            ? 20
-                                            : e.key === "ArrowUp"
-                                              ? -20
-                                              : 0),
-                                      ),
-                                    ),
-                                  }
-                                : v,
-                            ),
-                          });
-                        }}
-                      >
-                        <small>{NODE_LABELS[n.type]}</small>
-                        <strong>{n.title}</strong>
-                      </button>
-                      <div className="wf-ports">
-                        {PORTS[n.type].map((port) => (
-                          <button
-                            key={port}
-                            disabled={!canEdit}
+                          <path d="M0 0L8 4L0 8" fill="currentColor" />
+                        </marker>
+                      </defs>
+                      {def.edges.map((e) => {
+                        const from = def.nodes.find((n) => n.id === e.from),
+                          to = def.nodes.find((n) => n.id === e.to);
+                        if (!from || !to) return null;
+                        const x = from.x + 240,
+                          y =
+                            from.y + 77 + PORTS[from.type].indexOf(e.port) * 25,
+                          tx = to.x + 120,
+                          ty = to.y - 7;
+                        return (
+                          <path
+                            key={`${e.from}:${e.port}:${e.to}`}
                             className={
-                              link?.from === n.id && link.port === port
-                                ? "connecting"
+                              pathEdges.has(`${e.from}:${e.port}`)
+                                ? "visited"
                                 : ""
                             }
-                            aria-label={`Connect ${n.title} ${port}`}
-                            onPointerDown={() => setLink({ from: n.id, port })}
-                            onClick={() => setLink({ from: n.id, port })}
+                            d={`M${x} ${y} C${x + 70} ${y},${tx} ${ty - 70},${tx} ${ty}`}
+                            markerEnd="url(#wf-arrow)"
+                          />
+                        );
+                      })}
+                    </svg>
+                    {def.nodes.map((n) => (
+                      <article
+                        key={n.id}
+                        className={`wf-node ${n.type} ${selected === n.id ? "selected" : ""} ${pathNodes.has(n.id) ? "visited" : ""}`}
+                        style={{ left: n.x, top: n.y }}
+                      >
+                        {n.type !== "start" && (
+                          <button
+                            className="wf-input"
+                            aria-label={`Connect to ${n.title}`}
+                            disabled={!canEdit}
+                            onPointerUp={() => {
+                              if (link) connect(link.from, link.port, n.id);
+                            }}
+                            onClick={() => {
+                              if (link) connect(link.from, link.port, n.id);
+                              else setSelected(n.id);
+                            }}
                           >
-                            <span>{port}</span>●
+                            ●
                           </button>
-                        ))}
-                      </div>
-                      {!PORTS[n.type].length && (
-                        <p className="wf-terminal">End of turn</p>
-                      )}
-                    </article>
-                  ))}
+                        )}
+                        <button
+                          className="wf-node-title"
+                          aria-label={`Select ${n.title}`}
+                          onClick={() => setSelected(n.id)}
+                          onPointerDown={(e) => {
+                            setSelected(n.id);
+                            if (!canEdit || e.button !== 0) return;
+                            drag.current = {
+                              id: n.id,
+                              x: n.x,
+                              y: n.y,
+                              clientX: e.clientX,
+                              clientY: e.clientY,
+                            };
+                            setPast((p) => [...p.slice(-29), def]);
+                            setFuture([]);
+                            e.currentTarget.setPointerCapture(e.pointerId);
+                          }}
+                          onPointerMove={(e) => {
+                            const d = drag.current;
+                            if (!d || !canEdit) return;
+                            const x = Math.max(
+                                0,
+                                Math.min(
+                                  4000,
+                                  Math.round(
+                                    (d.x + (e.clientX - d.clientX) / zoom) / 10,
+                                  ) * 10,
+                                ),
+                              ),
+                              y = Math.max(
+                                0,
+                                Math.min(
+                                  3000,
+                                  Math.round(
+                                    (d.y + (e.clientY - d.clientY) / zoom) / 10,
+                                  ) * 10,
+                                ),
+                              );
+                            setDefinition((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    nodes: current.nodes.map((v) =>
+                                      v.id === d.id ? { ...v, x, y } : v,
+                                    ),
+                                  }
+                                : current,
+                            );
+                          }}
+                          onPointerUp={() => {
+                            drag.current = null;
+                          }}
+                          onPointerCancel={() => {
+                            drag.current = null;
+                          }}
+                          onKeyDown={(e) => {
+                            if (
+                              !canEdit ||
+                              ![
+                                "ArrowUp",
+                                "ArrowDown",
+                                "ArrowLeft",
+                                "ArrowRight",
+                              ].includes(e.key)
+                            )
+                              return;
+                            e.preventDefault();
+                            replace({
+                              ...def,
+                              nodes: def.nodes.map((v) =>
+                                v.id === n.id
+                                  ? {
+                                      ...v,
+                                      x: Math.max(
+                                        0,
+                                        Math.min(
+                                          4000,
+                                          v.x +
+                                            (e.key === "ArrowRight"
+                                              ? 20
+                                              : e.key === "ArrowLeft"
+                                                ? -20
+                                                : 0),
+                                        ),
+                                      ),
+                                      y: Math.max(
+                                        0,
+                                        Math.min(
+                                          3000,
+                                          v.y +
+                                            (e.key === "ArrowDown"
+                                              ? 20
+                                              : e.key === "ArrowUp"
+                                                ? -20
+                                                : 0),
+                                        ),
+                                      ),
+                                    }
+                                  : v,
+                              ),
+                            });
+                          }}
+                        >
+                          <small>{NODE_LABELS[n.type]}</small>
+                          <strong>{n.title}</strong>
+                        </button>
+                        <div className="wf-ports">
+                          {PORTS[n.type].map((port) => (
+                            <button
+                              key={port}
+                              disabled={!canEdit}
+                              className={
+                                link?.from === n.id && link.port === port
+                                  ? "connecting"
+                                  : ""
+                              }
+                              aria-label={`Connect ${n.title} ${port}`}
+                              onPointerDown={() =>
+                                setLink({ from: n.id, port })
+                              }
+                              onClick={() => setLink({ from: n.id, port })}
+                            >
+                              <span>{port}</span>●
+                            </button>
+                          ))}
+                        </div>
+                        {!PORTS[n.type].length && (
+                          <p className="wf-terminal">End of turn</p>
+                        )}
+                      </article>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
+            )}
           </section>
           <aside
             className="wf-inspector"
@@ -973,7 +1104,7 @@ function WorkflowEditor({
                 requestAnimationFrame(() => inspectorToggle.current?.focus());
               }}
             >
-              Back to canvas
+              {editorMode === "guided" ? "Back to steps" : "Back to canvas"}
             </button>
             <Field label="Selected step">
               <select
@@ -1501,31 +1632,67 @@ function WorkflowEditor({
                   )}
                   {!!PORTS[node.type].length && (
                     <div className="wf-routing">
-                      <h3>Outcome connections</h3>
+                      <h3>
+                        {editorMode === "guided"
+                          ? "What happens next?"
+                          : "Outcome connections"}
+                      </h3>
                       {PORTS[node.type].map((port) => (
-                        <Field key={port} label={`Route ${port}`}>
-                          <select
-                            value={
-                              def.edges.find(
-                                (e) => e.from === node.id && e.port === port,
-                              )?.to ?? ""
-                            }
-                            onChange={(e) =>
-                              connect(node.id, port, e.target.value)
+                        <div key={port} className="wf-route-setting">
+                          <Field
+                            label={
+                              editorMode === "guided"
+                                ? outcomeLabel(node.type, port)
+                                : `Route ${port}`
                             }
                           >
-                            <option value="">Choose next step</option>
-                            {def.nodes
-                              .filter(
-                                (n) => n.id !== node.id && n.type !== "start",
-                              )
-                              .map((n) => (
-                                <option key={n.id} value={n.id}>
-                                  {n.title}
-                                </option>
-                              ))}
-                          </select>
-                        </Field>
+                            <select
+                              value={
+                                def.edges.find(
+                                  (e) => e.from === node.id && e.port === port,
+                                )?.to ?? ""
+                              }
+                              onChange={(e) =>
+                                connect(node.id, port, e.target.value)
+                              }
+                            >
+                              <option value="">Choose next step</option>
+                              {def.nodes
+                                .filter(
+                                  (n) => n.id !== node.id && n.type !== "start",
+                                )
+                                .map((n) => (
+                                  <option key={n.id} value={n.id}>
+                                    {n.title}
+                                  </option>
+                                ))}
+                            </select>
+                          </Field>
+                          {editorMode === "guided" && (
+                            <GuidedInsertion
+                              key={`${node.id}:${port}`}
+                              node={node}
+                              port={port}
+                              disabled={!canEdit || def.nodes.length >= 24}
+                              subflow={Boolean(editingSubflow)}
+                              onInsert={(type) => {
+                                const id = `step-${crypto.randomUUID().slice(0, 8)}`;
+                                const next = newWorkflowNode(
+                                  type,
+                                  id,
+                                  Math.min(3700, node.x + 310),
+                                  Math.min(2750, node.y + 230),
+                                );
+                                if (next.type === "customer")
+                                  next.data.billing = false;
+                                replace(
+                                  insertWorkflowStep(def, node.id, port, next),
+                                );
+                                selectGuidedStep(id);
+                              }}
+                            />
+                          )}
+                        </div>
                       ))}
                     </div>
                   )}
@@ -1768,66 +1935,29 @@ function WorkflowEditor({
               </p>
             ))}
             <p>
-              Manage actions in Actions, customer mappings in Team, and channel
-              destinations in Publish. Workflow changes never grant account
-              ownership or change credentials.
+              Manage actions in Actions, customer mappings in Customers, and
+              channel destinations in Publish. Workflow changes never grant
+              account ownership or change credentials.
             </p>
           </details>
           <details className="wf-resource-details">
             <summary>Templates and portability</summary>
             <div className="button-row">
-              <button
-                disabled={!canEdit}
-                onClick={() =>
-                  replace(
-                    defaultWorkflow(
-                      resources.actions
-                        .filter((a: Row) => a.enabled)
-                        .map((a: Row) => a.id),
-                    ),
-                  )
-                }
-              >
-                Support template
-              </button>
-              <button
-                disabled={!canEdit}
-                onClick={() => {
-                  const d = defaultWorkflow();
-                  d.title = "Knowledge support";
-                  d.nodes = d.nodes.filter(
-                    (n) => n.type !== "action" && n.type !== "customer",
-                  );
-                  d.edges = d.edges
-                    .filter((e) => !["customer", "action"].includes(e.from))
-                    .map((e) =>
-                      e.from === "start"
-                        ? { ...e, to: "knowledge" }
-                        : e.to === "action"
-                          ? { ...e, to: "handoff" }
-                          : e,
-                    );
-                  replace(d);
-                }}
-              >
-                Knowledge-only template
-              </button>
-              <button
-                disabled={!canEdit}
-                onClick={() =>
-                  replace({
-                    format: 1,
-                    title: "Human support",
-                    nodes: [
-                      newWorkflowNode("start", "start", 80, 60),
-                      newWorkflowNode("handoff", "handoff", 390, 230),
-                    ],
-                    edges: [{ from: "start", port: "next", to: "handoff" }],
-                  })
-                }
-              >
-                Handoff template
-              </button>
+              {(
+                [
+                  ["support", "Support template"],
+                  ["knowledge", "Knowledge-only template"],
+                  ["handoff", "Handoff template"],
+                ] as const
+              ).map(([kind, label]) => (
+                <button
+                  key={kind}
+                  disabled={!canEdit || Boolean(editingSubflow)}
+                  onClick={() => chooseTemplate(kind)}
+                >
+                  {label}
+                </button>
+              ))}
               <button
                 onClick={() => {
                   const url = URL.createObjectURL(

@@ -66,14 +66,43 @@ export async function verifyInbox(page: Page, customer: Page) {
     `/v2/workspaces/${ws}/conversations`,
   );
   expect(await customerHistory.text()).not.toContain("Private return draft");
+  await page.getByRole("tab", { name: "Notes", exact: true }).click();
+  const notes = page.getByRole("region", {
+    name: "Internal notes",
+    exact: true,
+  });
+  await expect(
+    notes.getByText("Private return draft", { exact: true }),
+  ).toBeVisible();
+  await expect(notes.getByText(/Internal note ·/)).toBeVisible();
+  await page.getByLabel("Search internal notes").fill("nothing matches");
+  await expect(
+    notes.getByRole("heading", { name: "No matching notes" }),
+  ).toBeVisible();
+  await page.getByLabel("Search internal notes").fill("return");
+  await page.screenshot({
+    path: "test-results/inbox-notes.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await notes.getByRole("button", { name: "Write internal note" }).click();
+  await expect(reply).toBeFocused();
+  await expect(page.getByLabel("Internal note", { exact: true })).toBeChecked();
+  await expect(
+    page
+      .locator("#ticket-panel-conversation")
+      .getByText("Private return draft", { exact: true }),
+  ).toBeVisible();
   await page.getByLabel("Internal note", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Resolve", exact: true }).click();
-  await page.getByRole("button", { name: /^Resolved \d/ }).click();
+  await page
+    .getByLabel("Inbox status", { exact: true })
+    .selectOption("resolved");
   await expect(original).toBeVisible();
   await expect(shipping).toHaveCount(0);
   await page.getByRole("button", { name: "Reopen", exact: true }).click();
   await expect(original).toHaveCount(0);
-  await page.getByRole("button", { name: /Needs a person \d/ }).click();
+  await page.getByLabel("Inbox status", { exact: true }).selectOption("human");
   await expect(original).toBeVisible();
   await page.getByLabel("Assign conversation").selectOption({ index: 1 });
   await expect(
@@ -88,6 +117,33 @@ export async function verifyInbox(page: Page, customer: Page) {
     .click();
   // Tabs have one keyboard stop and arrow-key navigation.
   await page.getByRole("tab", { name: "Conversation", exact: true }).focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: "Customer", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: "Notes", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    page.getByRole("tab", { name: "Feedback", exact: true }),
+  ).toBeFocused();
+  const feedback = page.getByRole("region", {
+    name: "Customer feedback",
+    exact: true,
+  });
+  await expect(
+    feedback.getByText("Issue solved", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    feedback.getByText("Experience: Good", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: "test-results/inbox-feedback.png",
+    fullPage: true,
+    animations: "disabled",
+  });
   await page.keyboard.press("ArrowRight");
   await expect(
     page.getByRole("tab", { name: "✦ Support assistant", exact: true }),
@@ -106,6 +162,27 @@ export async function verifyInbox(page: Page, customer: Page) {
     path: "test-results/inbox-desktop.png",
     fullPage: true,
   });
+  const thread = page.getByRole("region", { name: "Selected conversation" });
+  const originalWidth = (await thread.boundingBox())!.width;
+  await reply.fill("Draft while expanded");
+  await page
+    .getByRole("button", { name: "Expand conversation", exact: true })
+    .click();
+  await expect(queue).toBeHidden();
+  expect((await thread.boundingBox())!.width).toBeGreaterThan(
+    originalWidth + 200,
+  );
+  await expect(reply).toHaveValue("Draft while expanded");
+  await page.screenshot({
+    path: "test-results/inbox-expanded.png",
+    fullPage: true,
+    animations: "disabled",
+  });
+  await page
+    .getByRole("button", { name: "Show conversation list", exact: true })
+    .click();
+  await expect(queue).toBeVisible();
+  await reply.fill("");
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(queue).not.toBeVisible();
   await expect(
