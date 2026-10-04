@@ -23,7 +23,8 @@
     "fieldkit": "tsx apps/cli/main.ts",
     "mcp": "tsx packages/mcp/src/server.ts",
     "check": "npm run typecheck && npm run build && npm test",
-    "rotate-key": "tsx scripts/rotate-encryption-key.ts"
+    "rotate-key": "tsx scripts/rotate-encryption-key.ts",
+    "sandbox": "npm run build && tsx scripts/store-sandbox/main.ts"
   },
   "dependencies": {
     "@fontsource/dm-sans": "5.3.0",

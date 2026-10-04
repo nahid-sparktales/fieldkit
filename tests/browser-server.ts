@@ -22,7 +22,8 @@ const app = await createApp(c, {
       : new URL(url).origin === docs.origin
         ? docs.fetch(url, init)
         : providers.fetch(url, init),
-  mailer: async (to, _subject, text) => {
+  mailer: async (to, subject, text, options) => {
+    if(options?.messageId) await writeFile(`.fieldkit/browser/ticket-${options.messageId.replace(/[^a-zA-Z0-9-]/g,"_")}.json`,JSON.stringify({to,subject,text,options}),{mode:0o600});
     await writeFile(
       ".fieldkit/browser/" + to.replace(/[^a-zA-Z0-9]/g, "_") + ".txt",
       text,

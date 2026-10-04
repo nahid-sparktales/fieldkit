@@ -14,6 +14,17 @@
   const button = document.createElement("button");
   button.textContent = "Need a hand?";
   button.setAttribute("aria-expanded", "false");
+  fetch(`${origin}/v2/public/${slug}/widget/config`, { credentials: "omit" })
+    .then((response) => (response.ok ? response.json() : null))
+    .then((config) => {
+      if (!config) return;
+      if (/^#[0-9a-f]{6}$/i.test(config.brandColor))
+        button.style.background = config.brandColor;
+      if (/^#[0-9a-f]{6}$/i.test(config.brandTextColor))
+        button.style.color = config.brandTextColor;
+      frame.title = `${config.name} support`;
+    })
+    .catch(() => {});
   button.onclick = () => {
     const open = frame.style.display !== "block";
     frame.style.display = open ? "block" : "none";

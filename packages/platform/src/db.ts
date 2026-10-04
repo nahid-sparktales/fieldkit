@@ -1,3 +1,4 @@
+import { CUSTOMER_SUPPORT_SCHEMA } from "./customer-support-schema.js";
 import { QUALITY_SCHEMA } from "./quality-schema.js";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { PgBoss } from "pg-boss";
@@ -84,6 +85,10 @@ export class Database {
   async migrate() {
     await this.pool.query(SCHEMA);
     await this.pool.query(QUALITY_SCHEMA);
+    await this.pool.query(CUSTOMER_SUPPORT_SCHEMA);
+    await this.pool.query(
+      "INSERT INTO app_migrations(version) VALUES(11) ON CONFLICT DO NOTHING",
+    );
     await this.saver.setup();
     await this.boss.start();
     for (const name of [
@@ -95,6 +100,7 @@ export class Database {
       "assist",
       "quality",
       "feedback-sync",
+      "ticket-email",
     ])
       await this.boss.createQueue(name, {
         retryLimit: 4,
@@ -120,6 +126,7 @@ CREATE TABLE IF NOT EXISTS memberships(workspace_id text REFERENCES workspaces O
 CREATE TABLE IF NOT EXISTS invitations(id text PRIMARY KEY, workspace_id text REFERENCES workspaces ON DELETE CASCADE, email text NOT NULL, role text NOT NULL CHECK(role IN ('admin','agent')), token_hash text UNIQUE NOT NULL, expires_at timestamptz NOT NULL, accepted_at timestamptz);
 CREATE TABLE IF NOT EXISTS contacts(id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE, user_id text, external_id text, name text NOT NULL DEFAULT '', email text, verified boolean NOT NULL DEFAULT false, mappings jsonb NOT NULL DEFAULT '{}', revision integer NOT NULL DEFAULT 1, UNIQUE(workspace_id,user_id), UNIQUE(workspace_id,external_id), UNIQUE(workspace_id,id));
 CREATE TABLE IF NOT EXISTS channels(id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE, kind text NOT NULL CHECK(kind IN ('portal','widget','zendesk')), published boolean NOT NULL DEFAULT false, settings jsonb NOT NULL DEFAULT '{}', UNIQUE(workspace_id,kind));
+CREATE TABLE IF NOT EXISTS workspace_branding(workspace_id text PRIMARY KEY REFERENCES workspaces ON DELETE CASCADE, config jsonb NOT NULL, revision integer NOT NULL DEFAULT 1, logo bytea, logo_mime text);
 CREATE TABLE IF NOT EXISTS connections(id text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE, provider text NOT NULL, status text NOT NULL, secret text NOT NULL, metadata jsonb NOT NULL DEFAULT '{}', revision integer NOT NULL DEFAULT 1, updated_at timestamptz NOT NULL DEFAULT now(), UNIQUE(workspace_id,provider));
 CREATE TABLE IF NOT EXISTS oauth_states(hash text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE, user_id text NOT NULL, provider text NOT NULL, context jsonb NOT NULL, expires_at timestamptz NOT NULL);
 CREATE TABLE IF NOT EXISTS credentials(hash text PRIMARY KEY, workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE, contact_id text, kind text NOT NULL CHECK(kind IN ('widget','service')), scopes text[] NOT NULL DEFAULT '{}', expires_at timestamptz NOT NULL, label text NOT NULL DEFAULT '', FOREIGN KEY(workspace_id,contact_id) REFERENCES contacts(workspace_id,id));

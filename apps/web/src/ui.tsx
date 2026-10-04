@@ -1,4 +1,36 @@
-import { useEffect, useId, useRef, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  type ReactNode,
+  type ReactElement,
+} from "react";
+
+export function SettingsField({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactNode;
+}) {
+  const id = useId();
+  return (
+    <label className="appearance-field">
+      <span id={id}>{label}</span>
+      {Children.map(children, (child) =>
+        isValidElement(child) &&
+        ["input", "textarea", "select"].includes(String(child.type))
+          ? cloneElement(child as ReactElement<{ "aria-labelledby": string }>, {
+              "aria-labelledby": id,
+            })
+          : child,
+      )}
+    </label>
+  );
+}
 
 export function LoadingState({ label = "Loading…" }: { label?: string }) {
   return (

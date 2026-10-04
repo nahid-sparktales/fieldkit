@@ -1,4 +1,6 @@
+import { TicketEmail, queueTicketEmail } from "./ticket-email.js";
 import { Quality } from "./quality.js";
+import { Branding } from "./branding.js";
 import { FeedbackSync } from "./feedback-sync.js";
 import type { CodeRunner } from "./code-runner.js";
 import type { Config } from "./config.js";
@@ -43,7 +45,9 @@ export class Platform {
   assistance: Assistance;
   workflows: Workflows;
   quality: Quality;
+  branding: Branding;
   feedbackSync: FeedbackSync;
+  ticketEmail: TicketEmail;
   constructor(
     public config: Config,
     options: {
@@ -54,8 +58,15 @@ export class Platform {
     } = {},
   ) {
     this.db = new Database(config);
+    this.branding = new Branding(this.db);
     this.auth = createAuth(this.db, options.mailer);
     this.connections = new Connections(this.db, options.fetch);
+    this.ticketEmail = new TicketEmail(
+      this.db,
+      this.connections,
+      this.auth.send,
+      (p, id, input) => this.message(p, id, input),
+    );
     this.model = options.model ?? new LiveModel(this.db, this.connections);
     this.knowledge = new Knowledge(this.db, this.connections, this.model);
     this.actions = new Actions(this.db, this.connections);
@@ -190,6 +201,16 @@ export class Platform {
           j.data.path,
         );
     });
+    await this.db.boss.work<{ workspaceId: string; emailId: string }>(
+      "ticket-email",
+      async (jobs) => {
+        for (const job of jobs)
+          await this.ticketEmail.deliver(
+            job.data.workspaceId,
+            job.data.emailId,
+          );
+      },
+    );
     await this.db.boss.schedule("maintenance", "0 * * * *", {});
   }
   async maintenance() {
@@ -435,6 +456,15 @@ export class Platform {
         );
     if (!channel || (!staff(p) && !channel.published))
       throw new HttpError(403, "This support channel is not published");
+    if (
+      !staff(p) &&
+      ((p.channelId && p.channelId !== channel.id) ||
+        (channel.kind === "portal" && p.role !== "customer"))
+    )
+      throw new HttpError(
+        403,
+        "Sign in with a verified account to submit a ticket",
+      );
     return this.db.tx(async (q) => {
       await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `${p.workspaceId}:${contactId}:${message.requestKey}`,
@@ -534,6 +564,8 @@ export class Platform {
         await q.query("UPDATE messages SET delivered_at=now() WHERE id=$1", [
           msg.id,
         ]);
+      if (!conv.external_id && role === "staff")
+        await queueTicketEmail(this.db, q, p.workspaceId, msg.id);
       const next = (
         await this.db.rows(
           "UPDATE conversations SET revision=revision+1,status='open',mode=$1,updated_at=now() WHERE id=$2 RETURNING *",
@@ -568,6 +600,38 @@ export class Platform {
         !note,
       );
       return msg;
+    });
+  }
+  async customerStatus(p: Principal, id: string, status: "open" | "resolved") {
+    if (!["customer", "visitor"].includes(p.role))
+      throw new HttpError(403, "Customer access required");
+    return this.db.tx(async (q) => {
+      const conv = await conversation(this.db, p, id, q);
+      if (conv.external_id)
+        throw new HttpError(
+          409,
+          "This ticket is managed by the support team in Zendesk",
+        );
+      const next = requireValue(
+        await this.db.one(
+          "UPDATE conversations SET status=$3,revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 RETURNING *",
+          [p.workspaceId, id, status],
+          q,
+        ),
+      );
+      await q.query(
+        "UPDATE approvals SET status='stale' WHERE status='pending' AND run_id IN (SELECT id FROM runs WHERE conversation_id=$1)",
+        [id],
+      );
+      await this.db.event(
+        q,
+        p.workspaceId,
+        "conversation.updated",
+        { previousStatus: conv.status, status, actorType: "customer" },
+        id,
+        true,
+      );
+      return next;
     });
   }
   async control(

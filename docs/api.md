@@ -8,6 +8,9 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | ------------------------------------------------------ | ------------------ | ---------------------------------------------------------------------------------------- |
 | empty                                                  | GET                | Workspace settings, channels, usage                                                      |
 | `/settings`                                            | PUT                | Admin settings                                                                           |
+| `/appearance`                                          | GET, PUT           | Owner/admin public appearance, optimistic revision and optional logo                     |
+| `/appearance/logo`                                     | GET                | Owner/admin private saved-logo preview                                                   |
+| `/profile`                                             | PUT                | Owner/admin workspace rename; accepts only `name`                                        |
 | `/members`, `/invitations`                             | GET / POST         | Staff list / admin invitations                                                           |
 | `/contacts`, `/contacts/:id/mapping`                   | GET / PUT          | Staff identities / reviewed admin mapping                                                |
 | `/agent/test`                                          | POST               | Admin answer preview with no account actions                                             |
@@ -56,6 +59,14 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | `/requests`, `/requests/:id`, `/requests/:id/messages` | POST / GET / POST  | Scoped service support request/status                                                    |
 
 Public routes under `/v2/public/:slug` expose only published configuration and articles. `/join` binds a verified portal account. `/widget/session` creates an anonymous or server-signed customer token for a published widget. Exact allowed origins are checked. `/v2/webhooks/zendesk/:workspaceId` accepts only provider-signed events. OAuth callbacks are `/v2/oauth/:provider/callback`.
+
+## Appearance and profile
+
+`GET /v2/workspaces/:workspaceId/appearance` returns `{ config, revision, logoUrl }`. `PUT` accepts `{ config, revision, logo? }`, with a complete `Appearance` config from `packages/platform/src/branding-contracts.ts`. Omit `logo` to keep it, send `null` to remove it, or send `{ "data": "base64 raster bytes" }` to replace it. Maximum decoded logo size is 1 MB. Stale revisions return 409; failed validation leaves the saved appearance untouched. Configuration only exposes public copy, colors and HTTPS links, not model settings or credentials.
+
+Published portal and widget configuration include `appearance` as well as the existing `name`, `greeting`, and `brandColor` fields. Widget configuration also includes `brandTextColor` for launcher contrast. Public logo bytes are served at `/v2/public/:slug/appearance/logo` only while at least one native channel is published. The workspace `/appearance/logo` route requires an owner/admin session. Logo responses are not cached, including when the URL includes a version query.
+
+`PUT /v2/profile` accepts only `{ "name": "Display name" }` for the verified signed-in user and synchronizes linked contact names. It cannot select another user, alter email, or change identity mappings. The workspace `/profile` endpoint accepts `{ "name": "Workspace name" }` and preserves the slug. Password and session controls use Better Auth's `/api/auth/change-password`, `/list-sessions`, and `/revoke-other-sessions`; password changes require the current password. See [the branding guide](branding.md).
 
 ## Model configuration
 
@@ -147,29 +158,47 @@ Custom/subflow nodes reference `componentId`, immutable `version`, and `inputs`,
 
 All paths below are relative to `/v2/workspaces/:workspaceId` and use the existing session authorization. They share the Zod contracts in `packages/platform/src/quality-contracts.ts`.
 
-| Resource | Methods | Access |
-| --- | --- | --- |
-| `/evaluation/suites` | GET, POST | Staff read; owner/admin create |
-| `/evaluation/suites/:id` | PUT (name, revision, cases) | Owner/admin; optimistic revision |
-| `/evaluation/runs` | GET, POST (suiteId, tokenCap, variants, judge) | Staff read; owner/admin launch |
-| `/quality/jobs/:id` | GET, PATCH (cancel/retry) | Staff read; owner/admin control |
-| `/evaluation/runs/:id/results/:resultId/reviews` | POST (verdict, note) | Staff; append-only review history |
-| `/conversations/:id/test-case` | GET | Staff; returns an unsaved draft excluding internal notes |
-| `/conversations/:id/gap` | POST | Staff flag; deduplicated |
-| `/conversations/:id/feedback` | GET, PUT | Own conversation; only customer/visitor can submit |
-| `/knowledge/gaps` and `/knowledge/gaps/:id` | GET | Staff |
-| `/knowledge/gaps/:id` | PATCH (status, reason) | Staff; closing requires a reason |
-| `/knowledge/gaps/:id/merge` | POST (targetId) | Staff |
-| `/knowledge/gaps/:id/case` | GET | Staff; draft regression case |
-| `/knowledge/gaps/:id/draft` | POST | Owner/admin; creates a private FAQ draft |
-| `/knowledge/analysis` | GET, POST (tokenCap, optional gapIds) | Staff read; owner/admin launch |
-| `/knowledge/gap-scan` | POST (days 1–365, limit 1–500) | Owner/admin; no model calls |
-| `/quality/settings` | GET, PUT (nightly, dailyTokenCap) | Staff read; owner write |
-| `/analytics?from=ISO&to=ISO&channel=portal` | GET | Staff; default 30 days, max 366 days |
-| `/quality/events?after=eventId` | GET SSE | Staff; permissions rechecked while streaming |
+| Resource                                         | Methods                                        | Access                                                   |
+| ------------------------------------------------ | ---------------------------------------------- | -------------------------------------------------------- |
+| `/evaluation/suites`                             | GET, POST                                      | Staff read; owner/admin create                           |
+| `/evaluation/suites/:id`                         | PUT (name, revision, cases)                    | Owner/admin; optimistic revision                         |
+| `/evaluation/runs`                               | GET, POST (suiteId, tokenCap, variants, judge) | Staff read; owner/admin launch                           |
+| `/quality/jobs/:id`                              | GET, PATCH (cancel/retry)                      | Staff read; owner/admin control                          |
+| `/evaluation/runs/:id/results/:resultId/reviews` | POST (verdict, note)                           | Staff; append-only review history                        |
+| `/conversations/:id/test-case`                   | GET                                            | Staff; returns an unsaved draft excluding internal notes |
+| `/conversations/:id/gap`                         | POST                                           | Staff flag; deduplicated                                 |
+| `/conversations/:id/feedback`                    | GET, PUT                                       | Own conversation; only customer/visitor can submit       |
+| `/knowledge/gaps` and `/knowledge/gaps/:id`      | GET                                            | Staff                                                    |
+| `/knowledge/gaps/:id`                            | PATCH (status, reason)                         | Staff; closing requires a reason                         |
+| `/knowledge/gaps/:id/merge`                      | POST (targetId)                                | Staff                                                    |
+| `/knowledge/gaps/:id/case`                       | GET                                            | Staff; draft regression case                             |
+| `/knowledge/gaps/:id/draft`                      | POST                                           | Owner/admin; creates a private FAQ draft                 |
+| `/knowledge/analysis`                            | GET, POST (tokenCap, optional gapIds)          | Staff read; owner/admin launch                           |
+| `/knowledge/gap-scan`                            | POST (days 1–365, limit 1–500)                 | Owner/admin; no model calls                              |
+| `/quality/settings`                              | GET, PUT (nightly, dailyTokenCap)              | Staff read; owner write                                  |
+| `/analytics?from=ISO&to=ISO&channel=portal`      | GET                                            | Staff; default 30 days, max 366 days                     |
+| `/quality/events?after=eventId`                  | GET SSE                                        | Staff; permissions rechecked while streaming             |
 
 A case has an ID, name, up to ten ordered `{question, expected}` turns, channel, and fixtures. Expected checks can require an intent, visited node IDs, source IDs, exact action name/parameters, approval requirement, and a reference answer. Imported cases retain their source conversation ID and require `personalDataReviewed: true` before saving.
 
 Runs accept one or two variants, each with a name and optional workflow `definition`, response `model`, and `provider`. An enabled judge defaults to the workspace response model; it may have its own connected provider/model. `tokenCap` is mandatory (1,000–10,000,000). Reservations for response, retrieval embedding, and judging calls share the same cap and workspace budget. A retry needs `{action:"retry", acknowledgeRetry:true}` and may increase the total cap. Completed turns are reused. Unresolved reservations remain visible; acknowledgement does not clear usage.
 
 Feedback input is `{messageId, resolved, rating: "good" | "bad" | null, comment}`. The message must be a delivered AI reply belonging to the caller's conversation. Updates replace its current rating while preserving its history; a later customer message prevents an old answer from confirming resolution. Zendesk ratings are read-only imports and never become native resolution confirmations.
+
+### Inbox presentation metadata
+
+`GET /v2/workspaces/:ws/conversations` returns the latest 200 accessible conversations, with `channel_kind`, `last_message` (up to 240 characters from the latest customer/assistant/staff message), and `last_message_role`. Private notes and system messages are excluded from previews for every role. `approval_expires_at` contains the pending approval expiry for staff, otherwise `null`; an invalidated approval has no pending expiry. Existing workspace/customer access checks apply.
+
+The staff-only approval objects in conversation detail include `action_name` and `action_kind` for readable review cards. These display fields do not change the signed proposal, approval hash, permission requirements, or execution checks.
+
+### Channel workflows and customer correspondence
+
+`GET/PUT /v2/workspaces/:ws/workflow` and `POST .../workflow/publish` accept `?channel=default|portal|widget|zendesk` (default: `default`). Each profile has its own optimistic draft revision; `inheritedVersion` identifies a fallback publication. Existing version endpoints use workspace-unique version numbers.
+
+`POST .../conversations/:id/status` accepts `{ "status": "open" | "resolved" }` from the owning customer/visitor only, for native conversations. It preserves takeover and invalidates pending work. Feedback writes require a resolved conversation and its latest delivered assistant/staff reply. Public message reads exclude internal and undelivered replies.
+
+First-party portal requests use `X-Fieldkit-Audience: customer` with the verified session to act as that user's workspace contact, including when the user is also staff. It can only reduce privileges and requires a prior `/v2/public/:slug/join`. Widget credentials are channel-bound; anonymous portal sessions are no longer issued. Public portal configuration includes `chatEnabled` and `emailReplies`; `/join` includes the verified account email and portal channel ID.
+
+Administrators use `GET/PUT/DELETE .../ticket-email` for inbound configuration and recent delivery/rejection status. PUT accepts `{ "address": "support@inbound.example.com" }`, replaces credentials, revokes prior reply addresses, and returns the webhook password once. `POST .../ticket-email/:id/retry` explicitly retries an unknown/failed SMTP attempt. Staff conversation details include `emailDeliveries` and `inboundEmails`; customers cannot read these operational records.
+
+`POST /v2/webhooks/email/:workspaceId` accepts Postmark inbound JSON with HTTP Basic Auth. Authenticate before parsing; body limit 256 KiB. See [email setup](customer-support.md) for required fields, ownership, deduplication, and limitations.

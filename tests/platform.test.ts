@@ -1758,3 +1758,104 @@ test("unpublishing a channel pauses its conversations and revokes existing widge
   );
   assert.equal(response.status, 401);
 });
+
+test("inbox previews exclude private notes and remain scoped to the authenticated customer and workspace", async () => {
+  const user = await app.db.one(
+    'SELECT id,email FROM "user" WHERE "emailVerified"=true LIMIT 1',
+  );
+  const w = await workspace(app, user.id),
+    other = await workspace(app, user.id);
+  const first = await app.newConversation(w.customer, {
+    body: "Public question",
+    requestKey: uid(),
+    channelId: w.channelId,
+  });
+  await app.message(w.owner, first.id, {
+    body: "A public reply",
+    requestKey: uid(),
+  });
+  await app.message(
+    w.owner,
+    first.id,
+    { body: "PRIVATE-NOTE-EXCLUDED", requestKey: uid() },
+    true,
+  );
+  await app.newConversation(other.customer, {
+    body: "OTHER-WORKSPACE-EXCLUDED",
+    requestKey: uid(),
+  });
+  const secondId = uid();
+  await app.db.pool.query(
+    "INSERT INTO contacts(id,workspace_id,name) VALUES($1,$2,'Another customer')",
+    [secondId, w.ws.id],
+  );
+  await app.newConversation(
+    { workspaceId: w.ws.id, role: "customer", contactId: secondId },
+    { body: "OTHER-CUSTOMER-EXCLUDED", requestKey: uid() },
+  );
+  const secret = token();
+  await app.db.pool.query(
+    "UPDATE channels SET published=true WHERE workspace_id=$1 AND kind='widget'",
+    [w.ws.id],
+  );
+  await app.db.pool.query(
+    "INSERT INTO credentials(hash,workspace_id,contact_id,kind,expires_at) VALUES($1,$2,$3,'widget',now()+interval '1 hour')",
+    [tokenHash(secret), w.ws.id, w.contactId],
+  );
+  const response = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/conversations`,
+    { headers: { Authorization: `Bearer ${secret}` } },
+  );
+  assert.equal(response.status, 200);
+  const result = (await response.json()) as any;
+  assert.equal(result.conversations.length, 1);
+  assert.equal(result.conversations[0].id, first.id);
+  assert.equal(result.conversations[0].last_message, "A public reply");
+  assert.equal(result.conversations[0].last_message_role, "staff");
+  assert.equal(result.conversations[0].channel_kind, "portal");
+  assert.equal(result.conversations[0].approval_expires_at, null);
+  assert.ok(!JSON.stringify(result).includes("EXCLUDED"));
+  const cross = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${other.ws.id}/conversations`,
+    { headers: { Authorization: `Bearer ${secret}` } },
+  );
+  assert.equal(cross.status, 401);
+  await refundAction(w.ws.id);
+  const { conv } = await runText(w, "Please refund my purchase");
+  const cookie = staffTestCookie;
+  assert.ok(cookie);
+  const detail = await call(
+    `/v2/workspaces/${w.ws.id}/conversations/${conv.id}`,
+    undefined,
+    cookie,
+  );
+  assert.equal(detail.response.status, 200);
+  assert.equal(detail.json.approvals[0].action_name, "refund_payment");
+  const list = await call(
+    `/v2/workspaces/${w.ws.id}/conversations`,
+    undefined,
+    cookie,
+  );
+  assert.ok(
+    list.json.conversations.find((row: any) => row.id === conv.id)
+      .approval_expires_at,
+  );
+  const joined = await call(`/v2/public/${w.ws.slug}/join`, {}, cookie);
+  assert.equal(joined.response.status, 200);
+  const customerHeaders = { Cookie: cookie, "X-Fieldkit-Audience": "customer" };
+  const ownOnly = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/conversations`,
+    { headers: customerHeaders },
+  );
+  assert.deepEqual(((await ownOnly.json()) as any).conversations, []);
+  const hidden = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/conversations/${conv.id}`,
+    { headers: customerHeaders },
+  );
+  assert.equal(hidden.status, 404);
+  const reduced = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/workflow`,
+    { headers: customerHeaders },
+  );
+  assert.equal(reduced.status, 403);
+});

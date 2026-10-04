@@ -1,10 +1,18 @@
 import { test, expect } from "@playwright/test";
+import { verifyCustomerSupport } from "./customer-support-journey.js";
+import { verifyInbox } from "./inbox-journey.js";
 import { readFile } from "node:fs/promises";
+import {
+  customizeHelpCenter,
+  verifyBrandedPortal,
+  verifyBrandedWidget,
+} from "./branding-journey.js";
 
 test("real onboarding, knowledge review, portal conversation, and human takeover", async ({
   page,
   browser,
 }) => {
+  test.setTimeout(180000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
@@ -480,7 +488,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     releaseSave = resolve;
   });
   await page.route(
-    "**/workflow",
+    "**/workflow?channel=default",
     async (route) => {
       await pendingSave;
       await route.fulfill({
@@ -556,6 +564,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await page.getByLabel("Reply behavior").selectOption("automatic");
   await page.getByRole("button", { name: "Save settings" }).click();
   await expect(page.getByText("Workspace settings saved.")).toBeVisible();
+  await customizeHelpCenter(page);
   await page.getByRole("button", { name: "Publish", exact: true }).click();
   const portal = page.locator("section.panel").filter({
     has: page.getByRole("heading", { name: "Support portal", exact: true }),
@@ -565,16 +574,21 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(portal.getByText("published", { exact: true })).toBeVisible();
   const customerContext = await browser.newContext(),
     customer = await customerContext.newPage();
+  await verifyBrandedWidget(page, customer);
   await customer.goto("http://127.0.0.1:4351/support/northstar-workshop");
   await expect(
-    customer.getByRole("heading", { name: "How can we help?" }).first(),
+    customer.getByRole("heading", { name: "Hello from Northstar" }).first(),
   ).toBeVisible();
   await expect(
     customer.getByRole("heading", { name: "returns.txt" }),
   ).toBeVisible();
+  await verifyBrandedPortal(customer);
   await customer
     .getByRole("button", { name: "Sign in / Create account" })
     .click();
+  await expect(
+    customer.getByText("WELCOME TO Northstar Help", { exact: true }),
+  ).toBeVisible();
   await customer
     .getByRole("button", { name: "Create an account", exact: true })
     .click();
@@ -598,13 +612,35 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await customer.goto(customerEmail.match(/https?:\/\/\S+/)![0]);
   await customer.goto("http://127.0.0.1:4351/support/northstar-workshop");
   await expect(customer.getByText("Your support account")).toBeVisible();
-  await customer.getByLabel("Your message").fill("What is your return policy?");
-  await customer.getByRole("button", { name: "Send →" }).click();
+  await customer
+    .getByRole("button", { name: "Your support account", exact: true })
+    .click();
+  await expect(
+    customer.getByLabel("Display name", { exact: true }),
+  ).toHaveValue("A real customer");
+  await customer
+    .getByRole("button", { name: "← Back to help center", exact: true })
+    .click();
+  await customer
+    .getByRole("button", { name: "Submit a ticket", exact: true })
+    .click();
+  await customer
+    .getByLabel("Subject", { exact: true })
+    .fill("What is your return policy?");
+  await customer
+    .getByLabel("Message", { exact: true })
+    .fill("What is your return policy?");
+  await customer
+    .getByRole("button", { name: "Send ticket", exact: true })
+    .click();
+  await expect(
+    customer.getByText("Did this solve your issue?", { exact: true }),
+  ).toHaveCount(0);
   await expect(
     customer.getByText("You can return an unused item within 30 days."),
   ).toBeVisible({ timeout: 20000 });
   await expect(
-    customer.getByRole("heading", { name: "Your tickets" }),
+    customer.getByRole("heading", { name: "What is your return policy?" }),
   ).toBeVisible();
   await customer.screenshot({
     path: "test-results/portal.png",
@@ -615,8 +651,16 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     page.getByRole("heading", { name: "What is your return policy?" }).last(),
   ).toBeVisible();
   await customer
-    .getByLabel("Issue resolution", { exact: true })
-    .selectOption("true");
+    .getByRole("button", { name: "Close ticket", exact: true })
+    .click();
+  await customer
+    .getByRole("radio", { name: "Yes, solved", exact: true })
+    .check();
+  await customer
+    .getByText("Add an experience rating or comment (optional)", {
+      exact: true,
+    })
+    .click();
   await customer
     .getByLabel("Experience (optional)", { exact: true })
     .selectOption("good");
@@ -628,8 +672,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
       exact: true,
     }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "Reopen", exact: true }).click();
   await page.getByRole("button", { name: "Take over", exact: true }).click();
-  await expect(page.getByText("human takeover", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("Agent paused · your team is in control", { exact: true }),
+  ).toBeVisible();
   await page
     .getByLabel("Reply", { exact: true })
     .fill("I’m here to help with your return.");
@@ -637,6 +684,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(
     customer.getByText("I’m here to help with your return."),
   ).toBeVisible({ timeout: 10000 });
+  await verifyInbox(page, customer);
   await page.getByLabel("Reply", { exact: true }).fill("/customer-support");
   await page.getByLabel("Reply", { exact: true }).press("Enter");
   await expect(page.getByLabel("Reply", { exact: true })).toHaveValue("");
@@ -666,6 +714,9 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .getByRole("button", { name: "Use as internal note", exact: true })
     .click();
   await expect(page.getByLabel("Internal note", { exact: true })).toBeChecked();
+  await page
+    .getByRole("tab", { name: "✦ Support assistant", exact: true })
+    .click();
   await assistant
     .getByRole("button", { name: "Draft a customer response", exact: true })
     .click();
@@ -681,6 +732,9 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(page.getByLabel("Reply", { exact: true })).toHaveValue(
     /Unused items/,
   );
+  await page
+    .getByRole("tab", { name: "✦ Support assistant", exact: true })
+    .click();
   await assistant
     .getByRole("button", {
       name: "Package an engineering escalation",
@@ -733,6 +787,9 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   ).toBeVisible();
   await page.screenshot({ path: "test-results/inbox.png", fullPage: true });
   await customer.reload();
+  await customer
+    .getByRole("button", { name: "My tickets", exact: true })
+    .click();
   await expect(
     customer.getByRole("button", { name: /What is your return policy/ }),
   ).toBeVisible();
@@ -1002,6 +1059,9 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .getByRole("button", { name: "Clear filters", exact: true })
     .click();
   await page
+    .getByRole("tab", { name: "Activity & tools", exact: true })
+    .click();
+  await page
     .getByRole("button", { name: "Flag knowledge gap", exact: true })
     .click();
   await expect(
@@ -1022,6 +1082,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     path: "test-results/knowledge-gaps.png",
     fullPage: true,
   });
+  await verifyCustomerSupport(page, customer);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(
     await page.evaluate(

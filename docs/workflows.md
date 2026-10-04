@@ -45,3 +45,7 @@ See [customization and runner setup](workflow-components.md) for variables, code
 ## Repeatable evaluation
 
 Use **Test Lab** for saved multi-turn scenarios and up to two workflow/model variants. It runs the actual expanded graph with account/API fixtures and stops at the governed action boundary. This is distinct from the existing preview, which retains live reads. Rule checks, AI quality scores, and staff verdicts stay separate, and no evaluation publishes a workflow. See the [quality guide](quality.md) for fixtures, snapshots, budgets, cancellation, and recovery.
+
+## Separate ticket and chat graphs
+
+Use the Channel workflow selector to edit the workspace default, support tickets/email, live chat/widget, or Zendesk. Unspecialized channels inherit the published default. Publication histories and drafts are separate; reusable steps and governed resources remain shared. See [customer support workflows](customer-support.md#independent-channel-workflows).

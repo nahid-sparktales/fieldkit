@@ -16,6 +16,7 @@ Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of t
 - Guided setup, model connection, document review, answer preview, publishing, customer accounts, articles, ticket conversations, private notes, assignment, approvals, and human takeover.
 - **Knowledge → FAQs:** write and edit FAQ drafts, improve an answer with AI, or generate up to eight drafts from customer-approved knowledge. Approve each answer for retrieval and optionally publish it in the help center. Editing withdraws the previous answer until it is approved again; manual drafting requires no model key.
 - **FAQ agent:** review every passage of every ready, customer-approved document, including all indexed documentation pages. Durable background batches show progress, support cancellation/retry, and save private FAQ drafts. Source changes invalidate unfinished work; existing FAQs are excluded and repeated questions are skipped.
+- **Focused staff inbox:** color-coded work queues, conversation previews, assignment filters, readable approval cards, per-ticket reply drafts, private notes, keyboard shortcuts, and a mobile conversation view. [Inbox UX guide](docs/inbox-design.md).
 - **Inbox support assistant:** triage and prioritize a ticket, research across indexed sources, draft a customer response, package an engineering escalation, and turn a resolved ticket into a private knowledge-base article. Review and edit outputs with evidence before applying them. Internal research can use staff-only knowledge; customer replies cannot. Type `/customer-support` in a staff reply box to open the assistant.
 - PDF, DOCX, Markdown, text, individual website pages or entire public documentation sites (Docusaurus/GitBook), selected Notion pages, Google Picker files, and Zendesk help-center articles. Background ingestion, extraction errors, per-page versions and citations, manual refresh, and hourly synchronization. Imported knowledge starts staff-only; approval for customer answers and public article publication are separate controls.
 - Multiple model providers inside LangGraph, separate response and embedding settings, PostgreSQL checkpoints, tenant-scoped pgvector/keyword retrieval, citations, provider-reported token usage, and workspace budgets. Claude uses its native Messages API; OpenAI uses Responses; other providers use compatible Chat Completions. Every result is schema-validated. See [model setup](docs/models.md).
@@ -26,6 +27,12 @@ Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of t
 - Zendesk OAuth, signed webhooks, paginated synchronization, public replies, notes, tags, assignment, status, safe updates, and uncertain-outcome reconciliation.
 - Separate Stripe test/live connections, purchase/subscription retrieval, full or partial refunds, and selected-subscription cancellation at period end. Fixed-destination custom APIs with schemas, reviewed customer mappings, exact approvals, automatic limits, durable operation IDs, and outcome lookup.
 - A `/v2` API, event streams, authenticated SDK/CLI/MCP, durable PostgreSQL jobs, a separate worker, health checks, and Docker Compose packaging.
+
+Use **Publish → Appearance** to customize the help center's logo, colors, welcome content, public name, article visibility, and website/privacy/terms links with desktop and mobile previews. The logo and accent also apply to the embedded chatbot. **Settings → My profile** manages your display name, password, and active sessions; **Settings → Workspace** renames the workspace without changing its public URL. [Branding and account guide](docs/branding.md).
+
+## Try a local store sandbox
+
+Run `npm run sandbox` with local PostgreSQL/pgvector available, then open [the store launch page](http://127.0.0.1:4321/). It creates a separate, persistent **Trail Supply** sandbox with staff/customer logins, policies, a portal and widget, starter tickets, refund/cancellation approvals, and Test Lab cases. Responses and payments are explicitly simulated; no model tokens or real orders are used. Restarting preserves edits; resetting requires `--reset`. [Setup and walkthrough](examples/store/README.md).
 
 ## Installation
 
@@ -67,7 +74,7 @@ npm ci --prefix examples/demo
 npm run test:demo
 ```
 
-Tests delete the contents of the dedicated test database. Never point them at installation data. Model doubles live only under `tests/`; the running app has no simulation switch. A separate opt-in live evaluation set is available with `npm run test:live` and reports missing credentials as blocked.
+Tests delete the contents of the dedicated test database. Never point them at installation data. Model doubles live under `tests/` and the explicitly invoked store sandbox in `scripts/store-sandbox/`; the normal running app has no simulation switch. A separate opt-in live evaluation set is available with `npm run test:live` and reports missing credentials as blocked.
 
 For local development, configure PostgreSQL 17 with pgvector, run `npm run migrate`, then run `npm run dev` and `npm run worker` in separate terminals. Real signup still needs SMTP.
 
@@ -86,3 +93,7 @@ For local development, configure PostgreSQL 17 with pgvector, run `npm run migra
 - [Reporting a security vulnerability](SECURITY.md)
 
 One installation on one server and one agent configuration per workspace are the initial deployment boundaries. Paid hosting, subscriptions, included model credits, OCR, unrestricted host scripts, and unrestricted agent HTTP access are outside this release.
+
+### Ticket support and live chat
+
+The help center separates **Submit a ticket** from **Chat now**. Tickets use a subject, message history, waiting states, and queued email notifications; the live assistant uses the widget channel. Feedback appears only after closure. Choose independent ticket/email, chat, and Zendesk graphs in **Workflow → Channel workflow**. Configure direct email replies and delivery recovery in **Publish → Email support**. See [customer support and email setup](docs/customer-support.md) for SMTP, Postmark inbound, security boundaries, and the local captured-email walkthrough.

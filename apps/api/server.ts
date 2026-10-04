@@ -1,4 +1,6 @@
+import { WorkflowChannel } from "../../packages/platform/src/channel-workflows.js";
 import { usageContext } from "../../packages/platform/src/usage-context.js";
+import { readableText } from "../../packages/platform/src/branding-contracts.js";
 import { qualityRoutes } from "./quality-routes.js";
 import { WorkflowDefinition } from "../../packages/platform/src/workflow-definition.js";
 import {
@@ -52,9 +54,9 @@ async function rawBody(req: IncomingMessage, max = 256 * 1024) {
   }
   return Buffer.concat(chunks);
 }
-async function body(req: IncomingMessage): Promise<any> {
+async function body(req: IncomingMessage, max?: number): Promise<any> {
   try {
-    return JSON.parse((await rawBody(req)).toString() || "{}");
+    return JSON.parse((await rawBody(req, max)).toString() || "{}");
   } catch (e) {
     if (e instanceof HttpError) throw e;
     throw new HttpError(400, "Invalid JSON");
@@ -81,6 +83,15 @@ export async function createApp(
   else await app.start();
   if (options.workers) await app.workers();
   const authHandler = toNodeHandler(app.auth.auth);
+  const sendLogo = async (ws: string, res: ServerResponse) => {
+    const logo = await app.branding.logo(ws);
+    res.writeHead(200, {
+      "Content-Type": logo.logo_mime,
+      "Cache-Control": "no-store",
+      "Content-Security-Policy": "default-src 'none'; sandbox",
+    });
+    res.end(logo.logo);
+  };
   const vite = options.dev
     ? await (
         await import("vite")
@@ -134,9 +145,12 @@ export async function createApp(
         res.setHeader("Vary", "Origin");
         res.setHeader(
           "Access-Control-Allow-Headers",
-          "Authorization, Content-Type",
+          "Authorization, Content-Type, X-Fieldkit-Audience",
         );
-        res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+        res.setHeader(
+          "Access-Control-Allow-Methods",
+          "GET, POST, PUT, OPTIONS",
+        );
       }
       if (method === "OPTIONS") {
         res.writeHead(204);
@@ -164,6 +178,22 @@ export async function createApp(
           )),
           smtpConfigured: !!c.SMTP_URL,
         });
+        return;
+      }
+      const emailWebhook = path.match(/^\/v2\/webhooks\/email\/([^/]+)$/);
+      if (emailWebhook && method === "POST") {
+        await app.ticketEmail.authenticate(
+          emailWebhook[1],
+          req.headers.authorization ?? "",
+        );
+        json(
+          res,
+          await app.ticketEmail.receive(
+            emailWebhook[1],
+            req.headers.authorization ?? "",
+            await body(req),
+          ),
+        );
         return;
       }
       let match = path.match(/^\/v2\/webhooks\/zendesk\/([^/]+)$/);
@@ -216,13 +246,16 @@ export async function createApp(
             404,
             "Widget is not published",
           );
-          const settings = Settings.parse(ws.settings);
+          const appearance = await app.branding.get(ws.id, true);
           json(res, {
             id: ws.id,
-            name: ws.name,
-            greeting: settings.greeting,
-            brandColor: settings.brandColor,
+            name: appearance.config.brandName || ws.name,
+            greeting: appearance.config.greeting,
+            brandColor: appearance.config.accentColor,
+            brandTextColor: readableText(appearance.config.accentColor),
+            appearance,
             origins: channel.settings.origins ?? [],
+            channelId: channel.id,
           });
           return;
         }
@@ -258,6 +291,11 @@ export async function createApp(
                 origin !== new URL(c.FIELDKIT_URL).origin))
           )
             throw new HttpError(403, "Widget origin is not allowed");
+          if (data.channel === "portal")
+            throw new HttpError(
+              403,
+              "Sign in to submit a ticket; anonymous questions use live chat",
+            );
           let contact: any;
           if (data.signedIdentity) {
             const [encoded, signature, ...rest] =
@@ -322,8 +360,8 @@ export async function createApp(
             )[0];
           const credential = token();
           await app.db.pool.query(
-            "INSERT INTO credentials(hash,workspace_id,contact_id,kind,expires_at) VALUES($1,$2,$3,'widget',now()+interval '1 hour')",
-            [tokenHash(credential), ws.id, contact.id],
+            "INSERT INTO credentials(hash,workspace_id,contact_id,kind,expires_at,channel_id) VALUES($1,$2,$3,'widget',now()+interval '1 hour',$4)",
+            [tokenHash(credential), ws.id, contact.id, channel.id],
           );
           json(res, {
             token: credential,
@@ -333,17 +371,38 @@ export async function createApp(
           });
           return;
         }
+        if (suffix === "/appearance/logo" && method === "GET") {
+          if (
+            !portal &&
+            !(await app.db.one(
+              "SELECT id FROM channels WHERE workspace_id=$1 AND kind='widget' AND published",
+              [ws.id],
+            ))
+          )
+            throw new HttpError(404, "Support channel is not published");
+          await sendLogo(ws.id, res);
+          return;
+        }
         if (!portal)
           throw new HttpError(404, "Support portal is not published");
         if (!suffix && method === "GET") {
-          const settings = Settings.parse(ws.settings);
+          const appearance = await app.branding.get(ws.id, true);
           json(res, {
             id: ws.id,
             slug: ws.slug,
-            name: ws.name,
-            greeting: settings.greeting,
-            brandColor: settings.brandColor,
+            name: appearance.config.brandName || ws.name,
+            greeting: appearance.config.greeting,
+            brandColor: appearance.config.accentColor,
+            appearance,
             channelId: portal.id,
+            chatEnabled: !!(await app.db.one(
+              "SELECT id FROM channels WHERE workspace_id=$1 AND kind='widget' AND published",
+              [ws.id],
+            )),
+            emailReplies: !!(await app.db.one(
+              "SELECT id FROM connections WHERE workspace_id=$1 AND provider='ticket_email' AND status='connected'",
+              [ws.id],
+            )),
           });
           return;
         }
@@ -378,10 +437,35 @@ export async function createApp(
               [uid(), ws.id, user.id, user.name, user.email],
             )
           )[0];
-          json(res, { workspaceId: ws.id, contactId: contact.id });
+          json(res, {
+            workspaceId: ws.id,
+            contactId: contact.id,
+            email: user.email,
+            channelId: portal.id,
+          });
           return;
         }
         throw new HttpError(404, "Unknown portal endpoint");
+      }
+      if (path === "/v2/profile" && method === "PUT") {
+        const user = await userSession(app.auth, req);
+        await app.rate(`profile:${user.id}`, 30);
+        const data = z
+          .object({ name: z.string().trim().min(1).max(80) })
+          .strict()
+          .parse(await body(req));
+        await app.db.tx(async (q) => {
+          await q.query(
+            'UPDATE "user" SET name=$1,"updatedAt"=now() WHERE id=$2',
+            [data.name, user.id],
+          );
+          await q.query(
+            "UPDATE contacts SET name=$1,revision=revision+1 WHERE user_id=$2 AND name IS DISTINCT FROM $1",
+            [data.name, user.id],
+          );
+        });
+        json(res, { user: { ...user, name: data.name } });
+        return;
       }
       if (path === "/v2/me" && method === "GET") {
         const user = await userSession(app.auth, req);
@@ -455,6 +539,56 @@ export async function createApp(
           json(res, { settings });
           return;
         }
+        if (suffix === "/appearance" && method === "GET") {
+          requireAdmin(p);
+          json(res, await app.branding.get(ws));
+          return;
+        }
+        if (suffix === "/appearance" && method === "PUT") {
+          requireAdmin(p);
+          json(res, await app.branding.save(p, await body(req, 1500000)));
+          return;
+        }
+        if (suffix === "/appearance/logo" && method === "GET") {
+          requireAdmin(p);
+          await sendLogo(ws, res);
+          return;
+        }
+        if (suffix === "/profile" && method === "PUT") {
+          requireAdmin(p);
+          const data = z
+            .object({ name: z.string().trim().min(2).max(80) })
+            .strict()
+            .parse(await body(req));
+          await app.db.tx(async (q) => {
+            await q.query("UPDATE workspaces SET name=$1 WHERE id=$2", [
+              data.name,
+              ws,
+            ]);
+            await app.db.event(q, ws, "workspace.renamed", {
+              userId: p.userId,
+              name: data.name,
+            });
+          });
+          json(res, { name: data.name });
+          return;
+        }
+        if (suffix === "/ticket-email") {
+          if (method === "GET") json(res, await app.ticketEmail.settings(p));
+          else if (method === "PUT")
+            json(res, await app.ticketEmail.configure(p, await body(req)));
+          else if (method === "DELETE") {
+            await app.ticketEmail.disconnect(p);
+            json(res, { disconnected: true });
+          } else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const emailRetry = suffix.match(/^\/ticket-email\/([^/]+)\/retry$/);
+        if (emailRetry && method === "POST") {
+          await app.ticketEmail.retry(p, emailRetry[1]);
+          json(res, { queued: true });
+          return;
+        }
         if (suffix === "/workflow/components" && method === "POST") {
           json(res, await app.workflows.components.save(p, await body(req)));
           return;
@@ -504,11 +638,28 @@ export async function createApp(
           return;
         }
         if (suffix === "/workflow" && method === "GET") {
-          json(res, await app.workflows.get(p));
+          json(
+            res,
+            await app.workflows.get(
+              p,
+              WorkflowChannel.parse(
+                url.searchParams.get("channel") ?? "default",
+              ),
+            ),
+          );
           return;
         }
         if (suffix === "/workflow" && method === "PUT") {
-          json(res, await app.workflows.save(p, await body(req)));
+          json(
+            res,
+            await app.workflows.save(
+              p,
+              await body(req),
+              WorkflowChannel.parse(
+                url.searchParams.get("channel") ?? "default",
+              ),
+            ),
+          );
           return;
         }
         if (suffix === "/workflow/publish" && method === "POST") {
@@ -516,7 +667,16 @@ export async function createApp(
             .object({ revision: z.number().int().positive() })
             .strict()
             .parse(await body(req));
-          json(res, await app.workflows.publish(p, input.revision));
+          json(
+            res,
+            await app.workflows.publish(
+              p,
+              input.revision,
+              WorkflowChannel.parse(
+                url.searchParams.get("channel") ?? "default",
+              ),
+            ),
+          );
           return;
         }
         if (suffix === "/workflow/test" && method === "POST") {
@@ -696,8 +856,26 @@ export async function createApp(
             );
           json(res, {
             conversations: await app.db.rows(
-              "SELECT c.*,ct.name customer_name FROM conversations c JOIN contacts ct ON ct.id=c.contact_id WHERE c.workspace_id=$1 AND ($2::boolean OR c.contact_id=$3) ORDER BY c.updated_at DESC LIMIT 200",
-              [ws, staff(p), p.contactId ?? null],
+              `SELECT c.*,ct.name customer_name,ch.kind channel_kind,
+                 latest.body last_message,latest.role last_message_role,
+                 CASE WHEN $2::boolean THEN approval.expires_at END approval_expires_at
+               FROM conversations c
+               JOIN contacts ct ON ct.id=c.contact_id AND ct.workspace_id=c.workspace_id
+               LEFT JOIN channels ch ON ch.id=c.channel_id AND ch.workspace_id=c.workspace_id
+               LEFT JOIN LATERAL (
+                 SELECT left(m.body,240) body,m.role FROM messages m
+                 WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id
+                   AND m.role IN ('customer','assistant','staff') AND ($2::boolean OR m.role='customer' OR m.delivered_at IS NOT NULL)
+                 ORDER BY m.created_at DESC,m.id DESC LIMIT 1
+               ) latest ON true
+               LEFT JOIN LATERAL (
+                 SELECT a.expires_at FROM approvals a JOIN runs r ON r.id=a.run_id AND r.workspace_id=a.workspace_id
+                 WHERE a.workspace_id=c.workspace_id AND r.conversation_id=c.id AND a.status='pending'
+                 ORDER BY a.expires_at DESC LIMIT 1
+               ) approval ON true
+               WHERE c.workspace_id=$1 AND ($2::boolean OR c.contact_id=$3) AND ($4::text IS NULL OR c.channel_id=$4)
+               ORDER BY c.updated_at DESC,c.id DESC LIMIT 200`,
+              [ws, staff(p), p.contactId ?? null, p.channelId ?? null],
             ),
           });
           return;
@@ -838,19 +1016,34 @@ export async function createApp(
           if (!tail && method === "GET") {
             const conv = await conversation(app.db, p, id);
             json(res, {
-              conversation: conv,
+              conversation: {
+                ...conv,
+                channel_kind: (
+                  await app.db.one("SELECT kind FROM channels WHERE id=$1", [
+                    conv.channel_id,
+                  ])
+                )?.kind,
+              },
               messages: await app.db.rows(
-                "SELECT * FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR role NOT IN ('note','system')) ORDER BY created_at,id",
+                "SELECT * FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR (role NOT IN ('note','system') AND (role='customer' OR delivered_at IS NOT NULL))) ORDER BY created_at,id",
                 [ws, id, staff(p)],
               ),
               ...(staff(p)
                 ? {
+                    emailDeliveries: await app.db.rows(
+                      "SELECT id,status,error,created_at,sent_at FROM ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
+                      [ws, id],
+                    ),
+                    inboundEmails: await app.db.rows(
+                      "SELECT provider_id,status,error,created_at FROM inbound_ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
+                      [ws, id],
+                    ),
                     runs: await app.db.rows(
                       "SELECT * FROM runs WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
                       [ws, id],
                     ),
                     approvals: await app.db.rows(
-                      "SELECT a.* FROM approvals a JOIN runs r ON r.id=a.run_id WHERE a.workspace_id=$1 AND r.conversation_id=$2",
+                      "SELECT a.*,d.name action_name,d.kind action_kind FROM approvals a JOIN runs r ON r.id=a.run_id LEFT JOIN actions d ON d.id=a.action_id AND d.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND r.conversation_id=$2",
                       [ws, id],
                     ),
                   }
@@ -864,6 +1057,14 @@ export async function createApp(
           }
           if (tail === "/notes" && method === "POST") {
             json(res, await app.message(p, id, await body(req), true), 201);
+            return;
+          }
+          if (tail === "/status" && method === "POST") {
+            const d = z
+              .object({ status: z.enum(["open", "resolved"]) })
+              .strict()
+              .parse(await body(req));
+            json(res, await app.customerStatus(p, id, d.status));
             return;
           }
           if (tail === "/control" && method === "POST") {

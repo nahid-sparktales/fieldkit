@@ -24,3 +24,11 @@ The browser regression covers onboarding, document import and approval, modal Es
 Manual review uses the local installation at desktop and 390px mobile widths. This is a targeted usability and accessibility pass, not a claim of complete WCAG conformance or a study with external users. No new UI runtime dependency or backend migration is introduced.
 
 Final checks passed: strict TypeScript including unused bindings, the production build, and the expanded end-to-end browser journey (including mobile sign-out releasing the navigation scroll lock). Backend behavior was exercised through that journey with dedicated test data and provider doubles; live customer accounts and paid model calls were not used for test execution.
+
+## Customer correspondence follow-up — October 4, 2026
+
+The portal reused the widget's chat composer, showed feedback on open conversations, and had no ticket email path. This pass separates ticket submission/history from live chat, makes waiting and closed states explicit, adds deliberate replies/reopening, and limits feedback both in the UI and on the server. It adds per-channel workflows, durable SMTP notification jobs, authenticated Postmark inbound replies, email recovery views, and a captured-email sandbox round trip. See [customer support](customer-support.md) for installation and verification boundaries; unlike the earlier visual-only pass, this includes an additive database migration.
+
+Other findings addressed: ticket retries retain their text and request key; drafts warn before leaving; new sections return to the top; public reads hide undelivered replies; widget sessions bind to the published chat channel; staff browsing the portal cannot accidentally view all customers as their own history; stale turns after workflow publication move to staff review; closed chats use an explicit continue action; mobile chat inputs fill the available width. Labels accompany every status color. Existing branding, keyboard controls, and reduced-motion behavior are retained.
+
+The local verification uses test fixtures, real PostgreSQL/LangGraph execution, captured email, and local Mailpit SMTP. No paid model calls, external customer email, or real business actions are used. A real Postmark mailbox flow remains an external release gate.

@@ -31,6 +31,28 @@ try {
         row.id,
       ]);
     }
+    for (const row of await db.rows(
+      "SELECT * FROM ticket_email_routes",
+      [],
+      q,
+    )) {
+      const scope = `ticket:${row.workspace_id}:${row.conversation_id}`;
+      await q.query(
+        "UPDATE ticket_email_routes SET token_ciphertext=$1 WHERE conversation_id=$2",
+        [
+          seal(
+            next,
+            scope,
+            unseal(
+              db.config.FIELDKIT_ENCRYPTION_KEY,
+              scope,
+              row.token_ciphertext,
+            ),
+          ),
+          row.conversation_id,
+        ],
+      );
+    }
   });
   console.log(
     "Credentials re-encrypted. Set FIELDKIT_ENCRYPTION_KEY to the new key before restarting app and worker. Keep the previous key with the pre-rotation backup.",

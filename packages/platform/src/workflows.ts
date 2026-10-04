@@ -1,3 +1,4 @@
+import { WorkflowChannel, effectiveWorkflow } from "./channel-workflows.js";
 import {
   WorkflowComponents,
   ComponentDefinition,
@@ -117,33 +118,61 @@ export class Workflows {
     }
     return errors;
   }
-  async get(p: Principal) {
+  private row(
+    ws: string,
+    channel: WorkflowChannel,
+    q?: Queryable,
+    lock = false,
+  ) {
+    return this.db.one(
+      channel === "default"
+        ? `SELECT * FROM workflows WHERE workspace_id=$1${lock ? " FOR UPDATE" : ""}`
+        : `SELECT * FROM channel_workflows WHERE workspace_id=$1 AND channel=$2${lock ? " FOR UPDATE" : ""}`,
+      channel === "default" ? [ws] : [ws, channel],
+      q,
+    );
+  }
+  async get(p: Principal, channel: WorkflowChannel = "default") {
     requireStaff(p);
     const ws = p.workspaceId,
       resources = await this.resources(ws);
-    const row = await this.db.one(
-      "SELECT * FROM workflows WHERE workspace_id=$1",
-      [ws],
+    channel = WorkflowChannel.parse(channel);
+    const row = await this.row(ws, channel);
+    const inherited =
+      channel === "default" ? undefined : await effectiveWorkflow(this.db, ws);
+    const base = await this.db.one(
+      "SELECT definition FROM workflow_versions WHERE workspace_id=$1 AND version=$2",
+      [ws, inherited?.version ?? null],
     );
     const draft = WorkflowDefinition.parse(
       row?.draft ??
+        base?.definition ??
         defaultWorkflow(
           resources.actions.filter((a) => a.enabled).map((a) => a.id),
         ),
     );
     return {
       draft,
+      channel,
+      inheritedVersion: !row?.published_version
+        ? (inherited?.version ?? null)
+        : null,
       revision: row?.revision ?? 0,
       publishedVersion: row?.published_version ?? null,
       resources,
       problems: await this.problems(ws, draft),
       versions: await this.db.rows(
-        "SELECT version,title,created_at,created_by FROM workflow_versions WHERE workspace_id=$1 ORDER BY version DESC LIMIT 30",
-        [ws],
+        "SELECT version,title,created_at,created_by FROM workflow_versions WHERE workspace_id=$1 AND channel=$2 ORDER BY version DESC LIMIT 30",
+        [ws, channel],
       ),
     };
   }
-  async save(p: Principal, input: unknown) {
+  async save(
+    p: Principal,
+    input: unknown,
+    channel: WorkflowChannel = "default",
+  ) {
+    channel = WorkflowChannel.parse(channel);
     requireAdmin(p);
     const d = z
       .object({
@@ -156,39 +185,43 @@ export class Workflows {
       await q.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [
         p.workspaceId,
       ]);
-      const old = await this.db.one(
-        "SELECT revision FROM workflows WHERE workspace_id=$1 FOR UPDATE",
-        [p.workspaceId],
-        q,
-      );
+      const old = await this.row(p.workspaceId, channel, q, true);
       if ((old?.revision ?? 0) !== d.revision)
         throw new HttpError(
           409,
           "The workflow changed in another editor. Reload before saving.",
         );
-      await q.query(
-        "INSERT INTO workflows(workspace_id,draft,revision,updated_by) VALUES($1,$2,1,$3) ON CONFLICT(workspace_id) DO UPDATE SET draft=$2,revision=workflows.revision+1,updated_by=$3,updated_at=now()",
-        [p.workspaceId, d.definition, p.userId],
-      );
+      if (channel === "default")
+        await q.query(
+          "INSERT INTO workflows(workspace_id,draft,revision,updated_by) VALUES($1,$2,1,$3) ON CONFLICT(workspace_id) DO UPDATE SET draft=$2,revision=workflows.revision+1,updated_by=$3,updated_at=now()",
+          [p.workspaceId, d.definition, p.userId],
+        );
+      else
+        await q.query(
+          "INSERT INTO channel_workflows(workspace_id,channel,draft,revision,updated_by) VALUES($1,$2,$3,1,$4) ON CONFLICT(workspace_id,channel) DO UPDATE SET draft=$3,revision=channel_workflows.revision+1,updated_by=$4,updated_at=now()",
+          [p.workspaceId, channel, d.definition, p.userId],
+        );
       await this.db.event(q, p.workspaceId, "workflow.saved", {
         actor: p.userId,
         revision: d.revision + 1,
+        channel,
       });
     });
-    return this.get(p);
+    return this.get(p, channel);
   }
-  async publish(p: Principal, revision: number) {
+  async publish(
+    p: Principal,
+    revision: number,
+    channel: WorkflowChannel = "default",
+  ) {
+    channel = WorkflowChannel.parse(channel);
     requireAdmin(p);
     await this.db.tx(async (q) => {
       await q.query("SELECT id FROM workspaces WHERE id=$1 FOR UPDATE", [
         p.workspaceId,
       ]);
       const row = requireValue(
-        await this.db.one(
-          "SELECT * FROM workflows WHERE workspace_id=$1 FOR UPDATE",
-          [p.workspaceId],
-          q,
-        ),
+        await this.row(p.workspaceId, channel, q, true),
         409,
         "Save a draft first.",
       );
@@ -201,38 +234,76 @@ export class Workflows {
         problems = await this.problems(p.workspaceId, def, q);
       if (problems.length) throw new HttpError(400, problems.join("\n"));
       const compiled = await this.components.expand(p.workspaceId, def, q);
-      const version = (row.published_version ?? 0) + 1;
-      await q.query(
-        "INSERT INTO workflow_versions(workspace_id,version,title,definition,created_by,compiled_definition) VALUES($1,$2,$3,$4,$5,$6)",
-        [p.workspaceId, version, def.title, def, p.userId, compiled],
+      const version = Number(
+        (await this.db.one(
+          "SELECT COALESCE(max(version),0)+1 version FROM workflow_versions WHERE workspace_id=$1",
+          [p.workspaceId],
+          q,
+        ))!.version,
       );
       await q.query(
-        "UPDATE workflows SET published_version=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE workspace_id=$1",
-        [p.workspaceId, version, p.userId],
+        "INSERT INTO workflow_versions(workspace_id,version,title,definition,created_by,compiled_definition,channel) VALUES($1,$2,$3,$4,$5,$6,$7)",
+        [p.workspaceId, version, def.title, def, p.userId, compiled, channel],
       );
-      // The action authority boundary changes immediately, including paused approvals.
-      await q.query("UPDATE workspaces SET revision=revision+1 WHERE id=$1", [
-        p.workspaceId,
-      ]);
-      await q.query(
-        "UPDATE approvals SET status='stale' WHERE workspace_id=$1 AND status='pending'",
-        [p.workspaceId],
-      );
+      if (channel === "default")
+        await q.query(
+          "UPDATE workflows SET published_version=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE workspace_id=$1",
+          [p.workspaceId, version, p.userId],
+        );
+      else
+        await q.query(
+          "UPDATE channel_workflows SET published_version=$2,revision=revision+1,updated_by=$3,updated_at=now() WHERE workspace_id=$1 AND channel=$4",
+          [p.workspaceId, version, p.userId, channel],
+        );
+      // Stop only unfinished turns whose effective channel workflow changed. Staff can resume them deliberately.
       for (const run of await this.db.rows(
-        "SELECT id FROM runs WHERE workspace_id=$1 AND status='waiting_approval'",
+        "SELECT r.id,r.revision,r.conversation_id,r.workflow_version,c.channel_id FROM runs r JOIN conversations c ON c.id=r.conversation_id WHERE r.workspace_id=$1 AND r.status IN ('waiting_approval','queued','running')",
         [p.workspaceId],
         q,
-      ))
+      )) {
+        const active = await effectiveWorkflow(
+          this.db,
+          p.workspaceId,
+          run.channel_id,
+          q,
+        );
+        if (active?.version === run.workflow_version) continue;
+        const paused = await this.db.one(
+          "UPDATE conversations SET mode='human',status='needs_staff',revision=revision+1,updated_at=now() WHERE workspace_id=$1 AND id=$2 AND revision=$3 AND mode='agent' AND status<>'resolved' RETURNING id",
+          [p.workspaceId, run.conversation_id, run.revision],
+          q,
+        );
+        if (paused)
+          await this.db.event(
+            q,
+            p.workspaceId,
+            "conversation.updated",
+            {
+              mode: "human",
+              status: "needs_staff",
+              handoffCategory: "workflow_changed",
+              reason:
+                "The channel workflow changed during this turn. Review the conversation before resuming.",
+            },
+            paused.id,
+            true,
+          );
+        await q.query(
+          "UPDATE approvals SET status='stale' WHERE workspace_id=$1 AND run_id=$2 AND status='pending'",
+          [p.workspaceId, run.id],
+        );
         await this.db.enqueue(q, "turn", {
           workspaceId: p.workspaceId,
           runId: run.id,
         });
+      }
       await this.db.event(q, p.workspaceId, "workflow.published", {
         actor: p.userId,
         version,
+        channel,
       });
     });
-    return this.get(p);
+    return this.get(p, channel);
   }
   async testComponent(p: Principal, raw: unknown) {
     requireAdmin(p);

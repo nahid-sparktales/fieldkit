@@ -1,3 +1,5 @@
+import { queueTicketEmail } from "./ticket-email.js";
+import { effectiveWorkflow } from "./channel-workflows.js";
 import { classifyHandoff } from "./quality.js";
 import { usageContext } from "./usage-context.js";
 import type { EvaluationContext } from "./evaluation-context.js";
@@ -170,15 +172,18 @@ export class Agent {
   }
   private async workflowAuthority(run: any, q?: import("./db.js").Queryable) {
     if (run.preview) return;
-    const active = await this.db.one(
-      "SELECT published_version FROM workflows WHERE workspace_id=$1",
-      [run.workspace_id],
+    const conv = await this.db.one(
+      "SELECT channel_id FROM conversations WHERE workspace_id=$1 AND id=$2",
+      [run.workspace_id, run.conversation_id],
       q,
     );
-    if (
-      active?.published_version &&
-      active.published_version !== run.workflow_version
-    )
+    const active = await effectiveWorkflow(
+      this.db,
+      run.workspace_id,
+      conv?.channel_id,
+      q,
+    );
+    if ((active?.version ?? null) !== (run.workflow_version ?? null))
       throw new HttpError(
         409,
         "The published workflow changed; start a new turn before performing an action.",
@@ -1086,6 +1091,12 @@ export class Agent {
         run.status = "stale";
         return;
       }
+      try {
+        await this.workflowAuthority(run, q);
+      } catch {
+        run.status = "stale";
+        return;
+      }
       if (
         !(await this.knowledge.validEvidence(
           run.workspace_id,
@@ -1143,10 +1154,11 @@ export class Agent {
         run.state.response ||
         "A member of our support team will help you with this request.";
       const role = review ? "note" : "assistant";
-      await q.query(
-        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,citations,request_key,run_id,delivered_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,conversation_id,request_key) DO NOTHING",
+      const messageId = uid();
+      const inserted = await q.query(
+        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,citations,request_key,run_id,delivered_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT(workspace_id,conversation_id,request_key) DO NOTHING RETURNING id",
         [
-          uid(),
+          messageId,
           run.workspace_id,
           conv.id,
           role,
@@ -1157,6 +1169,8 @@ export class Agent {
           !conv.external_id && role === "assistant" ? new Date() : null,
         ],
       );
+      if (inserted.rowCount && role === "assistant" && !conv.external_id)
+        await queueTicketEmail(this.db, q, run.workspace_id, messageId);
       if (conv.external_id)
         await this.support.queue(
           q,

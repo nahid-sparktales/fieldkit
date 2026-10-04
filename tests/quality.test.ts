@@ -276,6 +276,11 @@ test("feedback updates preserve history without inflating counts; follow-ups inv
   const w = await setup(),
     { c, m } = await answer(w);
   assert.ok(m.delivered_at);
+  await assert.rejects(
+    app.quality.feedback(w.customer, c.id, { messageId: m.id, resolved: true }),
+    /closed/,
+  );
+  await app.customerStatus(w.customer, c.id, "resolved");
   await app.quality.feedback(w.customer, c.id, {
     messageId: m.id,
     resolved: true,
@@ -294,13 +299,6 @@ test("feedback updates preserve history without inflating counts; follow-ups inv
     (await app.quality.feedback(w.customer, c.id))[0].raw.history.length,
     2,
   );
-  await app.message(w.customer, c.id, {
-    body: "One more issue",
-    requestKey: uid(),
-  });
-  metrics = await app.quality.analytics(w.owner, {});
-  assert.equal(metrics.totals!.confirmed_resolution, 0);
-  assert.equal(metrics.satisfaction[0].good, 1);
   await app.quality.feedback(w.customer, c.id, {
     messageId: m.id,
     resolved: false,
@@ -312,6 +310,13 @@ test("feedback updates preserve history without inflating counts; follow-ups inv
     rating: "bad",
   });
   assert.equal((await app.quality.gaps(w.owner))[0].occurrences, 1);
+  await app.message(w.customer, c.id, {
+    body: "One more issue",
+    requestKey: uid(),
+  });
+  metrics = await app.quality.analytics(w.owner, {});
+  assert.equal(metrics.totals!.confirmed_resolution, 0);
+  assert.equal(metrics.satisfaction[0].bad, 1);
   await app.control(w.owner, c.id, { status: "resolved" });
   await app.control(w.owner, c.id, { status: "open" });
   metrics = await app.quality.analytics(w.owner, {});
@@ -856,6 +861,7 @@ test("analytics uses explicit denominators and delivered reply times, with histo
       [item.m.id, instant, delay],
     );
   }
+  await app.customerStatus(w.customer, first.c.id, "resolved");
   await app.quality.feedback(w.customer, first.c.id, {
     messageId: first.m.id,
     resolved: true,

@@ -11,19 +11,39 @@ export type Mailer = (
   to: string,
   subject: string,
   text: string,
+  options?: {
+    replyTo?: string;
+    messageId?: string;
+    inReplyTo?: string;
+    references?: string[];
+  },
 ) => Promise<void>;
 export function createAuth(db: Database, mailer?: Mailer) {
   const c = db.config;
-  const transport = c.SMTP_URL ? nodemailer.createTransport(c.SMTP_URL) : null;
+  const transport = c.SMTP_URL
+    ? nodemailer.createTransport({
+        url: c.SMTP_URL,
+        connectionTimeout: 10000,
+        greetingTimeout: 10000,
+        socketTimeout: 30000,
+      } as import("nodemailer/lib/smtp-transport/index.js").Options)
+    : null;
   const send: Mailer =
     mailer ??
-    (async (to, subject, text) => {
+    (async (to, subject, text, options) => {
       if (!transport)
         throw new HttpError(
           503,
           "Configure SMTP before sending verification or invitation email",
         );
-      await transport.sendMail({ from: c.SMTP_FROM, to, subject, text });
+      await transport.sendMail({
+        from: c.SMTP_FROM,
+        to,
+        subject,
+        text,
+        ...options,
+        headers: { "Auto-Submitted": "auto-generated" },
+      });
     });
   const auth = betterAuth({
     appName: "FieldKit",
@@ -79,6 +99,7 @@ export type Principal = {
   userId?: string;
   role: "owner" | "admin" | "agent" | "customer" | "visitor" | "service";
   contactId?: string;
+  channelId?: string;
   scopes?: string[];
 };
 export async function userSession(auth: Auth, req: IncomingMessage) {
@@ -107,8 +128,8 @@ export async function principal(
       return { workspaceId, role: "service", scopes: credential.scopes };
     if (
       !(await db.one(
-        "SELECT id FROM channels WHERE workspace_id=$1 AND kind='widget' AND published",
-        [workspaceId],
+        "SELECT id FROM channels WHERE workspace_id=$1 AND published AND (id=$2 OR ($2::text IS NULL AND kind='widget'))",
+        [workspaceId, credential.channel_id ?? null],
       ))
     )
       throw new HttpError(401, "The widget is no longer published");
@@ -122,9 +143,26 @@ export async function principal(
       workspaceId,
       role: contact.verified ? "customer" : "visitor",
       contactId: contact.id,
+      channelId: credential.channel_id ?? undefined,
     };
   }
   const user = await userSession(auth, req);
+  if (req.headers["x-fieldkit-audience"] === "customer") {
+    const contact = requireValue(
+      await db.one(
+        "SELECT id FROM contacts WHERE workspace_id=$1 AND user_id=$2 AND verified",
+        [workspaceId, user.id],
+      ),
+      403,
+      "Join the support portal first",
+    );
+    return {
+      workspaceId,
+      userId: user.id,
+      contactId: contact.id,
+      role: "customer",
+    };
+  }
   const member = await db.one(
     "SELECT role FROM memberships WHERE workspace_id=$1 AND user_id=$2",
     [workspaceId, user.id],
@@ -169,7 +207,11 @@ export async function conversation(
       q,
     ),
   );
-  if (!staff(p) && row.contact_id !== p.contactId)
+  if (
+    !staff(p) &&
+    (row.contact_id !== p.contactId ||
+      (p.channelId && p.channelId !== row.channel_id))
+  )
     throw new HttpError(404, "Conversation not found");
   return row;
 }

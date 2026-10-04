@@ -9,7 +9,9 @@ const KnowledgeGapsPage = React.lazy(() =>
 const AnalyticsPage = React.lazy(() =>
   import("./AnalyticsPage.js").then((m) => ({ default: m.AnalyticsPage })),
 );
-import { ConversationFeedback } from "./ConversationFeedback.js";
+import { Portal } from "./Portal.js";
+import { MessageList, useConversationEvents } from "./conversation-ui.js";
+import { TicketEmailSettings } from "./TicketEmailSettings.js";
 import { request, api, useLoad } from "./request.js";
 import "@fontsource/dm-sans/latin-400.css";
 import "@fontsource/dm-sans/latin-500.css";
@@ -28,19 +30,30 @@ import React, {
   type ReactNode,
 } from "react";
 import { createRoot } from "react-dom/client";
-import { createAuthClient } from "better-auth/react";
+import { auth } from "./auth-client.js";
+import { AppearanceEditor } from "./AppearanceEditor.js";
+import { SettingsPage } from "./ProfileSettings.js";
+
 import "./style.css";
 import { WorkflowPage } from "./WorkflowPage.js";
 import { useAction } from "./useAction.js";
 import { LoadingState, PreviewDialog } from "./ui.js";
 import "./refinements.css";
+import "./inbox.css";
+import {
+  inboxStates,
+  inboxState,
+  inboxTime,
+  parameterLabel,
+  actionParameter,
+  statusTone,
+} from "./inbox-state.js";
 import {
   MODEL_PROVIDERS,
   EmbeddingProvider,
   type ModelProviderId,
 } from "../../../packages/platform/src/model-providers.js";
 
-const auth = createAuthClient();
 type Row = Record<string, any>;
 function Logo() {
   return (
@@ -79,9 +92,7 @@ function Icon({ name }: { name: string }) {
 }
 function Badge({ value }: { value: string }) {
   return (
-    <span
-      className={`badge ${["ready", "connected", "completed", "approved", "resolved", "delivered"].includes(value) ? "good" : ["failed", "unknown", "disconnected"].includes(value) ? "bad" : "neutral"}`}
-    >
+    <span className={`badge ${statusTone(value)}`}>
       {value.replaceAll("_", " ")}
     </span>
   );
@@ -140,9 +151,11 @@ function Field({
 function AuthScreen({
   done,
   compact = false,
+  brandName = "FIELDKIT",
 }: {
   done: () => void;
   compact?: boolean;
+  brandName?: string;
 }) {
   const [mode, setMode] = useState(
       new URLSearchParams(location.search).has("token") ? "reset" : "login",
@@ -217,7 +230,7 @@ function AuthScreen({
         </div>
       )}
       <div className="auth-panel">
-        <span className="eyebrow">WELCOME TO FIELDKIT</span>
+        <span className="eyebrow">WELCOME TO {brandName}</span>
         <h2>
           {mode === "signup"
             ? "Create your account"
@@ -369,6 +382,7 @@ const navigation = [
 ];
 const sections = navigation.flatMap((group) => group.items);
 const staffSections = [
+  "Settings",
   "Inbox",
   "Knowledge",
   "Workflow",
@@ -391,6 +405,26 @@ function App() {
       () => matchMedia("(max-width: 760px)").matches,
     ),
     [routeRevision, setRouteRevision] = useState(0);
+  const [inboxDrafts, setInboxDrafts] = useState<
+    Record<string, Record<string, InboxDraft>>
+  >({});
+  useEffect(() => {
+    setInboxDrafts({});
+  }, [session?.user?.id]);
+  useEffect(() => {
+    if (
+      !Object.values(inboxDrafts).some((workspace) =>
+        Object.values(workspace).some((draft) => draft.body.trim()),
+      )
+    )
+      return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [inboxDrafts]);
   const sidebar = useRef<HTMLElement>(null),
     toggle = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -499,15 +533,16 @@ function App() {
     role = workspace?.role;
   const activeView =
     role === "agent" && !staffSections.includes(view) ? "Inbox" : view;
-  const go = (v: string) => {
+  const go = (v: string, tab?: string) => {
     setView(v);
     setMenu(false);
-    if (v !== view)
+    if (v !== view || tab)
       history.pushState(
         {},
         "",
-        `/?workspace=${ws}&view=${encodeURIComponent(v.toLowerCase())}`,
+        `/?workspace=${ws}&view=${encodeURIComponent(v.toLowerCase())}${tab ? `&tab=${encodeURIComponent(tab)}` : ""}`,
       );
+    if (tab) setRouteRevision((value) => value + 1);
     window.scrollTo({ top: 0 });
   };
   return (
@@ -599,10 +634,14 @@ function App() {
             <span className="avatar">
               {session.user.name.slice(0, 1).toUpperCase()}
             </span>
-            <div>
+            <button
+              className="profile-link"
+              onClick={() => go("Settings", "profile")}
+              aria-label="Open my profile"
+            >
               <strong>{session.user.name}</strong>
               <small>{role}</small>
-            </div>
+            </button>
             <button
               title="Sign out"
               aria-label="Sign out"
@@ -643,7 +682,7 @@ function App() {
           </a>
         </header>
         <div
-          className="workspace-body"
+          className={`workspace-body ${activeView === "Inbox" ? "inbox-body" : ""}`}
           id="main-content"
           tabIndex={-1}
           key={ws + activeView + routeRevision}
@@ -654,7 +693,17 @@ function App() {
             {activeView === "Setup" ? (
               <Setup ws={ws} go={go} />
             ) : activeView === "Inbox" ? (
-              <Inbox ws={ws} role={role} />
+              <Inbox
+                ws={ws}
+                role={role}
+                drafts={inboxDrafts[ws] ?? {}}
+                setDrafts={(update) =>
+                  setInboxDrafts((all) => ({
+                    ...all,
+                    [ws]: update(all[ws] ?? {}),
+                  }))
+                }
+              />
             ) : activeView === "Knowledge" ? (
               <KnowledgePage
                 ws={ws}
@@ -679,12 +728,19 @@ function App() {
               <PublishPage
                 ws={ws}
                 slug={workspace.slug}
+                name={workspace.name}
                 owner={role === "owner"}
               />
             ) : activeView === "Team" ? (
               <TeamPage ws={ws} />
             ) : activeView === "Settings" ? (
-              <SettingsPage ws={ws} />
+              <SettingsPage
+                ws={ws}
+                admin={role !== "agent"}
+                changed={() => void refresh()}
+                agentSettings={<AgentSettingsPage ws={ws} />}
+                appearance={() => go("Publish", "appearance")}
+              />
             ) : (
               <ActivityPage ws={ws} admin={role !== "agent"} />
             )}
@@ -930,465 +986,861 @@ function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
     </>
   );
 }
-function useConversationEvents(
-  ws: string,
-  id: string | undefined,
-  reload: () => void,
-  bearer?: string,
-) {
-  const callback = useRef(reload);
-  callback.current = reload;
-  useEffect(() => {
-    if (!id) return;
-    const controller = new AbortController();
-    let retry: ReturnType<typeof setTimeout>;
-    const connect = async () => {
-      try {
-        const res = await fetch(
-          `/v2/workspaces/${ws}/conversations/${id}/events`,
-          {
-            signal: controller.signal,
-            headers: bearer ? { Authorization: `Bearer ${bearer}` } : {},
-          },
-        );
-        if (!res.ok) return;
-        const reader = res.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          let index;
-          while ((index = buffer.indexOf("\n\n")) >= 0) {
-            const event = buffer.slice(0, index);
-            buffer = buffer.slice(index + 2);
-            if (event.includes("data:")) callback.current();
-          }
-        }
-      } catch {}
-      if (!controller.signal.aborted) retry = setTimeout(connect, 2000);
-    };
-    void connect();
-    return () => {
-      controller.abort();
-      clearTimeout(retry);
-    };
-  }, [ws, id, bearer]);
-}
-function Inbox({ ws, role }: { ws: string; role: string }) {
-  const l = useLoad(() => api(ws, "/conversations"), [ws]),
-    [selected, setSelected] = useState(
-      new URLSearchParams(location.search).get("conversation") ?? "",
-    );
-  const detail = useLoad(
-    () =>
-      selected ? api(ws, `/conversations/${selected}`) : Promise.resolve(null),
-    [ws, selected],
-  );
-  const a = useAction(),
-    members = useLoad(() => api(ws, "/members"), [ws]);
-  const [note, setNote] = useState(false);
-  const [query, setQuery] = useState(""),
-    [status, setStatus] = useState("all");
-  const conversations = l.data?.conversations ?? [];
-  const filtered = conversations.filter(
-    (c: Row) =>
-      (status === "all" || c.status === status) &&
-      `${c.subject} ${c.customer_name ?? ""}`
-        .toLowerCase()
-        .includes(query.toLowerCase()),
-  );
-  const [reply, setReply] = useState("");
-  const assistantPanel = useRef<HTMLDetailsElement>(null);
-  const openAssistant = () => {
-    setReply("");
-    if (assistantPanel.current) {
-      assistantPanel.current.open = true;
-      assistantPanel.current.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }
-  };
-  useEffect(() => {
-    setReply("");
-    setNote(false);
-    a.setError("");
-    a.setSuccess("");
-  }, [selected]);
-  useConversationEvents(ws, selected, () => {
-    detail.reload();
-    l.reload();
-  });
-  useEffect(() => {
-    if (!selected && l.data?.conversations.length)
-      setSelected(l.data.conversations[0].id);
-  }, [l.data]);
-  const control = (d: Row) =>
-    a.run(async () => {
-      await api(ws, `/conversations/${selected}/control`, d);
-      detail.reload();
-      l.reload();
-    });
+function InboxStatus({ conversation }: { conversation: Row }) {
+  const state =
+    inboxStates[inboxState(conversation as { status: string; mode: string })];
   return (
-    <>
-      <Heading eyebrow="YOUR SUPPORT DESK" title="Inbox">
-        Your agent and your team, working from the same context.
-      </Heading>
-      <Alert>{l.error || detail.error || a.error}</Alert>
-      {a.success && (
-        <p className="success" role="status">
-          {a.success}
-        </p>
-      )}
+    <span className={`badge inbox-status ${state.tone}`}>
+      <span aria-hidden="true">{state.symbol}</span>
+      {state.label}
+    </span>
+  );
+}
+type InboxDraft = { body: string; note: boolean; requestKey: string };
+function Inbox({
+  ws,
+  role,
+  drafts,
+  setDrafts,
+}: {
+  ws: string;
+  role: string;
+  drafts: Record<string, InboxDraft>;
+  setDrafts: (
+    update: (drafts: Record<string, InboxDraft>) => Record<string, InboxDraft>,
+  ) => void;
+}) {
+  const l = useLoad(() => api(ws, "/conversations"), [ws]);
+  const [selected, setSelected] = useState(
+    new URLSearchParams(location.search).get("conversation") ?? "",
+  );
+  const [showDetail, setShowDetail] = useState(Boolean(selected));
+  const [query, setQuery] = useState(""),
+    [status, setStatus] = useState("all"),
+    [assignment, setAssignment] = useState("all");
+  const listRef = useRef<HTMLElement>(null);
+  const members = useLoad(() => api(ws, "/members"), [ws]);
+  const conversations: Row[] = l.data?.conversations ?? [];
+  const filtered = conversations.filter(
+    (c) =>
+      (status === "all" ||
+        inboxState(c as { status: string; mode: string }) === status) &&
+      (assignment === "all" ||
+        (assignment === "unassigned"
+          ? !c.assigned_to
+          : c.assigned_to === assignment)) &&
+      `${c.subject} ${c.customer_name ?? ""} ${c.last_message ?? ""}`
+        .toLowerCase()
+        .includes(query.trim().toLowerCase()),
+  );
+  useEffect(() => {
+    if (!selected && conversations.length) setSelected(conversations[0].id);
+  }, [l.data]);
+  // The selected thread streams updates; refresh the queue for new conversations too.
+  const reload = useRef(l.reload);
+  reload.current = l.reload;
+  useEffect(() => {
+    const refresh = () => {
+      if (!document.hidden) reload.current();
+    };
+    const timer = setInterval(refresh, 15000);
+    window.addEventListener("focus", refresh);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [ws]);
+  const back = () => {
+    setShowDetail(false);
+    history.replaceState({}, "", `/?workspace=${ws}&view=inbox`);
+    requestAnimationFrame(() =>
+      listRef.current
+        ?.querySelector<HTMLElement>('[aria-current="true"]')
+        ?.focus(),
+    );
+  };
+  return (
+    <div
+      className={`inbox-workspace ${showDetail ? "show-detail" : "show-queue"}`}
+    >
+      <header className="inbox-heading">
+        <div>
+          <h1>Inbox</h1>
+          <p>A clear next step for every conversation.</p>
+        </div>
+        <button
+          onClick={l.reload}
+          disabled={l.loading}
+          aria-label="Refresh inbox"
+        >
+          {l.loading ? "Refreshing…" : "↻ Refresh"}
+        </button>
+      </header>
+      <nav className="inbox-queues" aria-label="Inbox queues">
+        {[
+          {
+            id: "all",
+            label: "All conversations",
+            tone: "neutral",
+            symbol: "",
+          },
+          ...Object.entries(inboxStates).map(([id, value]) => ({
+            id,
+            ...value,
+          })),
+        ].map((s) => (
+          <button
+            key={s.id}
+            className={`queue-filter ${s.tone}`}
+            aria-pressed={status === s.id}
+            onClick={() => {
+              setStatus(s.id);
+              setShowDetail(false);
+            }}
+          >
+            {s.symbol && <span aria-hidden="true">{s.symbol}</span>} {s.label}
+            <span className="queue-count">
+              {s.id === "all"
+                ? conversations.length
+                : conversations.filter(
+                    (c) =>
+                      inboxState(c as { status: string; mode: string }) ===
+                      s.id,
+                  ).length}
+            </span>
+          </button>
+        ))}
+      </nav>
+      <Alert>{l.error}</Alert>
       <div className="inbox">
-        <section className="conversation-list">
-          <div className="list-title">
-            <strong>Conversations</strong>
-            <span>{l.data ? filtered.length : "—"}</span>
-          </div>
+        <section
+          className="conversation-list"
+          aria-label="Conversation queue"
+          ref={listRef}
+        >
           <div className="inbox-filters">
             <input
               type="search"
               aria-label="Search conversations"
-              placeholder="Search name or subject…"
+              placeholder="Search conversations…"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
             <select
-              aria-label="Conversation status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value)}
+              aria-label="Filter by assignee"
+              value={assignment}
+              onChange={(e) => setAssignment(e.target.value)}
             >
-              <option value="all">All statuses</option>
-              <option value="open">Open</option>
-              <option value="pending">Pending</option>
-              <option value="resolved">Resolved</option>
+              <option value="all">Everyone</option>
+              <option value="unassigned">Unassigned</option>
+              {members.data?.members.map((m: Row) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.name}
+                </option>
+              ))}
             </select>
+            <div className="queue-caption">
+              <span>
+                {filtered.length} conversation{filtered.length === 1 ? "" : "s"}
+                {conversations.length === 200 ? " · latest 200" : ""}
+              </span>
+              <span>Latest first</span>
+            </div>
           </div>
-          {!l.data && !l.error ? (
-            <LoadingState label="Loading conversations…" />
-          ) : filtered.length ? (
-            filtered.map((c: Row) => (
-              <button
-                key={c.id}
-                aria-current={selected === c.id ? "true" : undefined}
-                onClick={() => {
-                  setSelected(c.id);
-                  history.replaceState(
-                    {},
-                    "",
-                    `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
-                  );
-                }}
-                className={
-                  selected === c.id
-                    ? "conversation-card active"
-                    : "conversation-card"
+          <div className="conversation-items">
+            {!l.data && !l.error ? (
+              <LoadingState label="Loading conversations…" />
+            ) : filtered.length ? (
+              filtered.map((c) => (
+                <button
+                  key={c.id}
+                  aria-current={selected === c.id ? "true" : undefined}
+                  className={`conversation-card ${selected === c.id ? "active" : ""}`}
+                  onClick={() => {
+                    setSelected(c.id);
+                    setShowDetail(true);
+                    history.replaceState(
+                      {},
+                      "",
+                      `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
+                    );
+                  }}
+                >
+                  <div className="conversation-person">
+                    <span className="avatar small" aria-hidden="true">
+                      {(c.customer_name || "V")[0]}
+                    </span>
+                    <strong>{c.customer_name || "Visitor"}</strong>
+                    <time
+                      dateTime={c.updated_at}
+                      title={new Date(c.updated_at).toLocaleString()}
+                    >
+                      {inboxTime(c.updated_at)}
+                    </time>
+                  </div>
+                  <h3>{c.subject}</h3>
+                  <p className="conversation-preview">
+                    {drafts[c.id]?.body.trim() ? (
+                      <>
+                        <span className="draft-label">Draft: </span>
+                        {drafts[c.id].body}
+                      </>
+                    ) : (
+                      c.last_message || "No messages yet"
+                    )}
+                  </p>
+                  <div className="conversation-labels">
+                    <InboxStatus conversation={c} />
+                    {["high", "urgent"].includes(c.priority) && (
+                      <Badge value={c.priority} />
+                    )}
+                    <span className="conversation-channel">
+                      {c.external_id
+                        ? "Zendesk"
+                        : c.channel_kind === "widget"
+                          ? "Widget"
+                          : "Portal"}
+                    </span>
+                  </div>
+                </button>
+              ))
+            ) : (
+              <Empty
+                title={
+                  conversations.length
+                    ? "No matching conversations"
+                    : "Your inbox is ready"
                 }
               >
-                <div>
-                  <span className="avatar small">
-                    {(c.customer_name || "V")[0]}
-                  </span>
-                  <strong>{c.customer_name || "Visitor"}</strong>
-                  <small>{new Date(c.updated_at).toLocaleDateString()}</small>
-                </div>
-                <h3>{c.subject}</h3>
-                <Badge value={c.status} />
-                {c.priority !== "normal" && <Badge value={c.priority} />}
-              </button>
-            ))
-          ) : (
-            <Empty
-              title={
-                conversations.length
-                  ? "No matching conversations"
-                  : "Your inbox is ready"
-              }
-            >
-              {conversations.length ? (
-                <>
-                  <p>Try another name or a different status.</p>
+                <p>
+                  {conversations.length
+                    ? "Try another search, queue, or assignee."
+                    : "Messages from your portal, widget, and Zendesk will appear here."}
+                </p>
+                {conversations.length > 0 && (
                   <button
                     onClick={() => {
                       setQuery("");
                       setStatus("all");
+                      setAssignment("all");
                     }}
                   >
                     Clear filters
                   </button>
-                </>
-              ) : (
-                <p>
-                  Customer messages from your portal, widget, and Zendesk will
-                  appear here.
-                </p>
-              )}
-            </Empty>
-          )}
-        </section>
-        {detail.data ? (
-          <section className="conversation-detail" key={selected}>
-            <header>
-              <div>
-                <span className="eyebrow">
-                  {detail.data.conversation.external_id
-                    ? "ZENDESK #" + detail.data.conversation.external_id
-                    : "CUSTOMER CONVERSATION"}
-                </span>
-                <h2>{detail.data.conversation.subject}</h2>
-              </div>
-              <Badge
-                value={
-                  detail.data.conversation.mode === "human"
-                    ? "human takeover"
-                    : "agent active"
-                }
-              />
-            </header>
-            <div className="conversation-controls">
-              <span className="ticket-priority">
-                Priority: {detail.data.conversation.priority}
-                {detail.data.conversation.category
-                  ? ` · ${detail.data.conversation.category}`
-                  : ""}
-              </span>
-              <select
-                aria-label="Assign conversation"
-                disabled={a.busy}
-                value={detail.data.conversation.assigned_to ?? ""}
-                onChange={(e) =>
-                  void control({ assignedTo: e.target.value || null })
-                }
-              >
-                <option value="">Unassigned</option>
-                {members.data?.members.map((m: Row) => (
-                  <option key={m.user_id} value={m.user_id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                disabled={a.busy}
-                onClick={() =>
-                  void control({
-                    mode:
-                      detail.data.conversation.mode === "agent"
-                        ? "human"
-                        : "agent",
-                  })
-                }
-              >
-                {detail.data.conversation.mode === "agent"
-                  ? "Take over"
-                  : "Resume agent"}
-              </button>
-              <button
-                disabled={a.busy}
-                onClick={() =>
-                  void control({
-                    status:
-                      detail.data.conversation.status === "resolved"
-                        ? "open"
-                        : "resolved",
-                  })
-                }
-              >
-                {detail.data.conversation.status === "resolved"
-                  ? "Reopen"
-                  : "Resolve"}
-              </button>
-            </div>
-            <div className="button-row">
-              <a
-                href={`/?workspace=${ws}&view=test%20lab&importConversation=${selected}`}
-              >
-                Create regression test
-              </a>
-              <button
-                disabled={a.busy}
-                onClick={() =>
-                  void a.run(async () => {
-                    await api(ws, `/conversations/${selected}/gap`, {});
-                  }, "Conversation flagged under Knowledge → Gaps.")
-                }
-              >
-                Flag knowledge gap
-              </button>
-            </div>
-            <SupportAssistant
-              panelRef={assistantPanel}
-              key={selected}
-              ws={ws}
-              conversation={detail.data.conversation}
-              admin={role !== "agent"}
-              onChange={() => {
-                detail.reload();
-                l.reload();
-              }}
-              onCompose={(body, internal) => {
-                setReply(body);
-                setNote(internal);
-              }}
-            />
-            <div className="messages">
-              <MessageList messages={detail.data.messages} />
-              {detail.data.approvals
-                .filter((p: Row) => p.status === "pending")
-                .map((p: Row) => (
-                  <div className="approval-box" key={p.id}>
-                    <span className="eyebrow">APPROVAL REQUIRED</span>
-                    <h3>{p.proposal.reason}</h3>
-                    <pre>{JSON.stringify(p.proposal.parameters, null, 2)}</pre>
-                    <p>
-                      Bound to this customer, action revision, and policy.
-                      Expires {new Date(p.expires_at).toLocaleString()}.
-                    </p>
-                    {role !== "agent" && (
-                      <div className="button-row">
-                        <button
-                          disabled={a.busy}
-                          onClick={() =>
-                            void a.run(async () => {
-                              await api(ws, `/approvals/${p.id}/decision`, {
-                                hash: p.hash,
-                                decision: "reject",
-                              });
-                              detail.reload();
-                            })
-                          }
-                        >
-                          Reject
-                        </button>
-                        <button
-                          className="primary"
-                          disabled={a.busy}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Approve this exact account action? It will execute against the connected provider.",
-                              )
-                            )
-                              void a.run(async () => {
-                                await api(ws, `/approvals/${p.id}/decision`, {
-                                  hash: p.hash,
-                                  decision: "approve",
-                                });
-                                detail.reload();
-                              });
-                          }}
-                        >
-                          Approve action
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-            </div>
-            <form
-              className="reply-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const form = e.currentTarget;
-                const body = new FormData(form).get("body");
-                if (String(body).trim() === "/customer-support") {
-                  openAssistant();
-                  return;
-                }
-                void a.run(async () => {
-                  await api(
-                    ws,
-                    `/conversations/${selected}/${note ? "notes" : "messages"}`,
-                    { body, requestKey: crypto.randomUUID() },
-                  );
-                  form.reset();
-                  setReply("");
-                  detail.reload();
-                  l.reload();
-                });
-              }}
-            >
-              <textarea
-                aria-label="Reply"
-                name="body"
-                value={reply}
-                onChange={(e) => setReply(e.target.value)}
-                onKeyDown={(e) => {
-                  if (
-                    e.key === "Enter" &&
-                    !e.shiftKey &&
-                    reply.trim() === "/customer-support"
-                  ) {
-                    e.preventDefault();
-                    openAssistant();
-                  }
-                }}
-                required
-                placeholder={
-                  note
-                    ? "Write a private note for your team…"
-                    : "Write a reply to the customer…"
-                }
-              />
-              <small>
-                Type /customer-support and press Enter to open the support
-                assistant.
-              </small>
-              <div>
-                <label className="checkbox">
-                  <input
-                    type="checkbox"
-                    checked={note}
-                    onChange={(e) => setNote(e.target.checked)}
-                  />
-                  Internal note
-                </label>
-                <button className="primary" disabled={a.busy}>
-                  {note ? "Add note" : "Send reply"} →
-                </button>
-              </div>
-            </form>
-            <details className="run-details">
-              <summary>Agent activity & evidence</summary>
-              {detail.data.runs.map((r: Row) => (
-                <article key={r.id}>
-                  <Badge value={r.status} />
-                  <p>
-                    {r.state.error ??
-                      r.state.draft?.reason ??
-                      "Processing request"}
-                  </p>
-                  <pre>
-                    {JSON.stringify(
-                      {
-                        proposal: r.state.proposal,
-                        receipt: r.state.receipt,
-                        evidence: r.state.evidence,
-                      },
-                      null,
-                      2,
-                    )}
-                  </pre>
-                </article>
-              ))}
-            </details>
-          </section>
-        ) : (
-          <section className="conversation-detail">
-            {selected && detail.loading ? (
-              <LoadingState label="Opening conversation…" />
-            ) : (
-              <Empty title="Select a conversation">
-                Choose a conversation to read its history, review evidence, and
-                help your customer.
+                )}
               </Empty>
             )}
+          </div>
+        </section>
+        {selected ? (
+          <InboxConversation
+            key={selected}
+            ws={ws}
+            role={role}
+            id={selected}
+            summary={conversations.find((c) => c.id === selected)}
+            members={members.data?.members ?? []}
+            membersError={members.error}
+            reloadQueue={l.reload}
+            back={back}
+            showDetail={showDetail}
+            draft={drafts[selected]}
+            changeDraft={(draft) =>
+              setDrafts((all) => ({ ...all, [selected]: draft }))
+            }
+            clearDraft={(sent) =>
+              setDrafts((all) =>
+                all[selected] === sent
+                  ? {
+                      ...all,
+                      [selected]: {
+                        body: "",
+                        note: sent.note,
+                        requestKey: crypto.randomUUID(),
+                      },
+                    }
+                  : all,
+              )
+            }
+          />
+        ) : (
+          <section className="conversation-detail">
+            <Empty title="Select a conversation">
+              Choose a ticket to see the full conversation and next steps.
+            </Empty>
           </section>
         )}
       </div>
-    </>
+    </div>
+  );
+}
+function InboxConversation({
+  ws,
+  role,
+  id,
+  summary,
+  members,
+  membersError,
+  reloadQueue,
+  back,
+  showDetail,
+  draft,
+  changeDraft,
+  clearDraft,
+}: {
+  ws: string;
+  role: string;
+  id: string;
+  summary?: Row;
+  members: Row[];
+  membersError?: string;
+  reloadQueue: () => void;
+  back: () => void;
+  showDetail: boolean;
+  draft?: InboxDraft;
+  changeDraft: (draft: InboxDraft) => void;
+  clearDraft: (sent: InboxDraft) => void;
+}) {
+  const detail = useLoad(() => api(ws, `/conversations/${id}`), [ws, id]);
+  const a = useAction();
+  const [tab, setTab] = useState("conversation");
+  const [now, setNow] = useState(Date.now());
+  const heading = useRef<HTMLHeadingElement>(null),
+    composer = useRef<HTMLTextAreaElement>(null);
+  const assistantPanel = useRef<HTMLDetailsElement>(null);
+  const thread = useRef<HTMLDivElement>(null);
+  const nearBottom = useRef(true);
+  const lastMessage = useRef<string | undefined>(undefined);
+  const currentDraft = draft ?? { body: "", note: false, requestKey: "" };
+  const updateDraft = (changes: Partial<InboxDraft>) =>
+    changeDraft({
+      ...currentDraft,
+      ...changes,
+      requestKey: crypto.randomUUID(),
+    });
+  const refresh = () => {
+    detail.reload();
+    reloadQueue();
+  };
+  useConversationEvents(ws, id, refresh);
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(timer);
+  }, []);
+  useEffect(() => {
+    if (showDetail && detail.data)
+      heading.current?.focus({ preventScroll: true });
+  }, [showDetail, Boolean(detail.data)]);
+  useEffect(() => {
+    const last = detail.data?.messages.at(-1)?.id;
+    if (thread.current && (nearBottom.current || !lastMessage.current)) {
+      const approval =
+        thread.current.querySelector<HTMLElement>(".approval-box");
+      thread.current.scrollTop = approval
+        ? approval.getBoundingClientRect().top -
+          thread.current.getBoundingClientRect().top +
+          thread.current.scrollTop -
+          18
+        : thread.current.scrollHeight;
+    }
+    lastMessage.current = last;
+  }, [detail.data?.messages.at(-1)?.id, tab]);
+  const control = (d: Row, message: string) =>
+    a.run(async () => {
+      await api(ws, `/conversations/${id}/control`, d);
+      refresh();
+    }, message);
+  const openAssistant = () => {
+    setTab("assistant");
+    if (currentDraft.body.trim() === "/customer-support")
+      updateDraft({ body: "" });
+  };
+  const conv = detail.data?.conversation;
+  if (!conv)
+    return (
+      <section className="conversation-detail">
+        <button className="inbox-back" onClick={back}>
+          ← All conversations
+        </button>
+        <Alert>{detail.error}</Alert>
+        {detail.loading ? (
+          <LoadingState label="Opening conversation…" />
+        ) : (
+          <button onClick={detail.reload}>Try again</button>
+        )}
+      </section>
+    );
+  const pending = detail.data.approvals.filter(
+    (p: Row) => p.status === "pending",
+  );
+  const customer = summary?.customer_name || "Visitor";
+  return (
+    <section className="conversation-detail" aria-label="Selected conversation">
+      <header className="ticket-header">
+        <button className="inbox-back" onClick={back}>
+          ← All conversations
+        </button>
+        <div className="ticket-title">
+          <div className="ticket-customer">
+            <span className="avatar small" aria-hidden="true">
+              {customer[0]}
+            </span>
+            <strong>{customer}</strong>
+            <span>
+              {conv.external_id
+                ? `Zendesk #${conv.external_id}`
+                : summary?.channel_kind === "widget"
+                  ? "Chat widget"
+                  : "Support portal"}
+            </span>
+          </div>
+          <h2 tabIndex={-1} ref={heading}>
+            {conv.subject}
+          </h2>
+        </div>
+        <button
+          aria-label={conv.status === "resolved" ? "Reopen" : "Resolve"}
+          className={conv.status === "resolved" ? "" : "resolve-button"}
+          disabled={a.busy}
+          onClick={() =>
+            void control(
+              { status: conv.status === "resolved" ? "open" : "resolved" },
+              conv.status === "resolved"
+                ? "Conversation reopened."
+                : "Conversation resolved.",
+            )
+          }
+        >
+          {conv.status === "resolved" ? "Reopen" : "✓ Resolve"}
+        </button>
+      </header>
+      <div className="conversation-controls">
+        <InboxStatus
+          conversation={{
+            ...conv,
+            approval_expires_at: pending[0]?.expires_at ?? null,
+          }}
+        />
+        <label className="assignment-control">
+          <span>Assigned to</span>
+          <select
+            aria-label="Assign conversation"
+            disabled={a.busy || !members.length}
+            value={conv.assigned_to ?? ""}
+            onChange={(e) =>
+              void control(
+                { assignedTo: e.target.value || null },
+                "Assignment updated.",
+              )
+            }
+          >
+            <option value="">Unassigned</option>
+            {members.map((m) => (
+              <option key={m.user_id} value={m.user_id}>
+                {m.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {conv.status !== "resolved" && (
+          <button
+            disabled={a.busy}
+            onClick={() =>
+              void control(
+                { mode: conv.mode === "agent" ? "human" : "agent" },
+                conv.mode === "agent"
+                  ? "You’re in control. Automatic replies and actions are paused."
+                  : "Agent resumed.",
+              )
+            }
+          >
+            {conv.mode === "agent" ? "Take over" : "Resume agent"}
+          </button>
+        )}
+      </div>
+      <div className="ticket-context">
+        <span className={`ticket-priority ${statusTone(conv.priority)}`}>
+          Priority: {conv.priority}
+          {conv.category ? ` · ${conv.category}` : ""}
+        </span>
+        <span>
+          {conv.status === "resolved"
+            ? "Marked resolved by your team"
+            : conv.mode === "human"
+              ? "Agent paused · your team is in control"
+              : conv.status === "waiting_approval" && !pending.length
+                ? "Approval no longer available · staff review needed"
+                : pending.length
+                  ? "Account action paused"
+                  : "Agent can reply automatically"}
+        </span>
+      </div>
+      <Alert>{a.error || membersError || detail.error}</Alert>
+      {a.success && (
+        <p className="inbox-feedback" role="status">
+          {a.success}
+        </p>
+      )}
+      <div
+        className="ticket-tabs"
+        role="tablist"
+        aria-label="Conversation tools"
+        onKeyDown={(e) => {
+          if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key))
+            return;
+          e.preventDefault();
+          const tabs = ["conversation", "assistant", "activity"];
+          const next =
+            e.key === "Home"
+              ? 0
+              : e.key === "End"
+                ? 2
+                : (tabs.indexOf(tab) + (e.key === "ArrowRight" ? 1 : 2)) % 3;
+          setTab(tabs[next]);
+          e.currentTarget
+            .querySelectorAll<HTMLButtonElement>('[role="tab"]')
+            [next].focus();
+        }}
+      >
+        {[
+          ["conversation", "Conversation"],
+          ["assistant", "✦ Support assistant"],
+          ["activity", "Activity & tools"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            id={`ticket-tab-${value}`}
+            role="tab"
+            aria-selected={tab === value}
+            aria-controls={`ticket-panel-${value}`}
+            tabIndex={tab === value ? 0 : -1}
+            onClick={() => setTab(value)}
+          >
+            {label}
+            {value === "conversation" && pending.length > 0 && (
+              <span className="tab-count">{pending.length} to review</span>
+            )}
+          </button>
+        ))}
+      </div>
+      <div
+        className="ticket-panel messages"
+        id="ticket-panel-conversation"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-conversation"
+        tabIndex={0}
+        hidden={tab !== "conversation"}
+        ref={thread}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          nearBottom.current =
+            el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+        }}
+      >
+        <MessageList messages={detail.data.messages} />
+        {pending.map((p: Row) => {
+          const expired = new Date(p.expires_at).getTime() <= now;
+          return (
+            <section
+              className={`approval-box ${expired ? "expired" : ""}`}
+              key={p.id}
+              aria-label="Action approval"
+            >
+              <div className="approval-title">
+                <span className={`badge ${expired ? "bad" : "warning"}`}>
+                  {expired ? "Approval expired" : "◷ Approval required"}
+                </span>
+                <span>{new Date(p.expires_at).toLocaleString()}</span>
+              </div>
+              <h3>
+                {p.action_name
+                  ? parameterLabel(p.action_name)
+                  : "Review proposed action"}
+              </h3>
+              <p>{p.proposal.reason}</p>
+              <dl className="approval-parameters">
+                {Object.entries(p.proposal.parameters).map(([key, value]) => (
+                  <div key={key}>
+                    <dt>{parameterLabel(key)}</dt>
+                    <dd>
+                      {actionParameter(
+                        p.action_kind,
+                        key,
+                        value,
+                        p.proposal.parameters,
+                      )}
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+              <p>
+                {expired
+                  ? "This request can no longer be approved. Take over to help the customer. Resuming the agent after takeover will request a fresh proposal."
+                  : `Review the exact details for ${customer} before allowing this account change.`}
+              </p>
+              <details>
+                <summary>Approval safeguards</summary>
+                <p>
+                  Applies only to this customer, these parameters, and the
+                  current action and policy revisions. FieldKit rechecks them
+                  before execution.
+                </p>
+              </details>
+              {role === "agent" ? (
+                <p className="approval-permission">
+                  An owner or administrator must approve or reject this action.
+                </p>
+              ) : (
+                <div className="button-row">
+                  <button
+                    disabled={a.busy || expired}
+                    onClick={() => {
+                      if (
+                        confirm(
+                          "Approve this exact account action? It will execute against the connected provider.",
+                        )
+                      )
+                        void a.run(async () => {
+                          await api(ws, `/approvals/${p.id}/decision`, {
+                            hash: p.hash,
+                            decision: "approve",
+                          });
+                          refresh();
+                        }, "Action approved. Follow its progress in Activity & tools.");
+                    }}
+                    className="approve-button"
+                  >
+                    Approve action
+                  </button>
+                  <button
+                    disabled={a.busy || expired}
+                    onClick={() =>
+                      void a.run(async () => {
+                        await api(ws, `/approvals/${p.id}/decision`, {
+                          hash: p.hash,
+                          decision: "reject",
+                        });
+                        refresh();
+                      }, "Action rejected.")
+                    }
+                  >
+                    Reject
+                  </button>
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+      <div
+        className="ticket-panel assistant-panel"
+        id="ticket-panel-assistant"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-assistant"
+        tabIndex={0}
+        hidden={tab !== "assistant"}
+      >
+        <SupportAssistant
+          panelRef={assistantPanel}
+          ws={ws}
+          conversation={conv}
+          admin={role !== "agent"}
+          onChange={refresh}
+          onCompose={(body, note) => {
+            updateDraft({ body, note });
+            setTab("conversation");
+            requestAnimationFrame(() => composer.current?.focus());
+          }}
+        />
+      </div>
+      <div
+        className="ticket-panel activity-panel"
+        id="ticket-panel-activity"
+        role="tabpanel"
+        aria-labelledby="ticket-tab-activity"
+        tabIndex={0}
+        hidden={tab !== "activity"}
+      >
+        <h3>Improve future answers</h3>
+        <p>
+          Capture this conversation for testing or highlight missing knowledge.
+        </p>
+        <div className="button-row">
+          <a
+            href={`/?workspace=${ws}&view=test%20lab&importConversation=${id}`}
+          >
+            Create regression test ↗
+          </a>
+          <button
+            disabled={a.busy}
+            onClick={() =>
+              void a.run(
+                () => api(ws, `/conversations/${id}/gap`, {}),
+                "Conversation flagged under Knowledge → Gaps.",
+              )
+            }
+          >
+            Flag knowledge gap
+          </button>
+        </div>
+        {(!!detail.data.emailDeliveries?.length ||
+          !!detail.data.inboundEmails?.length) && (
+          <section>
+            <h3>Ticket email</h3>
+            <p>
+              Sent means SMTP accepted the message. Check the provider for final
+              delivery or bounces.
+            </p>
+            {detail.data.emailDeliveries?.map((mail: Row) => (
+              <div className="email-job" key={mail.id}>
+                <Badge value={mail.status} />
+                <time>{new Date(mail.created_at).toLocaleString()}</time>
+                <small>{mail.error}</small>
+              </div>
+            ))}
+            {detail.data.inboundEmails
+              ?.filter((mail: Row) => mail.status === "rejected")
+              .map((mail: Row) => (
+                <p className="error" key={mail.provider_id}>
+                  Incoming reply rejected: {mail.error}
+                </p>
+              ))}
+            {role !== "agent" && (
+              <a href={`/?workspace=${ws}&view=publish`}>
+                Email setup & recovery →
+              </a>
+            )}
+          </section>
+        )}
+        <h3>Agent activity & evidence</h3>
+        {!detail.data.runs.length && (
+          <p>No agent runs for this conversation yet.</p>
+        )}
+        {detail.data.runs.map((r: Row) => (
+          <article className="inbox-run" key={r.id}>
+            <div>
+              <Badge value={r.status} />
+              <time dateTime={r.created_at}>
+                {new Date(r.created_at).toLocaleString()}
+              </time>
+            </div>
+            <p>
+              {r.state.error ?? r.state.draft?.reason ?? "Processing request"}
+            </p>
+            <details>
+              <summary>Technical details & evidence</summary>
+              <pre>
+                {JSON.stringify(
+                  {
+                    proposal: r.state.proposal,
+                    receipt: r.state.receipt,
+                    evidence: r.state.evidence,
+                  },
+                  null,
+                  2,
+                )}
+              </pre>
+            </details>
+          </article>
+        ))}
+      </div>
+      <form
+        className={`reply-form ${currentDraft.note ? "is-note" : ""}`}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (a.busy || !draft?.body.trim()) return;
+          if (draft.body.trim() === "/customer-support") {
+            openAssistant();
+            return;
+          }
+          const sent = draft;
+          void a.run(
+            async () => {
+              await api(
+                ws,
+                `/conversations/${id}/${sent.note ? "notes" : "messages"}`,
+                { body: sent.body, requestKey: sent.requestKey },
+              );
+              clearDraft(sent);
+              refresh();
+            },
+            sent.note
+              ? "Private note added."
+              : conv.external_id
+                ? "Reply queued for Zendesk delivery."
+                : "Reply sent.",
+          );
+        }}
+      >
+        <div className="composer-heading">
+          <strong>
+            {currentDraft.note ? "Internal note" : `Reply to ${customer}`}
+          </strong>
+          <label className="checkbox">
+            <input
+              type="checkbox"
+              checked={currentDraft.note}
+              onChange={(e) => updateDraft({ note: e.target.checked })}
+            />
+            Internal note
+          </label>
+        </div>
+        <textarea
+          ref={composer}
+          aria-label="Reply"
+          aria-describedby="composer-audience"
+          name="body"
+          value={currentDraft.body}
+          onChange={(e) => updateDraft({ body: e.target.value })}
+          onKeyDown={(e) => {
+            if (
+              e.key === "Enter" &&
+              !e.nativeEvent.isComposing &&
+              (e.metaKey ||
+                e.ctrlKey ||
+                (!e.shiftKey &&
+                  currentDraft.body.trim() === "/customer-support"))
+            ) {
+              e.preventDefault();
+              if (currentDraft.body.trim() === "/customer-support")
+                openAssistant();
+              else e.currentTarget.form?.requestSubmit();
+            }
+          }}
+          required
+          placeholder={
+            currentDraft.note
+              ? "Write a private note for your team…"
+              : "Write a reply to the customer…"
+          }
+        />
+        <div className="composer-footer">
+          <div>
+            <small id="composer-audience">
+              {currentDraft.note
+                ? "Only visible to your team"
+                : conv.status === "resolved"
+                  ? "Sending a reply reopens this conversation"
+                  : "Visible to the customer · pauses the agent"}
+            </small>
+            <small className="composer-shortcut">
+              ⌘ / Ctrl + Enter to send
+            </small>
+          </div>
+          <button
+            className="primary"
+            disabled={a.busy || !currentDraft.body.trim()}
+          >
+            {a.busy
+              ? "Working…"
+              : currentDraft.note
+                ? "Add note"
+                : "Send reply"}
+            <span aria-hidden="true"> ↑</span>
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }
 const assistanceLabels: Record<string, string> = {
@@ -1813,56 +2265,6 @@ function SupportAssistant({
         </div>
       )}
     </details>
-  );
-}
-function MessageList({ messages }: { messages: Row[] }) {
-  return (
-    <>
-      {messages.map((m) => (
-        <article className={`message ${m.role}`} key={m.id}>
-          <div>
-            <strong>
-              {m.role === "assistant"
-                ? "FieldKit"
-                : m.role === "note"
-                  ? "Internal note"
-                  : m.role === "staff"
-                    ? "Support team"
-                    : "Customer"}
-            </strong>
-            <time>
-              {new Date(m.created_at).toLocaleTimeString([], {
-                hour: "2-digit",
-                minute: "2-digit",
-              })}
-            </time>
-          </div>
-          <p>{m.body}</p>
-          {m.citations?.length > 0 && (
-            <details className="citations">
-              <summary>
-                {m.citations.length} source{m.citations.length === 1 ? "" : "s"}
-              </summary>
-              {m.citations.map((c: Row) => (
-                <blockquote key={c.id}>
-                  <strong>
-                    {c.url ? (
-                      <a href={c.url} target="_blank" rel="noreferrer">
-                        {c.title} ↗
-                      </a>
-                    ) : (
-                      c.title
-                    )}{" "}
-                    · v{c.version}
-                  </strong>
-                  <p>{c.excerpt}</p>
-                </blockquote>
-              ))}
-            </details>
-          )}
-        </article>
-      ))}
-    </>
   );
 }
 async function googlePicker(
@@ -3389,148 +3791,190 @@ function ActionsPage({ ws, owner }: { ws: string; owner: boolean }) {
 function PublishPage({
   ws,
   slug,
+  name,
   owner,
 }: {
   ws: string;
   slug: string;
+  name: string;
   owner: boolean;
 }) {
   const l = useLoad(() => api(ws, ""), [ws]),
     a = useAction(),
-    [secret, setSecret] = useState("");
+    [secret, setSecret] = useState(""),
+    [tab, setTab] = useState(() =>
+      new URLSearchParams(location.search).get("tab") === "appearance"
+        ? "appearance"
+        : "channels",
+    );
   return (
     <>
       <Heading eyebrow="MEET YOUR CUSTOMERS" title="Publish">
         Publish the full portal, embed a bot on your website, or work inside
         Zendesk.
       </Heading>
-      <Alert>{l.error || a.error}</Alert>
-      {l.data?.channels.map((channel: Row) => (
-        <section className="panel" key={channel.id}>
-          <div className="section-heading">
-            <div>
-              <span className="eyebrow">
-                {channel.kind === "portal"
-                  ? "HELP CENTER + CUSTOMER ACCOUNTS"
-                  : channel.kind === "widget"
-                    ? "A CONVERSATION ON YOUR WEBSITE"
-                    : "YOUR EXISTING HELPDESK"}
-              </span>
-              <h2>
-                {channel.kind === "portal"
-                  ? "Support portal"
-                  : channel.kind === "widget"
-                    ? "Embedded chatbot"
-                    : "Zendesk agent"}
-              </h2>
-            </div>
-            <Badge value={channel.published ? "published" : "unpublished"} />
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const d = new FormData(e.currentTarget);
-              void a.run(async () => {
-                await api(
-                  ws,
-                  `/channels/${channel.id}`,
-                  {
-                    published: d.get("published") === "on",
-                    settings: {
-                      origins: String(d.get("origins") ?? "")
-                        .split("\n")
-                        .map((s) => s.trim())
-                        .filter(Boolean),
-                      handoff: d.get("handoff") ?? "native",
-                    },
-                  },
-                  "PUT",
-                );
-                l.reload();
-              });
-            }}
-          >
-            {channel.kind === "widget" && (
-              <Field
-                label="Allowed website origins"
-                hint="One exact origin per line, for example https://www.yourcompany.com"
+      <nav className="settings-tabs" aria-label="Publish sections">
+        <button
+          aria-current={tab === "channels" ? "page" : undefined}
+          onClick={() => setTab("channels")}
+        >
+          Channels
+        </button>
+        <button
+          aria-current={tab === "appearance" ? "page" : undefined}
+          onClick={() => setTab("appearance")}
+        >
+          Appearance
+        </button>
+      </nav>
+      {tab === "appearance" ? (
+        <AppearanceEditor ws={ws} name={name} slug={slug} />
+      ) : (
+        <>
+          <Alert>{l.error || a.error}</Alert>
+          <TicketEmailSettings ws={ws} />
+          {l.data?.channels.map((channel: Row) => (
+            <section className="panel" key={channel.id}>
+              <div className="section-heading">
+                <div>
+                  <span className="eyebrow">
+                    {channel.kind === "portal"
+                      ? "HELP CENTER + CUSTOMER ACCOUNTS"
+                      : channel.kind === "widget"
+                        ? "A CONVERSATION ON YOUR WEBSITE"
+                        : "YOUR EXISTING HELPDESK"}
+                  </span>
+                  <h2>
+                    {channel.kind === "portal"
+                      ? "Support portal"
+                      : channel.kind === "widget"
+                        ? "Embedded chatbot"
+                        : "Zendesk agent"}
+                  </h2>
+                </div>
+                <Badge
+                  value={channel.published ? "published" : "unpublished"}
+                />
+              </div>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const d = new FormData(e.currentTarget);
+                  void a.run(async () => {
+                    await api(
+                      ws,
+                      `/channels/${channel.id}`,
+                      {
+                        published: d.get("published") === "on",
+                        settings: {
+                          origins: String(d.get("origins") ?? "")
+                            .split("\n")
+                            .map((s) => s.trim())
+                            .filter(Boolean),
+                          handoff: d.get("handoff") ?? "native",
+                        },
+                      },
+                      "PUT",
+                    );
+                    l.reload();
+                  });
+                }}
               >
-                <textarea
-                  name="origins"
-                  defaultValue={(channel.settings.origins ?? []).join("\n")}
+                {channel.kind === "widget" && (
+                  <Field
+                    label="Allowed website origins"
+                    hint="One exact origin per line, for example https://www.yourcompany.com"
+                  >
+                    <textarea
+                      name="origins"
+                      defaultValue={(channel.settings.origins ?? []).join("\n")}
+                    />
+                  </Field>
+                )}
+                {channel.kind !== "zendesk" && (
+                  <Field label="When a person needs to help">
+                    <select
+                      name="handoff"
+                      defaultValue={channel.settings.handoff ?? "native"}
+                    >
+                      <option value="native">Hand off to FieldKit inbox</option>
+                      <option value="zendesk">Create a Zendesk ticket</option>
+                    </select>
+                  </Field>
+                )}
+                <label className="checkbox">
+                  <input
+                    name="published"
+                    type="checkbox"
+                    defaultChecked={channel.published}
+                  />
+                  Publish this channel
+                </label>
+                <button className="primary" disabled={a.busy}>
+                  Save channel
+                </button>
+              </form>
+              <a
+                className="portal-link"
+                href={`/?workspace=${ws}&view=workflow&channel=${channel.kind}`}
+              >
+                Edit{" "}
+                {channel.kind === "portal"
+                  ? "ticket / email"
+                  : channel.kind === "widget"
+                    ? "live chat"
+                    : "Zendesk"}{" "}
+                workflow →
+              </a>
+              {channel.kind === "portal" && (
+                <a
+                  className="portal-link"
+                  href={`/support/${slug}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {location.origin}/support/{slug} ↗
+                </a>
+              )}
+              {channel.kind === "widget" && (
+                <>
+                  <p className="muted">
+                    Add this snippet to your website after publishing:
+                  </p>
+                  <code className="copyable">{`<script src="${location.origin}/widget.js" data-workspace="${slug}" defer></script>`}</code>
+                </>
+              )}
+            </section>
+          ))}
+          {owner && <ServiceCredentials ws={ws} />}
+          <section className="panel">
+            <h2>Identify customers from your website</h2>
+            <p className="muted">
+              Sign short-lived customer identities on your own server. The
+              signing secret must never be included in browser code.
+            </p>
+            <button
+              onClick={() =>
+                void a.run(async () =>
+                  setSecret((await api(ws, "/identity-key", {})).secret),
+                )
+              }
+            >
+              Generate / rotate identity signing key
+            </button>
+            {secret && (
+              <Field label="Copy this key now; it is shown only once">
+                <input
+                  type="password"
+                  value={secret}
+                  readOnly
+                  onFocus={(e) => e.target.select()}
                 />
               </Field>
             )}
-            {channel.kind !== "zendesk" && (
-              <Field label="When a person needs to help">
-                <select
-                  name="handoff"
-                  defaultValue={channel.settings.handoff ?? "native"}
-                >
-                  <option value="native">Hand off to FieldKit inbox</option>
-                  <option value="zendesk">Create a Zendesk ticket</option>
-                </select>
-              </Field>
-            )}
-            <label className="checkbox">
-              <input
-                name="published"
-                type="checkbox"
-                defaultChecked={channel.published}
-              />
-              Publish this channel
-            </label>
-            <button className="primary" disabled={a.busy}>
-              Save channel
-            </button>
-          </form>
-          {channel.kind === "portal" && (
-            <a
-              className="portal-link"
-              href={`/support/${slug}`}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {location.origin}/support/{slug} ↗
-            </a>
-          )}
-          {channel.kind === "widget" && (
-            <>
-              <p className="muted">
-                Add this snippet to your website after publishing:
-              </p>
-              <code className="copyable">{`<script src="${location.origin}/widget.js" data-workspace="${slug}" defer></script>`}</code>
-            </>
-          )}
-        </section>
-      ))}
-      {owner && <ServiceCredentials ws={ws} />}
-      <section className="panel">
-        <h2>Identify customers from your website</h2>
-        <p className="muted">
-          Sign short-lived customer identities on your own server. The signing
-          secret must never be included in browser code.
-        </p>
-        <button
-          onClick={() =>
-            void a.run(async () =>
-              setSecret((await api(ws, "/identity-key", {})).secret),
-            )
-          }
-        >
-          Generate / rotate identity signing key
-        </button>
-        {secret && (
-          <Field label="Copy this key now; it is shown only once">
-            <input
-              type="password"
-              value={secret}
-              readOnly
-              onFocus={(e) => e.target.select()}
-            />
-          </Field>
-        )}
-      </section>
+          </section>
+        </>
+      )}
     </>
   );
 }
@@ -3733,16 +4177,17 @@ function TeamPage({ ws }: { ws: string }) {
     </>
   );
 }
-function SettingsPage({ ws }: { ws: string }) {
+function AgentSettingsPage({ ws }: { ws: string }) {
   const l = useLoad(() => api(ws, ""), [ws]),
     a = useAction();
   const settings = l.data?.workspace.settings;
   return (
     <>
-      <Heading eyebrow="YOUR AGENT’S WORKING AGREEMENT" title="Settings">
+      <h2>Agent preferences</h2>
+      <p className="muted">
         Set the tone, control model usage, and choose how your agent starts
         working.
-      </Heading>
+      </p>
       <Alert>{l.error || a.error}</Alert>
       {a.success && <p className="success">{a.success}</p>}
       {settings && (
@@ -3765,8 +4210,6 @@ function SettingsPage({ ws }: { ws: string }) {
                     instructions: d.get("instructions"),
                     monthlyTokenBudget: Number(d.get("budget")),
                     retentionDays: Number(d.get("retention")),
-                    greeting: d.get("greeting"),
-                    brandColor: d.get("color"),
                     replies: d.get("replies"),
                   },
                   "PUT",
@@ -3868,16 +4311,6 @@ function SettingsPage({ ws }: { ws: string }) {
                   type="number"
                   min="7"
                   defaultValue={settings.retentionDays}
-                />
-              </Field>
-              <Field label="Customer greeting">
-                <input name="greeting" defaultValue={settings.greeting} />
-              </Field>
-              <Field label="Brand color">
-                <input
-                  name="color"
-                  type="color"
-                  defaultValue={settings.brandColor}
                 />
               </Field>
             </div>
@@ -3998,347 +4431,14 @@ function ActivityPage({ ws, admin }: { ws: string; admin: boolean }) {
     </>
   );
 }
-function Portal({ slug, widget = false }: { slug: string; widget?: boolean }) {
-  const info = useLoad(
-      () => request(`/v2/public/${slug}${widget ? "/widget/config" : ""}`),
-      [slug],
-    ),
-    [authOpen, setAuthOpen] = useState(false),
-    [joined, setJoined] = useState<any>(null),
-    [bearer, setBearer] = useState<string | undefined>(),
-    [selected, setSelected] = useState(""),
-    [query, setQuery] = useState(""),
-    [article, setArticle] = useState<Row | null>(null),
-    a = useAction();
-  const articles = useLoad(
-    () =>
-      widget
-        ? Promise.resolve({ articles: [] })
-        : request(`/v2/public/${slug}/articles?q=${encodeURIComponent(query)}`),
-    [slug, query],
-  );
-  const tickets = useLoad(
-    () =>
-      joined && !bearer
-        ? api(joined.workspaceId, "/conversations")
-        : Promise.resolve({ conversations: [] }),
-    [joined?.workspaceId, bearer, selected],
-  );
-  const detail = useLoad(
-    () =>
-      joined && selected
-        ? api(
-            joined.workspaceId,
-            `/conversations/${selected}`,
-            undefined,
-            undefined,
-            bearer,
-          )
-        : Promise.resolve(null),
-    [joined?.workspaceId, selected, bearer],
-  );
-  useConversationEvents(
-    joined?.workspaceId ?? "",
-    selected,
-    detail.reload,
-    bearer,
-  );
-  const join = async () => {
-    const value = await request(`/v2/public/${slug}/join`, {});
-    setJoined(value);
-    setBearer(undefined);
-    setAuthOpen(false);
-  };
-  useEffect(() => {
-    if (!widget) void join().catch(() => {});
-  }, [slug]);
-  useEffect(() => {
-    if (!widget || !info.data) return;
-    const receive = (event: MessageEvent) => {
-      if (
-        event.source !== window.parent ||
-        !info.data.origins?.includes(event.origin) ||
-        event.data?.type !== "fieldkit:identity"
-      )
-        return;
-      void a.run(async () => {
-        const value = await request(`/v2/public/${slug}/widget/session`, {
-          signedIdentity: event.data.identity,
-          channel: "widget",
-        });
-        setJoined(value);
-        setBearer(value.token);
-        setSelected("");
-      });
-    };
-    window.addEventListener("message", receive);
-    window.parent.postMessage({ type: "fieldkit:ready" }, "*");
-    return () => window.removeEventListener("message", receive);
-  }, [widget, info.data]);
-  if (info.error)
-    return (
-      <div className="portal-unavailable">
-        <Logo />
-        <h1>This support space isn’t open yet.</h1>
-        <p>{info.error}</p>
-        <a href="/">Back to workspace</a>
-      </div>
-    );
-  if (!info.data) return <div className="loading">Loading support…</div>;
-  async function send(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const form = e.currentTarget,
-      body = new FormData(form).get("body");
-    await a.run(async () => {
-      let identity = joined,
-        credential = bearer;
-      if (!identity) {
-        identity = await request(`/v2/public/${slug}/widget/session`, {
-          channel: widget ? "widget" : "portal",
-        });
-        credential = identity.token;
-        setJoined(identity);
-        setBearer(credential);
-      }
-      if (selected)
-        await api(
-          identity.workspaceId,
-          `/conversations/${selected}/messages`,
-          { body, requestKey: crypto.randomUUID() },
-          undefined,
-          credential,
-        );
-      else {
-        const conv = await api(
-          identity.workspaceId,
-          "/conversations",
-          {
-            body,
-            requestKey: crypto.randomUUID(),
-            channelId: identity.channelId ?? info.data.channelId,
-          },
-          undefined,
-          credential,
-        );
-        setSelected(conv.id);
-      }
-      form.reset();
-      detail.reload();
-      tickets.reload();
-    });
-  }
-  const chat = (
-    <section className="portal-chat">
-      <div className="section-heading">
-        <div>
-          <span className="eyebrow">{info.data.name} SUPPORT</span>
-          <h2>{selected ? "Your conversation" : info.data.greeting}</h2>
-        </div>
-        {selected && (
-          <button onClick={() => setSelected("")}>New conversation</button>
-        )}
-      </div>
-      <div className="messages">
-        {detail.data ? (
-          <>
-            <MessageList messages={detail.data.messages} />
-            {detail.data.messages.findLast(
-              (m: Row) => m.role === "assistant" && m.delivered_at,
-            ) && (
-              <ConversationFeedback
-                key={
-                  detail.data.messages.findLast(
-                    (m: Row) => m.role === "assistant" && m.delivered_at,
-                  ).id
-                }
-                ws={joined.workspaceId}
-                id={selected}
-                message={detail.data.messages.findLast(
-                  (m: Row) => m.role === "assistant" && m.delivered_at,
-                )}
-                bearer={bearer}
-              />
-            )}
-          </>
-        ) : (
-          <div className="chat-welcome">
-            <span className="chat-mark">✦</span>
-            <h3>A little help, right when you need it.</h3>
-            <p>
-              Ask a question about {info.data.name}. We’ll use the company’s
-              approved knowledge, or connect you with the team.
-            </p>
-            {!joined?.contactId && (
-              <small>
-                Sign in to keep ticket history and get account-specific help.
-              </small>
-            )}
-          </div>
-        )}
-      </div>
-      <Alert>{a.error || detail.error}</Alert>
-      <form className="reply-form" onSubmit={send}>
-        <textarea
-          name="body"
-          aria-label="Your message"
-          placeholder="How can we help?"
-          required
-          maxLength={12000}
-        />
-        <div>
-          <small className="muted">
-            AI-assisted support · Human help is available
-          </small>
-          <button className="primary" disabled={a.busy}>
-            {a.busy ? "Sending…" : "Send"} →
-          </button>
-        </div>
-      </form>
-    </section>
-  );
-  return (
-    <div
-      className={widget ? "widget-page" : "portal-page"}
-      style={{ "--accent": info.data.brandColor } as React.CSSProperties}
-    >
-      {!widget && (
-        <header className="portal-header">
-          <a href={`/support/${slug}`}>
-            <span className="portal-monogram">{info.data.name[0]}</span>
-            {info.data.name}
-            <span className="muted"> / Help center</span>
-          </a>
-          <div>
-            {joined && !bearer ? (
-              <>
-                <span className="subtle">Your support account</span>
-                <button
-                  onClick={() =>
-                    void auth.signOut().then(() => {
-                      setJoined(null);
-                      setSelected("");
-                    })
-                  }
-                >
-                  Sign out
-                </button>
-              </>
-            ) : (
-              <button onClick={() => setAuthOpen(!authOpen)}>
-                Sign in / Create account
-              </button>
-            )}
-          </div>
-        </header>
-      )}
-      {authOpen ? (
-        <AuthScreen compact done={() => void a.run(join)} />
-      ) : (
-        <>
-          {!widget && (
-            <>
-              <div className="portal-hero">
-                <span className="eyebrow">HERE TO HELP</span>
-                <h1>{info.data.greeting}</h1>
-                <p>
-                  Find an answer, start a conversation, or check in on a
-                  request.
-                </p>
-                <input
-                  type="search"
-                  aria-label="Search help articles"
-                  placeholder="Search our help center…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-              <div className="portal-content">
-                <section>
-                  <h2>Browse our knowledge</h2>
-                  {article ? (
-                    <article className="panel">
-                      <button className="link" onClick={() => setArticle(null)}>
-                        ← All articles
-                      </button>
-                      <h2>{article.title}</h2>
-                      <div className="article-body">{article.body}</div>
-                    </article>
-                  ) : (
-                    <div className="article-grid">
-                      {articles.data?.articles.length ? (
-                        articles.data.articles.map((d: Row) => (
-                          <button
-                            className="article-card"
-                            key={d.id}
-                            onClick={() =>
-                              void a.run(async () =>
-                                setArticle(
-                                  await request(
-                                    `/v2/public/${slug}/articles/${d.id}`,
-                                  ),
-                                ),
-                              )
-                            }
-                          >
-                            <Icon name="Knowledge" />
-                            <h3>{d.title}</h3>
-                            <p>{d.excerpt}</p>
-                            <span>Read article →</span>
-                          </button>
-                        ))
-                      ) : (
-                        <p className="muted">
-                          {query
-                            ? "No articles match that search. Ask the team below."
-                            : "Our team is building the help library. Start a conversation below."}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </section>
-                {joined && !bearer && (
-                  <section>
-                    <h2>Your tickets</h2>
-                    {tickets.data?.conversations.length ? (
-                      tickets.data.conversations.map((t: Row) => (
-                        <button
-                          className="portal-ticket"
-                          key={t.id}
-                          onClick={() => setSelected(t.id)}
-                        >
-                          <span>{t.subject}</span>
-                          <Badge value={t.status} />
-                          <span>→</span>
-                        </button>
-                      ))
-                    ) : (
-                      <p className="muted">
-                        You haven’t opened a ticket yet. Your conversations will
-                        be saved here.
-                      </p>
-                    )}
-                  </section>
-                )}
-                {chat}
-              </div>
-            </>
-          )}
-          {widget && chat}
-        </>
-      )}
-      <footer className="portal-footer">
-        Powered by{" "}
-        <a href="/" target="_blank" rel="noreferrer">
-          FieldKit
-        </a>
-      </footer>
-    </div>
-  );
-}
 const portalMatch = location.pathname.match(/^\/(support|widget)\/([^/]+)/);
 createRoot(document.getElementById("root")!).render(
   portalMatch ? (
-    <Portal slug={portalMatch[2]} widget={portalMatch[1] === "widget"} />
+    <Portal
+      slug={portalMatch[2]}
+      widget={portalMatch[1] === "widget"}
+      AuthScreen={AuthScreen}
+    />
   ) : (
     <App />
   ),

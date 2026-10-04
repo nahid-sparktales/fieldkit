@@ -4,6 +4,7 @@ export async function request(
   data?: unknown,
   method?: string,
   bearer?: string,
+  customer = false,
 ) {
   const res = await fetch(path, {
     method: method ?? (data === undefined ? "GET" : "POST"),
@@ -11,6 +12,7 @@ export async function request(
       ...(data instanceof FormData
         ? {}
         : { "Content-Type": "application/json" }),
+      ...(customer ? { "X-Fieldkit-Audience": "customer" } : {}),
       ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
     },
     body:
@@ -31,7 +33,15 @@ export const api = (
   data?: unknown,
   method?: string,
   bearer?: string,
-) => request(`/v2/workspaces/${ws}${path}`, data, method, bearer);
+  customer = false,
+) => request(`/v2/workspaces/${ws}${path}`, data, method, bearer, customer);
+export const customerApi = (
+  ws: string,
+  path: string,
+  data?: unknown,
+  method?: string,
+  bearer?: string,
+) => api(ws, path, data, method, bearer, true);
 export function useLoad(fn: () => Promise<any>, keys: unknown[]) {
   const [result, setResult] = useState<{
       keys: unknown[];

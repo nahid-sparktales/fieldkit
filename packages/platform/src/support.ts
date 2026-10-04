@@ -1,3 +1,4 @@
+import { effectiveWorkflow } from "./channel-workflows.js";
 import { Actions } from "./actions.js";
 import type { Database } from "./db.js";
 import { uid } from "./db.js";
@@ -388,12 +389,13 @@ export class Support {
             q,
           ),
         );
-        const workflow = await this.db.one(
-          "SELECT published_version FROM workflows WHERE workspace_id=$1",
-          [ws],
+        const workflow = await effectiveWorkflow(
+          this.db,
+          ws,
+          conv.channel_id,
           q,
         );
-        if (workflow?.published_version !== run.workflow_version)
+        if (workflow?.version !== run.workflow_version)
           throw new Error("Workflow changed before publication");
         if (run.state.accountContactRevision !== undefined) {
           const contact = await this.db.one(
@@ -662,9 +664,10 @@ export async function enqueueTurn(
   conv: any,
 ) {
   const id = uid();
-  const workflow = await db.one(
-    "SELECT v.version,COALESCE(v.compiled_definition,v.definition) definition FROM workflows w JOIN workflow_versions v ON v.workspace_id=w.workspace_id AND v.version=w.published_version WHERE w.workspace_id=$1",
-    [conv.workspace_id],
+  const workflow = await effectiveWorkflow(
+    db,
+    conv.workspace_id,
+    conv.channel_id,
     q,
   );
   const r = await q.query(

@@ -667,17 +667,24 @@ export class Quality {
       throw new HttpError(403, "Only the customer can submit feedback");
     const d = FeedbackInput.parse(raw);
     return this.db.tx(async (q) => {
-      await q.query("SELECT id FROM conversations WHERE id=$1 FOR UPDATE", [
-        id,
-      ]);
+      const current = await this.db.one(
+        "SELECT status FROM conversations WHERE id=$1 FOR UPDATE",
+        [id],
+        q,
+      );
+      if (current?.status !== "resolved")
+        throw new HttpError(
+          409,
+          "Feedback is available after the conversation is closed",
+        );
       requireValue(
         await this.db.one(
-          "SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND id=$3 AND role='assistant' AND delivered_at IS NOT NULL",
+          "SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND id=$3 AND role IN ('assistant','staff') AND delivered_at IS NOT NULL AND id=(SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1)",
           [p.workspaceId, id, d.messageId],
           q,
         ),
         400,
-        "Choose a delivered AI answer in your conversation",
+        "Choose the latest delivered support answer in your closed conversation",
       );
       const prior = await this.db.one(
         "SELECT * FROM customer_feedback WHERE workspace_id=$1 AND source='native' AND external_id=$2",

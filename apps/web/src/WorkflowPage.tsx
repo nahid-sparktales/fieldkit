@@ -110,11 +110,15 @@ function Checks({
     </div>
   );
 }
-export function WorkflowPage({
+function WorkflowEditor({
   ws,
   admin,
   request,
+  profile,
+  onProfile,
 }: {
+  profile: string;
+  onProfile: (value: string) => void;
   ws: string;
   admin: boolean;
   request: (path: string, data?: unknown, method?: string) => Promise<any>;
@@ -144,7 +148,9 @@ export function WorkflowPage({
   const [test, setTest] = useState<Row | null>(null),
     [question, setQuestion] = useState(""),
     [customer, setCustomer] = useState(""),
-    [channel, setChannel] = useState("portal"),
+    [channel, setChannel] = useState(
+      profile === "default" ? "portal" : profile,
+    ),
     [historyVersion, setHistoryVersion] = useState("");
   const [editingSubflow, setEditingSubflow] = useState<Row | null>(null),
     [subflowInput, setSubflowInput] = useState(
@@ -437,6 +443,29 @@ export function WorkflowPage({
           </p>
         </div>
       </div>
+      <Field label="Channel workflow">
+        <select
+          value={profile}
+          disabled={busy || Boolean(editingSubflow)}
+          onChange={(e) => {
+            if (
+              !dirty ||
+              confirm("Discard unsaved changes and switch channel workflows?")
+            )
+              onProfile(e.target.value);
+          }}
+        >
+          <option value="default">Workspace default</option>
+          <option value="portal">Support tickets & email</option>
+          <option value="widget">Live chat & embedded widget</option>
+          <option value="zendesk">Zendesk</option>
+        </select>
+      </Field>
+      <p className="muted">
+        Each channel can publish its own workflow. Channels without a published
+        version use the workspace default. Reusable steps, knowledge, customers,
+        and actions are shared.
+      </p>
       <div className="wf-toolbar">
         <div>
           <strong>
@@ -444,7 +473,9 @@ export function WorkflowPage({
               ? `Editing reusable subflow${editingSubflow.revision ? ` · version ${editingSubflow.revision}` : ""}`
               : loaded.publishedVersion
                 ? `Published version ${loaded.publishedVersion}`
-                : "Built-in workflow is active"}
+                : loaded.inheritedVersion
+                  ? `Using workspace default · version ${loaded.inheritedVersion}`
+                  : "Built-in workflow is active"}
           </strong>
           <small>
             {dirty
@@ -492,7 +523,7 @@ export function WorkflowPage({
                         revision: loaded.revision,
                       }),
                     );
-                  }, "Workflow published. New turns use this version; previous pending action approvals are invalidated.")
+                  }, "Workflow published. New turns on this channel use this version; affected pending approvals are invalidated.")
                 }
               >
                 Publish workflow
@@ -1847,5 +1878,38 @@ export function WorkflowPage({
         </section>
       </div>
     </div>
+  );
+}
+
+export function WorkflowPage(props: {
+  ws: string;
+  admin: boolean;
+  request: (path: string, data?: unknown, method?: string) => Promise<any>;
+}) {
+  const [profile, setProfile] = useState(() => {
+    const c = new URLSearchParams(location.search).get("channel");
+    return c && ["portal", "widget", "zendesk"].includes(c) ? c : "default";
+  });
+  return (
+    <WorkflowEditor
+      {...props}
+      key={`${props.ws}:${profile}`}
+      profile={profile}
+      onProfile={(value) => {
+        setProfile(value);
+        const url = new URL(location.href);
+        url.searchParams.set("channel", value);
+        history.replaceState(null, "", url);
+      }}
+      request={(path, data, method) =>
+        props.request(
+          ["/workflow", "/workflow/publish"].includes(path)
+            ? `${path}?channel=${profile}`
+            : path,
+          data,
+          method,
+        )
+      }
+    />
   );
 }

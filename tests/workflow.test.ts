@@ -342,7 +342,7 @@ test("publishing a new workflow revokes pending approvals and keeps old run snap
   assert.equal(
     (await app.db.one("SELECT status FROM runs WHERE id=$1", [legacyRun.id]))!
       .status,
-    "handed_off",
+    "stale",
   );
   assert.equal(providers.writes, 0);
   const { run } = await turn(w, "refund please");
@@ -363,7 +363,7 @@ test("publishing a new workflow revokes pending approvals and keeps old run snap
     saved.workflow_definition,
     await app.workflows.components.expand(w.ws.id, def),
   );
-  assert.equal(saved.status, "handed_off");
+  assert.equal(saved.status, "stale");
   const next = await turn(w, "refund please");
   assert.equal(next.run.workflow_version, 2);
   assert.equal(next.run.status, "handed_off");
