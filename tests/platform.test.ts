@@ -1995,3 +1995,145 @@ test("public help centers advertise only enabled contact options and reject disa
     assert.equal(articles.status, 200);
   }
 });
+
+test("malformed request targets cannot crash the server; invalid Authorization cannot borrow a session", async () => {
+  const { request } = await import("node:http");
+  const malformedStatus = await new Promise<number>((resolve, reject) => {
+    const req = request(
+      { host: "127.0.0.1", port: c.FIELDKIT_PORT, path: "//[" },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode!));
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+  assert.equal(malformedStatus, 400);
+  assert.equal((await call("/v2/health")).response.status, 200);
+  const me = await call("/v2/me", undefined, staffTestCookie);
+  const id = me.json.workspaces[0].id;
+  const denied = await fetch(
+    `${c.FIELDKIT_URL}/v2/workspaces/${id}/conversations`,
+    { headers: { Cookie: staffTestCookie, Authorization: "Basic bogus" } },
+  );
+  assert.equal(denied.status, 401);
+  assert.equal(
+    (
+      await fetch(`${c.FIELDKIT_URL}/v2/me`, {
+        headers: { Cookie: staffTestCookie, Authorization: "Bearer bogus" },
+      })
+    ).status,
+    401,
+  );
+  const outsider = await workspace(app);
+  await app.db.pool.query(
+    "UPDATE contacts SET user_id=$1,verified=false WHERE workspace_id=$2 AND id=$3",
+    [me.json.user.id, outsider.ws.id, outsider.contactId],
+  );
+  assert.equal(
+    (
+      await call(
+        `/v2/workspaces/${outsider.ws.id}/conversations`,
+        undefined,
+        staffTestCookie,
+      )
+    ).response.status,
+    403,
+  );
+  const page = await fetch(c.FIELDKIT_URL);
+  assert.equal(page.status, 200);
+  assert.match(
+    page.headers.get("content-security-policy")!,
+    /script-src 'self';/,
+  );
+  assert.equal(page.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(
+    page.headers.get("permissions-policy"),
+    "camera=(), microphone=(), geolocation=()",
+  );
+});
+
+test("conversation SSE excludes private history, supports explicit replay, and revokes expired widget credentials", async () => {
+  const w = await workspace(app);
+  const conv = await app.newConversation(w.customer, {
+    channelId: w.channelId,
+    body: "A synthetic streaming question",
+    requestKey: uid(),
+  });
+  const secret = token();
+  await app.db.pool.query(
+    "INSERT INTO credentials(hash,workspace_id,contact_id,channel_id,kind,expires_at) VALUES($1,$2,$3,$4,'widget',now()+interval '1 hour')",
+    [tokenHash(secret), w.ws.id, w.customer.contactId, w.channelId],
+  );
+  await app.db.event(
+    app.db.pool,
+    w.ws.id,
+    "test.private",
+    { secret: "STAFF-ONLY-SYNTHETIC" },
+    conv.id,
+    false,
+  );
+  await app.db.event(
+    app.db.pool,
+    w.ws.id,
+    "test.public",
+    { message: "public" },
+    conv.id,
+    true,
+  );
+  const last = await app.db.one(
+    "SELECT max(id) id FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND public",
+    [w.ws.id, conv.id],
+  );
+  const controller = new AbortController();
+  const url = `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/conversations/${conv.id}/events`;
+  try {
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: controller.signal,
+    });
+    assert.equal(res.status, 200);
+    const reader = res.body!.getReader(),
+      decoder = new TextDecoder();
+    const first = decoder.decode((await reader.read()).value);
+    assert.match(first, new RegExp(`id: ${last.id}\\n`));
+    assert.match(first, /stream.connected/);
+    assert.ok(!first.includes("STAFF-ONLY"));
+    await app.db.pool.query("DELETE FROM credentials WHERE hash=$1", [
+      tokenHash(secret),
+    ]);
+    const next = await reader.read();
+    assert.equal(next.done, true);
+    assert.equal(
+      (await fetch(url, { headers: { Authorization: `Bearer ${secret}` } }))
+        .status,
+      401,
+    );
+  } finally {
+    controller.abort();
+  }
+  await app.db.pool.query(
+    "INSERT INTO credentials(hash,workspace_id,contact_id,channel_id,kind,expires_at) VALUES($1,$2,$3,$4,'widget',now()+interval '1 hour')",
+    [tokenHash(secret), w.ws.id, w.customer.contactId, w.channelId],
+  );
+  const replayController = new AbortController();
+  try {
+    const replay = await fetch(url + "?after=0", {
+      headers: { Authorization: `Bearer ${secret}` },
+      signal: replayController.signal,
+    });
+    const reader = replay.body!.getReader(),
+      decoder = new TextDecoder();
+    let text = "";
+    while (!text.includes("test.public")) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      text += decoder.decode(chunk.value);
+    }
+    assert.match(text, /test.public/);
+    assert.ok(!text.includes("STAFF-ONLY-SYNTHETIC"));
+  } finally {
+    replayController.abort();
+  }
+});

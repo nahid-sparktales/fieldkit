@@ -314,10 +314,16 @@ export class Shadow {
       "SELECT * FROM shadow_candidates WHERE workspace_id=$1 ORDER BY created_at DESC LIMIT 100",
       [p.workspaceId],
     );
-    for (const c of candidates)
-      c.stale =
-        (await this.dependencies(p.workspaceId, c.channel_id)).fingerprint !==
-        c.fingerprint;
+    // Share reads only within this request; authority is checked fresh next time.
+    const fingerprints = new Map<string, string>();
+    for (const c of candidates) {
+      if (!fingerprints.has(c.channel_id))
+        fingerprints.set(
+          c.channel_id,
+          (await this.dependencies(p.workspaceId, c.channel_id)).fingerprint,
+        );
+      c.stale = fingerprints.get(c.channel_id) !== c.fingerprint;
+    }
     const experiments = await this.db.rows(
       `SELECT e.*,c.name,(SELECT jsonb_object_agg(s.status,s.n) FROM (SELECT status,count(*) n FROM shadow_results WHERE experiment_id=e.id GROUP BY status) s) counts,(SELECT coalesce(sum(input_tokens+output_tokens),0) FROM usage WHERE workspace_id=e.workspace_id AND experiment_id=e.id) tokens,(SELECT coalesce(sum(reserved),0) FROM usage WHERE workspace_id=e.workspace_id AND experiment_id=e.id) reserved FROM shadow_experiments e JOIN shadow_candidates c ON c.id=e.candidate_id WHERE e.workspace_id=$1 ORDER BY started_at DESC LIMIT 100`,
       [p.workspaceId],

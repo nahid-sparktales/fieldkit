@@ -2,6 +2,10 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Launch security and performance review — 2026-10-04
+
+See the [launch audit](launch-audit.md) for the current changes, measured bundle/query reductions, schema 18, checks actually run, and remaining gates. The later baseline [GitHub run](https://github.com/nahid-sparktales/fieldkit/actions/runs/37253789813) passed Node 24 app/container/runner/Compose checks but failed real scanner freshness verification. That CI result is separate from both the earlier local report below and verification of the current launch-audit changes.
+
 ## Operational controls and Navigated Support identity — 2026-10-04
 
 Local implementation started from `0f23512d08c833a3e63d2de854c940e4fb99faf3`

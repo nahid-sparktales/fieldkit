@@ -103,6 +103,11 @@ export type Principal = {
   scopes?: string[];
 };
 export async function userSession(auth: Auth, req: IncomingMessage) {
+  if (req.headers.authorization !== undefined)
+    throw new HttpError(
+      401,
+      "This endpoint requires a session without an Authorization header",
+    );
   const session = await auth.auth.api.getSession({
     headers: fromNodeHeaders(req.headers),
   });
@@ -116,7 +121,9 @@ export async function principal(
   req: IncomingMessage,
   workspaceId: string,
 ): Promise<Principal> {
-  const bearer = req.headers.authorization?.match(/^Bearer (.+)$/)?.[1];
+  const bearer = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1];
+  if (req.headers.authorization !== undefined && !bearer)
+    throw new HttpError(401, "Use a valid Bearer credential");
   if (bearer) {
     const credential = await db.one(
       "SELECT * FROM credentials WHERE hash=$1 AND workspace_id=$2 AND expires_at>now()",
@@ -169,7 +176,7 @@ export async function principal(
   );
   if (member) return { workspaceId, userId: user.id, role: member.role };
   const contact = await db.one(
-    "SELECT id FROM contacts WHERE workspace_id=$1 AND user_id=$2",
+    "SELECT id FROM contacts WHERE workspace_id=$1 AND user_id=$2 AND verified",
     [workspaceId, user.id],
   );
   if (contact)

@@ -18,6 +18,16 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   test.setTimeout(180000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  await page.exposeFunction("recordPolicyViolation", (directive: string) =>
+    errors.push(`CSP blocked ${directive}`),
+  );
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (event) => {
+      (window as any).recordPolicyViolation(
+        `${event.effectiveDirective} (${event.blockedURI}) at ${event.sourceFile}:${event.lineNumber}`,
+      );
+    });
+  });
   await page.goto("/");
   await expect(page.locator(".brand")).toHaveAccessibleName(
     "Navigated Support",

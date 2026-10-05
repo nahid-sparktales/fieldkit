@@ -1,3 +1,4 @@
+import "./validation-config.js";
 const ShadowPage = React.lazy(() =>
   import("./ShadowPage.js").then((m) => ({ default: m.ShadowPage })),
 );
@@ -20,7 +21,9 @@ const ReadinessPage = React.lazy(() =>
   import("./ReadinessPage.js").then((m) => ({ default: m.ReadinessPage })),
 );
 import { ReadinessLink } from "./ReadinessLink.js";
-import { Portal } from "./Portal.js";
+const Portal = React.lazy(() =>
+  import("./Portal.js").then((m) => ({ default: m.Portal })),
+);
 import { MessageList, useConversationEvents } from "./conversation-ui.js";
 import { NotesPanel, FeedbackPanel, feedbackLabel } from "./InboxInsights.js";
 import { ConnectorLogo } from "./ConnectorLogo.js";
@@ -32,7 +35,12 @@ import {
   attachmentsPending,
 } from "./Attachments.js";
 import { InboxQueue } from "./InboxQueue.js";
-import { CustomerProfile, CustomersPage } from "./CustomersPage.js";
+const CustomerProfile = React.lazy(() =>
+  import("./CustomersPage.js").then((m) => ({ default: m.CustomerProfile })),
+);
+const CustomersPage = React.lazy(() =>
+  import("./CustomersPage.js").then((m) => ({ default: m.CustomersPage })),
+);
 import { appLink } from "./customer-ui.js";
 import { SupportOptions } from "./SupportOptions.js";
 import { TicketEmailSettings } from "./TicketEmailSettings.js";
@@ -56,10 +64,14 @@ import React, {
 import { createRoot } from "react-dom/client";
 import { auth } from "./auth-client.js";
 import { AppearanceEditor } from "./AppearanceEditor.js";
-import { SettingsPage } from "./ProfileSettings.js";
+const SettingsPage = React.lazy(() =>
+  import("./ProfileSettings.js").then((m) => ({ default: m.SettingsPage })),
+);
 
 import "./style.css";
-import { WorkflowPage } from "./WorkflowPage.js";
+const WorkflowPage = React.lazy(() =>
+  import("./WorkflowPage.js").then((m) => ({ default: m.WorkflowPage })),
+);
 import { useAction } from "./useAction.js";
 import { LoadingState, PreviewDialog } from "./ui.js";
 import "./refinements.css";
@@ -1632,15 +1644,17 @@ function InboxConversation({
         tabIndex={0}
       >
         {customerViewed && (
-          <CustomerProfile
-            key={conv.contact_id}
-            ws={ws}
-            id={conv.contact_id}
-            admin={role !== "agent"}
-            compact
-            currentConversation={id}
-            active={tab === "customer"}
-          />
+          <React.Suspense fallback={<LoadingState />}>
+            <CustomerProfile
+              key={conv.contact_id}
+              ws={ws}
+              id={conv.contact_id}
+              admin={role !== "agent"}
+              compact
+              currentConversation={id}
+              active={tab === "customer"}
+            />
+          </React.Suspense>
         )}
       </div>
       <div
@@ -4519,13 +4533,15 @@ function ActivityPage({ ws, admin }: { ws: string; admin: boolean }) {
 }
 const portalMatch = location.pathname.match(/^\/(support|widget)\/([^/]+)/);
 createRoot(document.getElementById("root")!).render(
-  portalMatch ? (
-    <Portal
-      slug={portalMatch[2]}
-      widget={portalMatch[1] === "widget"}
-      AuthScreen={AuthScreen}
-    />
-  ) : (
-    <App />
-  ),
+  <React.Suspense fallback={<LoadingState />}>
+    {portalMatch ? (
+      <Portal
+        slug={portalMatch[2]}
+        widget={portalMatch[1] === "widget"}
+        AuthScreen={AuthScreen}
+      />
+    ) : (
+      <App />
+    )}
+  </React.Suspense>,
 );

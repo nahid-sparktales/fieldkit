@@ -1,3 +1,4 @@
+import { EventStreams } from "./event-stream.js";
 import { shadowRoutes } from "./shadow-routes.js";
 import {
   customerMessageCursor,
@@ -17,8 +18,7 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { readFile, stat } from "node:fs/promises";
-import { resolve, join, extname } from "node:path";
+import { contentPolicy, serveStatic } from "./static.js";
 import { createHmac } from "node:crypto";
 import { z, ZodError } from "zod";
 import { toNodeHandler } from "better-auth/node";
@@ -92,6 +92,7 @@ export async function createApp(
   else await app.start();
   if (options.workers) await app.workers();
   const authHandler = toNodeHandler(app.auth.auth);
+  const streams = new EventStreams();
   const sendLogo = async (ws: string, res: ServerResponse) => {
     const logo = await app.branding.logo(ws);
     res.writeHead(200, {
@@ -107,12 +108,24 @@ export async function createApp(
       ).createServer({ server: { middlewareMode: true }, appType: "spa" })
     : null;
   const server = createServer(async (req, res) => {
-    const url = new URL(req.url ?? "/", c.FIELDKIT_URL),
-      path = url.pathname,
-      method = req.method ?? "GET";
+    let path = "/";
+    const method = req.method ?? "GET";
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
+    res.setHeader(
+      "Permissions-Policy",
+      "camera=(), microphone=(), geolocation=()",
+    );
+    if (c.FIELDKIT_URL.startsWith("https:"))
+      res.setHeader("Strict-Transport-Security", "max-age=31536000");
     try {
+      let url: URL;
+      try {
+        url = new URL(req.url ?? "/", c.FIELDKIT_URL);
+      } catch {
+        throw new HttpError(400, "Invalid request URL");
+      }
+      path = url.pathname;
       if (path === "/v2/health") {
         await app.db.pool.query("SELECT 1");
         json(res, { status: "ok", version: "2.0.0" });
@@ -154,7 +167,7 @@ export async function createApp(
         res.setHeader("Vary", "Origin");
         res.setHeader(
           "Access-Control-Allow-Headers",
-          "Authorization, Content-Type, X-Fieldkit-Audience",
+          "Authorization, Content-Type, X-Fieldkit-Audience, Last-Event-ID",
         );
         res.setHeader(
           "Access-Control-Allow-Methods",
@@ -172,14 +185,6 @@ export async function createApp(
         await authHandler(req, res);
         return;
       }
-      if (
-        path.startsWith("/v2/") &&
-        !["GET", "HEAD"].includes(method) &&
-        req.headers.cookie &&
-        !req.headers.authorization &&
-        origin !== new URL(c.FIELDKIT_URL).origin
-      )
-        throw new HttpError(403, "Same-origin request required");
       if (path === "/v2/installation" && method === "GET") {
         json(res, {
           initialized: !!(await app.db.one(
@@ -240,6 +245,15 @@ export async function createApp(
         json(res, { accepted: true }, 202);
         return;
       }
+      // Webhooks above authenticate their own signatures/credentials, never cookies.
+      if (
+        path.startsWith("/v2/") &&
+        !["GET", "HEAD"].includes(method) &&
+        req.headers.cookie &&
+        !/^Bearer .+$/i.test(req.headers.authorization ?? "") &&
+        origin !== new URL(c.FIELDKIT_URL).origin
+      )
+        throw new HttpError(403, "Same-origin request required");
       match = path.match(/^\/v2\/oauth\/(zendesk|google|notion)\/callback$/);
       if (match && method === "GET") {
         const user = await userSession(app.auth, req);
@@ -545,7 +559,19 @@ export async function createApp(
             `${ws}:${p.userId ?? p.contactId ?? tokenHash(req.headers.authorization ?? "")}`,
             90,
           );
-        if (await qualityRoutes(app, p, req, res, url, suffix, body, json))
+        if (
+          await qualityRoutes(
+            app,
+            p,
+            req,
+            res,
+            url,
+            suffix,
+            body,
+            json,
+            streams,
+          )
+        )
           return;
         if (await readinessRoutes(app, p, req, res, suffix, body, json)) return;
         if (await slaRoutes(app, p, req, res, suffix, body, json)) return;
@@ -1202,47 +1228,29 @@ export async function createApp(
             return;
           }
           if (tail === "/events" && method === "GET") {
-            await conversation(app.db, p, id);
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              Connection: "keep-alive",
-              "X-Accel-Buffering": "no",
-            });
-            res.write(": connected\n\n");
-            let after = Number(url.searchParams.get("after") ?? 0);
-            if (!Number.isSafeInteger(after) || after < 0) after = 0;
-            let closed = false,
-              busy = false;
-            res.on("close", () => {
-              closed = true;
-              clearInterval(timer);
-              clearTimeout(expiry);
-            });
-            const timer = setInterval(async () => {
-              if (closed || busy) return;
-              busy = true;
-              try {
-                const current = await principal(app.db, app.auth, req, ws);
-                await conversation(app.db, current, id);
-                const events = await app.db.rows(
-                  "SELECT * FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND id>$3 AND ($4::boolean OR public) ORDER BY id LIMIT 100",
-                  [ws, id, after, staff(current)],
-                );
-                for (const e of events) {
-                  after = Number(e.id);
-                  res.write(
-                    `id: ${e.id}\ndata: ${JSON.stringify({ kind: e.kind, data: e.data })}\n\n`,
-                  );
-                }
-                if (!events.length) res.write(": heartbeat\n\n");
-              } catch {
-                res.end();
-              } finally {
-                busy = false;
-              }
-            }, 1000);
-            const expiry = setTimeout(() => res.end(), 5 * 60 * 1000);
+            let current = p;
+            await streams.open(
+              req,
+              res,
+              url,
+              `${ws}:${p.userId ?? p.contactId ?? p.role}`,
+              {
+                authorize: async () => {
+                  current = await principal(app.db, app.auth, req, ws);
+                  await conversation(app.db, current, id);
+                },
+                latest: async () =>
+                  (await app.db.one(
+                    "SELECT coalesce(max(id),0) id FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR public)",
+                    [ws, id, staff(current)],
+                  ))!.id,
+                read: (after) =>
+                  app.db.rows(
+                    "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND id>$3 AND ($4::boolean OR public) ORDER BY id LIMIT 100",
+                    [ws, id, after, staff(current)],
+                  ),
+              },
+            );
             return;
           }
         }
@@ -1785,37 +1793,20 @@ export async function createApp(
         const origins = channel?.settings.origins ?? [];
         res.setHeader(
           "Content-Security-Policy",
-          `frame-ancestors 'self' ${origins.join(" ")}`,
+          contentPolicy(origins, !!options.dev, !!c.GOOGLE_PICKER_KEY),
         );
-      } else res.setHeader("Content-Security-Policy", "frame-ancestors 'self'");
+      } else
+        res.setHeader(
+          "Content-Security-Policy",
+          contentPolicy([], !!options.dev, !!c.GOOGLE_PICKER_KEY),
+        );
       if (vite) {
         vite.middlewares(req, res, () =>
           json(res, { error: "Not found" }, 404),
         );
         return;
       }
-      const root = resolve("dist/web");
-      let file = resolve(root, "." + decodeURIComponent(path));
-      if (!file.startsWith(root + "/")) file = join(root, "index.html");
-      try {
-        if (!(await stat(file)).isFile()) file = join(root, "index.html");
-      } catch {
-        file = join(root, "index.html");
-      }
-      const data = await readFile(file);
-      res.setHeader(
-        "Content-Type",
-        (
-          {
-            ".html": "text/html",
-            ".js": "text/javascript",
-            ".css": "text/css",
-            ".svg": "image/svg+xml",
-            ".png": "image/png",
-          } as Record<string, string>
-        )[extname(file)] ?? "application/octet-stream",
-      );
-      res.end(data);
+      await serveStatic(req, res, path);
     } catch (error) {
       if (res.headersSent) {
         res.end();

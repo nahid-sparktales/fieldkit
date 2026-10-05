@@ -10,7 +10,7 @@
     "dev": "tsx apps/api/main.ts",
     "worker": "tsx apps/worker/main.ts",
     "start": "NODE_ENV=production tsx apps/api/main.ts",
-    "build": "vite build",
+    "build": "vite build && tsx scripts/compress-assets.ts",
     "typecheck": "tsc --noEmit",
     "migrate": "tsx scripts/migrate.ts",
     "setup": "tsx scripts/setup.ts",

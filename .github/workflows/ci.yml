@@ -23,7 +23,9 @@ jobs:
             package-lock.json
             examples/demo/package-lock.json
       - run: npm ci
-      - run: npm run typecheck
+      - name: Check dependency advisories
+        run: npm audit --audit-level=high
+      - run: npx tsc --noEmit --noUnusedLocals --noUnusedParameters
       - run: npm run build
       - run: npm test
       - name: Verify isolated Python and JavaScript execution

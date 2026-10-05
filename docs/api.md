@@ -281,3 +281,13 @@ Diagnostic/canary effectful requests require explicit authorization in addition 
 roles. Checks and model usage are queued transactionally. A repeated request key
 with changed parameters is a conflict, not permission for another effect. The
 existing SDK/CLI/MCP execution and approval boundaries are unchanged.
+
+## Event stream cursors and limits
+
+Conversation `/events` and workspace `/quality/events`, `/readiness/events`, `/sla/events`, `/shadow/events` use the same bounded SSE transport:
+
+- With no cursor, subscribe from the current authorized event head. One `stream.connected` data event requests an initial resource refresh; it is not a persisted business event. This avoids replaying all history and closes the resource-read/subscription race.
+- For retained history, provide `?after=0` or a known nonnegative event ID. On reconnection use `Last-Event-ID`; an explicit `after` query takes precedence. Malformed/unsafe-integer cursors return `400`.
+- Persist the `id` independently of `data`: a workspace stream can advance past a batch of unrelated events with an ID and heartbeat comment, without a data event. Clients should refresh after receiving data, coalescing closely spaced changes.
+- Customer streams contain only public events from the authorized conversation. Permissions are rechecked during polling; losing access closes the stream. There is no promise of replay after underlying records have been deleted by retention.
+- Limits are 8 streams per actor/workspace and 128 per process; excess connections receive `429` with `Retry-After: 5`. Streams last up to five minutes, avoid overlapping polls, and stop producing while the socket is under backpressure. Native EventSource handles reconnection; fetch-based clients must send the last cursor and back off on errors.

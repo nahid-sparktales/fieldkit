@@ -395,3 +395,31 @@ test("routine OAuth refresh preserves a candidate; explicit credential replaceme
     before,
   );
 });
+
+test("dashboard shares dependency reads per channel only within one request", async (t) => {
+  const x = await setup();
+  await app.db.pool.query(
+    `INSERT INTO shadow_candidates(id,workspace_id,name,channel_id,draft_channel,draft_revision,workflow_version,snapshot,fingerprint,created_by)
+    SELECT $1||'-'||n,workspace_id,'Synthetic candidate '||n,channel_id,draft_channel,draft_revision,workflow_version,snapshot,fingerprint,created_by
+    FROM shadow_candidates CROSS JOIN generate_series(1,99) n WHERE id=$1`,
+    [x.candidate.id],
+  );
+  const dependencies = t.mock.method(app.shadow, "dependencies");
+  const rows = t.mock.method(app.db, "rows");
+  const result = await app.shadow.dashboard(x.owner);
+  assert.equal(result.candidates.length, 100);
+  assert.ok(result.candidates.every((c: any) => !c.stale));
+  assert.equal(dependencies.mock.callCount(), 1);
+  assert.equal(
+    rows.mock.callCount(),
+    10,
+    "access + six dependency reads + three dashboard queries",
+  );
+  await app.db.pool.query(
+    "UPDATE workspaces SET revision=revision+1 WHERE id=$1",
+    [x.ws.id],
+  );
+  const changed = await app.shadow.dashboard(x.owner);
+  assert.equal(dependencies.mock.callCount(), 2);
+  assert.ok(changed.candidates.every((c: any) => c.stale));
+});

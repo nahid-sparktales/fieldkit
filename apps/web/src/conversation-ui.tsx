@@ -14,6 +14,15 @@ export function useConversationEvents(
     if (!id) return;
     const controller = new AbortController();
     let retry: ReturnType<typeof setTimeout>;
+    let refresh: ReturnType<typeof setTimeout> | undefined;
+    let lastId = "";
+    const scheduleRefresh = () => {
+      if (refresh || controller.signal.aborted) return;
+      refresh = setTimeout(() => {
+        refresh = undefined;
+        callback.current();
+      }, 150);
+    };
     const connect = async () => {
       try {
         const res = await fetch(
@@ -21,13 +30,16 @@ export function useConversationEvents(
           {
             signal: controller.signal,
             headers: {
+              ...(lastId ? { "Last-Event-ID": lastId } : {}),
               ...(bearer ? { Authorization: `Bearer ${bearer}` } : {}),
               ...(customer ? { "X-Fieldkit-Audience": "customer" } : {}),
             },
           },
         );
         if (!res.ok) {
-          callback.current();
+          scheduleRefresh();
+          if (res.status === 429 || res.status >= 500)
+            retry = setTimeout(connect, 5000);
           return;
         }
         const reader = res.body!.getReader();
@@ -41,7 +53,9 @@ export function useConversationEvents(
           while ((index = buffer.indexOf("\n\n")) >= 0) {
             const event = buffer.slice(0, index);
             buffer = buffer.slice(index + 2);
-            if (event.includes("data:")) callback.current();
+            const cursor = event.match(/^id: (\d+)$/m)?.[1];
+            if (cursor) lastId = cursor;
+            if (event.includes("data:")) scheduleRefresh();
           }
         }
       } catch {}
@@ -51,6 +65,7 @@ export function useConversationEvents(
     return () => {
       controller.abort();
       clearTimeout(retry);
+      clearTimeout(refresh);
     };
   }, [ws, id, bearer, customer]);
 }

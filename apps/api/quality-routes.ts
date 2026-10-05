@@ -5,6 +5,7 @@ import {
   requireStaff,
   type Principal,
 } from "../../packages/platform/src/auth.js";
+import type { EventStreams } from "./event-stream.js";
 import { z } from "zod";
 export async function qualityRoutes(
   app: Platform,
@@ -15,6 +16,7 @@ export async function qualityRoutes(
   path: string,
   body: (r: IncomingMessage) => Promise<any>,
   json: (r: ServerResponse, v: unknown) => void,
+  streams: EventStreams,
 ) {
   const method = req.method ?? "GET",
     q = app.quality;
@@ -29,41 +31,42 @@ export async function qualityRoutes(
     method === "GET"
   ) {
     requireStaff(p);
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    });
-    let after = Number(url.searchParams.get("after") ?? 0),
-      busy = false;
-    if (!Number.isSafeInteger(after) || after < 0) after = 0;
-    res.write(": connected\n\n");
-    const timer = setInterval(async () => {
-      if (busy) return;
-      busy = true;
-      try {
-        requireStaff(await principal(app.db, app.auth, req, p.workspaceId));
-        const events = await app.db.rows(
-          "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND id>$2 AND (($3='readiness' AND kind LIKE 'readiness.%') OR ($3='sla' AND kind LIKE 'sla.%') OR ($3='shadow' AND (kind LIKE 'shadow.%' OR kind LIKE 'rollout.%')) OR ($3='quality' AND (kind LIKE 'quality.%' OR kind LIKE 'gap.%'))) ORDER BY id LIMIT 100",
-          [p.workspaceId, after, path.split("/")[1]],
-        );
-        for (const e of events) {
-          after = Number(e.id);
-          res.write(`id: ${e.id}\ndata: ${JSON.stringify(e)}\n\n`);
-        }
-        if (!events.length) res.write(": heartbeat\n\n");
-      } catch {
-        res.end();
-      } finally {
-        busy = false;
-      }
-    }, 1000);
-    const expiry = setTimeout(() => res.end(), 300000);
-    res.on("close", () => {
-      clearInterval(timer);
-      clearTimeout(expiry);
-    });
+    await streams.open(
+      req,
+      res,
+      url,
+      `${p.workspaceId}:${p.userId ?? p.role}`,
+      {
+        authorize: async () => {
+          requireStaff(await principal(app.db, app.auth, req, p.workspaceId));
+        },
+        latest: async () =>
+          (await app.db.one(
+            "SELECT coalesce(max(id),0) id FROM events WHERE workspace_id=$1",
+            [p.workspaceId],
+          ))!.id,
+        read: async (after) => {
+          // Advance across a bounded workspace batch, including unrelated events.
+          const rows = await app.db.rows(
+            "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND id>$2 ORDER BY id LIMIT 100",
+            [p.workspaceId, after],
+          );
+          const category = path.split("/")[1];
+          const prefixes =
+            category === "quality"
+              ? ["quality.", "gap."]
+              : category === "shadow"
+                ? ["shadow.", "rollout."]
+                : [`${category}.`];
+          return {
+            cursor: Number(rows.at(-1)?.id ?? after),
+            events: rows.filter((event) =>
+              prefixes.some((prefix) => event.kind.startsWith(prefix)),
+            ),
+          };
+        },
+      },
+    );
     return true;
   }
   if (path === "/evaluation/suites" && method === "GET")

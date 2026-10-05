@@ -1,3 +1,4 @@
+import { SCHEMA_VERSION } from "./db.js";
 import { dedicatedProbe } from "./diagnostic-probes.js";
 import { mkdir, open, unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -109,7 +110,11 @@ export class Readiness {
       risk: "local_read",
       required: true,
       configured: true,
-      config: { data: c.FIELDKIT_DATA, schema: 17, url: c.FIELDKIT_URL },
+      config: {
+        data: c.FIELDKIT_DATA,
+        schema: SCHEMA_VERSION,
+        url: c.FIELDKIT_URL,
+      },
       freshnessMinutes: 5,
       remedy:
         "Run migrations, start the worker, and grant the application access to its private data volume.",
@@ -134,9 +139,9 @@ export class Readiness {
         }
         return {
           level: "read_verified",
-          health: schema >= 17 && worker ? "current" : "blocked",
+          health: schema >= SCHEMA_VERSION && worker ? "current" : "blocked",
           summary:
-            schema < 17
+            schema < SCHEMA_VERSION
               ? "Application migrations are missing"
               : !worker
                 ? "No recent worker heartbeat"

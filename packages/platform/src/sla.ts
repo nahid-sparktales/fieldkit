@@ -167,6 +167,7 @@ export class Sla {
       policyRevision: policy.revision,
       external: !!conv.external_id,
     };
+    let observationAdded = false;
     const add = async (
       origin: string,
       kind: string,
@@ -186,15 +187,20 @@ export class Sla {
         ],
         q,
       );
-      if (row)
-        await this.db.enqueue(q, "sla", {
-          workspaceId: conv.workspace_id,
-          conversationId: conv.id,
-        });
+      if (row) observationAdded = true;
     };
     const data = event.data as Row;
     const messages = await this.db.rows(
-      `SELECT id,role,created_at,delivered_at,run_id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role IN ('customer','staff','assistant') AND created_at >= $3 AND ($4::text IS NULL OR id=$4) ORDER BY created_at,id`,
+      `SELECT m.id,m.role,m.created_at,m.delivered_at
+       FROM messages m LEFT JOIN runs r ON r.id=m.run_id AND r.workspace_id=m.workspace_id
+       WHERE m.workspace_id=$1 AND m.conversation_id=$2
+         AND m.role IN ('customer','staff','assistant') AND m.created_at >= $3
+         AND ($4::text IS NULL OR m.id=$4)
+         AND (m.role='customer' OR (m.delivered_at IS NOT NULL AND (r.state->>'route') IS DISTINCT FROM 'handoff'))
+         AND NOT EXISTS (SELECT 1 FROM sla_observations o WHERE o.workspace_id=m.workspace_id
+           AND o.conversation_id=m.conversation_id
+           AND o.origin=(CASE WHEN m.role='customer' THEN 'message:' ELSE 'response:' END)||m.id)
+       ORDER BY m.created_at,m.id`,
       [
         conv.workspace_id,
         conv.id,
@@ -210,14 +216,6 @@ export class Sla {
           messageId: m.id,
         });
       else if (m.delivered_at) {
-        const run = m.run_id
-          ? await this.db.one(
-              "SELECT state FROM runs WHERE id=$1",
-              [m.run_id],
-              q,
-            )
-          : undefined;
-        if (run?.state?.route === "handoff") continue; // Automated handoff acknowledgments are not a substantive answer.
         await add(`response:${m.id}`, "response", m.delivered_at, {
           messageId: m.id,
           role: m.role,
@@ -238,6 +236,11 @@ export class Sla {
     await add(`authority:${event.id}`, "authority", event.created_at, {
       revision: conv.revision,
     });
+    if (observationAdded)
+      await this.db.enqueue(q, "sla", {
+        workspaceId: conv.workspace_id,
+        conversationId: conv.id,
+      });
   }
   private rule(policy: SlaPolicyValue, snapshot: Row) {
     return policy.rules.find(

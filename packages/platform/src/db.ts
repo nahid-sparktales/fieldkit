@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { type Config, HttpError, log } from "./config.js";
 
 export const uid = randomUUID;
+export const SCHEMA_VERSION = 18;
 export type Queryable = Pick<Pool, "query"> | PoolClient;
 export class Database {
   selectWorkflow?: (q: PoolClient, conv: any) => Promise<any>;
@@ -112,8 +113,12 @@ export class Database {
     await this.pool.query(ATTACHMENT_SCHEMA);
     await this.pool.query(SLA_SCHEMA);
     await this.pool.query(SHADOW_SCHEMA);
+    await this.pool.query(`
+      CREATE INDEX IF NOT EXISTS events_workspace_cursor ON events(workspace_id,id);
+      CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(workspace_id,conversation_id,created_at,id);
+    `);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();

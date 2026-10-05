@@ -19,6 +19,7 @@ npm run build
 npm test
 npx playwright install chromium
 npm run test:browser
+npm ci --prefix examples/demo
 npm run test:demo
 ```
 

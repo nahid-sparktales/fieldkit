@@ -326,3 +326,61 @@ test("unauthorized waiting requests cannot process a pending timer or create not
     count,
   );
 });
+
+test("SLA observes only unseen messages, coalesces jobs, and still captures delayed delivery", async (t) => {
+  const x = await setup();
+  const prefix = uid();
+  await app.db.pool.query(
+    `INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key)
+    SELECT $1||n,$2,$3,'customer','Synthetic historical question',$1||n FROM generate_series(1,100) n`,
+    [prefix, x.ws.id, x.c.id],
+  );
+  const enqueue = t.mock.method(app.db, "enqueue");
+  const one = t.mock.method(app.db, "one");
+  await app.db.event(app.db.pool, x.ws.id, "conversation.synced", {}, x.c.id);
+  assert.equal(
+    enqueue.mock.callCount(),
+    1,
+    "one transactional wakeup covers all new observations",
+  );
+  const before = one.mock.callCount();
+  await app.db.event(app.db.pool, x.ws.id, "conversation.synced", {}, x.c.id);
+  assert.equal(
+    one.mock.callCount() - before,
+    3,
+    "policy, conversation, and one authority observation; no historical INSERT attempts",
+  );
+  const count = await app.db.one(
+    "SELECT count(*)::int n FROM sla_observations WHERE workspace_id=$1 AND kind='customer'",
+    [x.ws.id],
+  );
+  assert.equal(count!.n, 101);
+  const replyId = uid();
+  await app.db.pool.query(
+    "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key) VALUES($1,$2,$3,'staff','Queued reply',$1)",
+    [replyId, x.ws.id, x.c.id],
+  );
+  await app.db.event(app.db.pool, x.ws.id, "conversation.synced", {}, x.c.id);
+  assert.equal(
+    await app.db.one("SELECT id FROM sla_observations WHERE origin=$1", [
+      `response:${replyId}`,
+    ]),
+    undefined,
+  );
+  await app.db.pool.query(
+    "UPDATE messages SET delivered_at=now() WHERE id=$1",
+    [replyId],
+  );
+  await app.db.event(
+    app.db.pool,
+    x.ws.id,
+    "response.delivered",
+    { messageId: replyId },
+    x.c.id,
+  );
+  assert.ok(
+    await app.db.one("SELECT id FROM sla_observations WHERE origin=$1", [
+      `response:${replyId}`,
+    ]),
+  );
+});
