@@ -1,3 +1,4 @@
+import { shadowRoutes } from "./shadow-routes.js";
 import {
   customerMessageCursor,
   inboxReadState,
@@ -7,6 +8,9 @@ import { WorkflowChannel } from "../../packages/platform/src/channel-workflows.j
 import { usageContext } from "../../packages/platform/src/usage-context.js";
 import { readableText } from "../../packages/platform/src/branding-contracts.js";
 import { qualityRoutes } from "./quality-routes.js";
+import { slaRoutes } from "./sla-routes.js";
+import { readinessRoutes } from "./readiness-routes.js";
+import { attachmentRoutes } from "./attachment-routes.js";
 import { WorkflowDefinition } from "../../packages/platform/src/workflow-definition.js";
 import {
   createServer,
@@ -191,12 +195,35 @@ export async function createApp(
           emailWebhook[1],
           req.headers.authorization ?? "",
         );
+        let envelope: unknown;
+        const emailLimit =
+          Math.ceil((c.FIELDKIT_ATTACHMENT_MESSAGE_BYTES * 4) / 3) + 256 * 1024;
+        try {
+          envelope = await body(req, emailLimit);
+        } catch (e) {
+          if (e instanceof HttpError && e.status === 413)
+            await app.db.event(
+              app.db.pool,
+              emailWebhook[1],
+              "ticket_email.envelope_rejected",
+              {
+                reason:
+                  "Envelope exceeded the route-specific limit; no content was accepted",
+                maxBytes: emailLimit,
+              },
+            );
+          throw e;
+        }
+        if (await app.readiness.receiveChallenge(emailWebhook[1], envelope)) {
+          json(res, { accepted: true });
+          return;
+        }
         json(
           res,
           await app.ticketEmail.receive(
             emailWebhook[1],
             req.headers.authorization ?? "",
-            await body(req),
+            envelope,
           ),
         );
         return;
@@ -519,6 +546,11 @@ export async function createApp(
             90,
           );
         if (await qualityRoutes(app, p, req, res, url, suffix, body, json))
+          return;
+        if (await readinessRoutes(app, p, req, res, suffix, body, json)) return;
+        if (await slaRoutes(app, p, req, res, suffix, body, json)) return;
+        if (await shadowRoutes(app, p, req, res, suffix, body, json)) return;
+        if (await attachmentRoutes(app, p, req, res, url, suffix, body, json))
           return;
         if (!suffix && method === "GET") {
           requireStaff(p);
@@ -945,6 +977,7 @@ export async function createApp(
               subject: z.string().max(160).optional(),
               channelId: z.string().optional(),
               contactId: z.string().optional(),
+              attachments: z.array(z.string()).max(10).optional(),
             })
             .strict()
             .parse(await body(req));
@@ -1076,6 +1109,11 @@ export async function createApp(
               `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY m.created_at,m.id`,
               [ws, id, staff(p)],
             );
+            const files = await app.attachments.list(p, id);
+            for (const message of messages)
+              message.attachments = files.filter(
+                (file) => file.messageId === message.id,
+              );
             json(res, {
               conversation: {
                 ...conv,
@@ -1613,6 +1651,11 @@ export async function createApp(
           const d = z
             .object({
               label: z.string().min(1).max(100),
+              scopes: z
+                .array(z.enum(["requests:create", "diagnostics:read"]))
+                .min(1)
+                .max(2)
+                .default(["requests:create"]),
               days: z.number().int().min(1).max(90).default(30),
             })
             .strict()
@@ -1620,7 +1663,7 @@ export async function createApp(
           const secret = token();
           await app.db.pool.query(
             "INSERT INTO credentials(hash,workspace_id,kind,scopes,expires_at,label) VALUES($1,$2,'service',$3,now()+($4::int*interval '1 day'),$5)",
-            [tokenHash(secret), ws, ["requests:create"], d.days, d.label],
+            [tokenHash(secret), ws, d.scopes, d.days, d.label],
           );
           json(res, { token: secret });
           return;

@@ -24,6 +24,10 @@ export class FieldKitClient {
       throw new Error(result.error ?? `FieldKit returned ${response.status}`);
     return result;
   }
+  /** Cached sanitized diagnostics. Requires diagnostics:read; cannot run checks or publish. */
+  readiness() {
+    return this.call("/readiness/summary");
+  }
   identify(input: {
     externalCustomerId: string;
     name: string;

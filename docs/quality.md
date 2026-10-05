@@ -10,9 +10,14 @@ Account and API reads use saved fixtures. Example:
 
 ```json
 {
-  "customer": {"verified": true, "mappings": {"stripe_test": "cus_fixture"}},
-  "account": {"billing": [{"mode": "test", "charges": [], "subscriptions": []}]},
-  "steps": {"service_status": {"output": {"status": "operational"}}},
+  "customer": {
+    "verified": true,
+    "mappings": { "stripe_test": "cus_fixture" }
+  },
+  "account": {
+    "billing": [{ "mode": "test", "charges": [], "subscriptions": [] }]
+  },
+  "steps": { "service_status": { "output": { "status": "operational" } } },
   "dailyActionCount": 0
 }
 ```
@@ -47,10 +52,14 @@ Native feedback asks whether the issue was solved and separately offers good/bad
 
 Response times use delivered replies, never queued deliveries. Status transitions and handoff categories are recorded explicitly from this release; older missing history stays unknown. Production, preview, evaluation, judging, gap analysis, knowledge indexing, and staff assistance usage are attributed separately. Actual reported tokens and unresolved reservations are distinct; monetary estimates are not provided.
 
-Zendesk imports only already-linked tickets, through ticket synchronization and hourly, resumable reconciliation. Both modern CSAT surveys and legacy ticket ratings are read-only. Edits and duplicate pages update existing rows. Missing permissions and rate limits are visible in Analytics. FieldKit never creates or changes a Zendesk survey. See Zendesk's [modern survey schema](https://developer.zendesk.com/api-reference/ticketing/ticket-management/csat_survey_responses/) and [legacy ratings](https://developer.zendesk.com/api-reference/ticketing/ticket-management/satisfaction_ratings/). A dedicated real account must pass before this integration is release-verified.
+Zendesk imports only already-linked tickets, through ticket synchronization and hourly, resumable reconciliation. Both modern CSAT surveys and legacy ticket ratings are read-only. Edits and duplicate pages update existing rows. Missing permissions and rate limits are visible in Analytics. Navigated Support never creates or changes a Zendesk survey. See Zendesk's [modern survey schema](https://developer.zendesk.com/api-reference/ticketing/ticket-management/csat_survey_responses/) and [legacy ratings](https://developer.zendesk.com/api-reference/ticketing/ticket-management/satisfaction_ratings/). A dedicated real account must pass before this integration is release-verified.
 
 ## Operations
 
 Schema 9 is additive. Back up before upgrading; run the normal migrations, rebuild the web assets, and restart app and worker together. The existing PostgreSQL/pg-boss worker processes `quality` and `feedback-sync` jobs; no additional service or package is required. SSE progress uses the existing streaming proxy configuration.
 
 The workspace retention period applies to run transcripts and feedback. Deleting retained conversations removes feedback and gap occurrences, clears derived recommendations, removes dependent analysis/evaluation jobs, and marks imported cases unavailable. Monthly token accounting is retained independently so deleting a transcript cannot reset a budget. Apply retention to backups separately.
+
+## Shadow production comparisons
+
+Shadow complements Test Lab with one-turn counterfactuals on actual customer-visible history captured before the baseline answer. Missing fixtures, missing baselines, exclusions, failures and uncertain model reservations remain visible. Hard rules, advisory AI judgments and staff review are separate. A comparison can become a privacy-reviewed regression draft; results cannot publish or change business permissions. Retention never resets model usage. See [operational controls](operational-controls.md).

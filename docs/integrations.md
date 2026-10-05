@@ -12,7 +12,7 @@ References: [response model](https://developers.openai.com/api/docs/models/gpt-5
 
 The installation operator registers their own OAuth application. Distributed integrations require a Zendesk-approved global OAuth client; vendor approval is a release blocker. Set `ZENDESK_CLIENT_ID`, `ZENDESK_CLIENT_SECRET`, and the exact callback `https://YOUR-ORIGIN/v2/oauth/zendesk/callback`. Connect the account's subdomain in Connections. The flow uses state, PKCE, and server-side encrypted token storage/refresh.
 
-Create a signed Zendesk webhook pointing to the workspace URL shown in Connections. Configure ticket-create/update triggers to POST JSON with `{"ticket_id":"{{ticket.id}}"}`. Preserve Zendesk's signature, signature timestamp, and invocation ID headers. Copy the webhook signing secret into FieldKit's Zendesk settings. Signatures cover the timestamp plus exact request body; the server rejects timestamps outside five minutes. Keep the server clock synchronized. Publish the Zendesk channel only after this setup succeeds.
+Create a signed Zendesk webhook pointing to the workspace URL shown in Connections. Configure ticket-create/update triggers to POST JSON with `{"ticket_id":"{{ticket.id}}"}`. Preserve Zendesk's signature, signature timestamp, and invocation ID headers. Copy the webhook signing secret into Navigated Support's Zendesk settings. Signatures cover the timestamp plus exact request body; the server rejects timestamps outside five minutes. Keep the server clock synchronized. Publish the Zendesk channel only after this setup succeeds.
 
 Requested scopes cover ticket read/write, users, organizations, and help-center read. The connector paginates comments/audits, suppresses its own comment IDs using audit metadata, and uses `safe_update` with `updated_stamp`. It handles conflicts without replaying uncertain writes. Configure native portal/widget handoff independently to native or Zendesk. A native customer needs a verified email to create a Zendesk handoff ticket. Existing Zendesk requesters are not automatically linked to portal accounts by email; review mappings in Team.
 
@@ -22,7 +22,7 @@ References: [authentication/global OAuth](https://developer.zendesk.com/api-refe
 
 ## Notion
 
-Either share selected pages with an internal integration and connect its token, or configure an operator-owned public OAuth integration with `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and callback `/v2/oauth/notion/callback`. Select/shared pages define provider access. Add individual page IDs in Knowledge. FieldKit reads page/block content recursively within documented size/depth limits; it does not import the entire workspace. Hourly refresh removes inaccessible pages from retrieval when Notion revokes access.
+Either share selected pages with an internal integration and connect its token, or configure an operator-owned public OAuth integration with `NOTION_CLIENT_ID`, `NOTION_CLIENT_SECRET`, and callback `/v2/oauth/notion/callback`. Select/shared pages define provider access. Add individual page IDs in Knowledge. Navigated Support reads page/block content recursively within documented size/depth limits; it does not import the entire workspace. Hourly refresh removes inaccessible pages from retrieval when Notion revokes access.
 
 [Notion authorization](https://developers.notion.com/guides/get-started/authorization).
 
@@ -30,7 +30,7 @@ Either share selected pages with an internal integration and connect its token, 
 
 Enable Google Drive API and Picker API in one Google Cloud project. Configure a web OAuth client with callback `/v2/oauth/google/callback`; set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_PICKER_KEY`, and `GOOGLE_APP_ID` (project number). Restrict the Picker browser key to your app origin (HTTPS in production; for local development, for example `http://localhost:4318/*`) and `https://docs.google.com/*`, because Picker renders in a Google iframe. Restrict its APIs to Google Picker API and Google Drive API. Complete Google's consent/verification requirements for the intended users.
 
-Connect Google, then use **Choose Drive files** in Knowledge. FieldKit requests only `drive.file`, which grants access to files selected/shared with the application. It does not enumerate a user's entire Drive. Native Google documents export to text, spreadsheets to CSV; supported binary documents use the file extractor. Removed, inaccessible, unsupported, and empty files fail visibly and are excluded from retrieval.
+Connect Google, then use **Choose Drive files** in Knowledge. Navigated Support requests only `drive.file`, which grants access to files selected/shared with the application. It does not enumerate a user's entire Drive. Native Google documents export to text, spreadsheets to CSV; supported binary documents use the file extractor. Removed, inaccessible, unsupported, and empty files fail visibly and are excluded from retrieval.
 
 [Picker setup and restrictions](https://developers.google.com/workspace/drive/picker/guides/web-picker), [Drive scopes](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [web-server OAuth](https://developers.google.com/identity/protocols/oauth2/web-server).
 
@@ -49,15 +49,21 @@ In Team, review the customer's `stripe_test` or `stripe_live` mapping to the cor
 Anonymous widget users can ask customer-safe questions. To authenticate an existing website user, generate an identity signing key in Publish and store it only on the website's server. After checking your own session, sign a short-lived payload (at most one hour). The subject must come from your authenticated database record, not request text.
 
 ```ts
-import { createHmac } from 'node:crypto';
-const payload = Buffer.from(JSON.stringify({
-  sub: authenticatedUser.id,
-  name: authenticatedUser.name,
-  email: authenticatedUser.verifiedEmail,
-  exp: Math.floor(Date.now() / 1000) + 300,
-})).toString('base64url');
-const assertion = payload + '.' + createHmac('sha256', process.env.FIELDKIT_IDENTITY_SECRET!)
-  .update(payload).digest('base64url');
+import { createHmac } from "node:crypto";
+const payload = Buffer.from(
+  JSON.stringify({
+    sub: authenticatedUser.id,
+    name: authenticatedUser.name,
+    email: authenticatedUser.verifiedEmail,
+    exp: Math.floor(Date.now() / 1000) + 300,
+  }),
+).toString("base64url");
+const assertion =
+  payload +
+  "." +
+  createHmac("sha256", process.env.FIELDKIT_IDENTITY_SECRET!)
+    .update(payload)
+    .digest("base64url");
 // Return only the short-lived assertion to this signed-in user's browser.
 ```
 
@@ -77,12 +83,19 @@ Example configuration:
   "mappingKey": "commerce_customer",
   "idempotent": true,
   "inputSchema": {
-    "type": "object", "properties": {"orderId":{"type":"string"}},
-    "required": ["orderId"], "additionalProperties": false
+    "type": "object",
+    "properties": { "orderId": { "type": "string" } },
+    "required": ["orderId"],
+    "additionalProperties": false
   },
   "outputSchema": {
-    "type": "object", "properties": {"status":{"type":"string"},"orderId":{"type":"string"}},
-    "required": ["status","orderId"], "additionalProperties": false
+    "type": "object",
+    "properties": {
+      "status": { "type": "string" },
+      "orderId": { "type": "string" }
+    },
+    "required": ["status", "orderId"],
+    "additionalProperties": false
   }
 }
 ```
@@ -90,3 +103,7 @@ Example configuration:
 The write endpoint receives `{"operationId":"…","customerId":"staff-reviewed-provider-id","parameters":{"orderId":"…"}}`, a bearer header if configured, and `Idempotency-Key`. It must atomically store and replay the result for that operation ID. Enforce customer ownership independently on your API. Read actions use the same fixed POST envelope and must have no business side effects.
 
 The lookup endpoint receives `{"operationId":"…","customerId":"…"}` and returns `{"status":"confirmed","operationId":"…","result":{…}}` only when the original result is known. `result` must match the configured output schema. Anything else remains unknown. Automatic writes cannot be enabled without both an idempotency contract and lookup endpoint. Returning HTTP 200 alone does not establish an uncertain write's outcome.
+
+## Scope-specific diagnostics
+
+Readiness reports configuration, exact reads, dedicated writes and manual notes separately. Safe checks never issue business writes. Dedicated Zendesk notes require a tagged unlinked test ticket; Stripe probes are test-mode only with explicitly marked owned resources. Custom endpoint tests require `config.diagnosticTest=true`, a staff-mapped test contact, schemas, and idempotency plus lookup for writes. Unknown outcomes use read-only lookup. These checks do not replace [real release gates](verification.md) or grant execution permissions. [Detailed controls](operational-controls.md#readiness).

@@ -1,4 +1,4 @@
-name: FieldKit verification
+name: Navigated Support verification
 on: [push, pull_request]
 jobs:
   verify:
@@ -49,12 +49,23 @@ jobs:
           docker compose restart worker
           sleep 5
           curl --fail http://127.0.0.1:4317/v2/readiness
+      - name: Verify real private attachment scanner
+        timeout-minutes: 10
+        run: |
+          docker compose --profile attachments up -d scanner
+          # The first startup downloads signatures. The check uses only harmless
+          # synthetic text and the standard EICAR test string, never user files.
+          for attempt in $(seq 1 40); do
+            if docker compose exec -T -e FIELDKIT_CLAM_HOST=scanner -e FIELDKIT_SCAN_TIMEOUT_MS=5000 app npm run test:scanner -- --live-scanner; then exit 0; fi
+            sleep 5
+          done
+          exit 1
       - name: Container logs
         if: always()
-        run: test ! -f .env || docker compose logs --no-color --tail=60
+        run: test ! -f .env || docker compose --profile attachments logs --no-color --tail=60
       - name: Stop containers
         if: always()
-        run: test ! -f .env || docker compose down -v
+        run: test ! -f .env || docker compose --profile attachments down -v
       - uses: actions/upload-artifact@v4
         if: always()
         with:

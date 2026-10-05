@@ -53,10 +53,15 @@ export const ChannelInput = z
   .strict();
 export const MessageInput = z
   .object({
-    body: z.string().trim().min(1).max(12000),
+    body: z.string().trim().max(12000),
     requestKey: z.string().min(8).max(120),
+    attachments: z.array(z.string().max(200)).max(10).default([]),
   })
-  .strict();
+  .strict()
+  .refine(
+    (d) => !!d.body || d.attachments.length > 0,
+    "Write a message or attach a file",
+  );
 export const SourceInput = z
   .object({
     kind: z.enum(["website", "notion", "google", "zendesk"]),
@@ -151,6 +156,7 @@ export const ActionInput = z
         inputSchema: z.record(z.string(), z.unknown()).optional(),
         outputSchema: z.record(z.string(), z.unknown()).optional(),
         idempotent: z.boolean().default(false),
+        diagnosticTest: z.boolean().default(false),
         credentialId: z.string().optional(),
         mappingKey: z
           .string()
@@ -160,6 +166,7 @@ export const ActionInput = z
       .strict()
       .default({
         idempotent: false,
+        diagnosticTest: false,
         mappingKey: "customer_id",
         stripeMode: "test",
       }),

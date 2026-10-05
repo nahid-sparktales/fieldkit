@@ -51,8 +51,8 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
       <section className="panel">
         <h2>Your profile</h2>
         <p className="muted">
-          Your display name is shared across your FieldKit workspaces and
-          support accounts.
+          Your display name is shared across your Navigated Support workspaces
+          and support accounts.
         </p>
         <Notice action={profile} />
         <form
@@ -268,8 +268,8 @@ export function WorkspaceSettings({
     <section className="panel workspace-settings">
       <h2>Workspace details</h2>
       <p className="muted">
-        The workspace name identifies your team in FieldKit. Set a different
-        public name in Publish → Appearance.
+        The workspace name identifies your team in Navigated Support. Set a
+        different public name in Publish → Appearance.
       </p>
       <Notice action={action} />
       <form
@@ -331,7 +331,7 @@ export function SettingsPage({
     <>
       <div className="page-heading">
         <div>
-          <span className="eyebrow">MAKE FIELDKIT YOURS</span>
+          <span className="eyebrow">MAKE NAVIGATED SUPPORT YOURS</span>
           <h1>Settings</h1>
           <p>
             Manage your profile

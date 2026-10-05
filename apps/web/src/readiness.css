@@ -1,0 +1,112 @@
+.readiness-link {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  margin: 0 0 24px;
+}
+.readiness-link span {
+  color: var(--muted, #607068);
+}
+.readiness-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.readiness-checks {
+  display: grid;
+  gap: 12px;
+}
+.readiness-check {
+  margin: 0;
+  padding: 20px;
+}
+.readiness-check.selected {
+  border-color: #277259;
+  box-shadow: 0 0 0 1px #277259;
+}
+.readiness-check > div {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.readiness-check h2 {
+  font-size: 16px;
+  margin: 0;
+}
+.readiness-check p {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.readiness-details {
+  min-width: 0;
+  position: sticky;
+  top: 16px;
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+.readiness-details form {
+  display: grid;
+  gap: 12px;
+  margin-block: 24px;
+}
+.readiness-details details {
+  margin-block: 12px;
+  overflow-wrap: anywhere;
+}
+.readiness-details summary {
+  cursor: pointer;
+  padding-block: 8px;
+}
+.readiness-channels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 16px;
+}
+.readiness-page li {
+  margin-block: 12px;
+  line-height: 1.6;
+}
+.readiness-page .check-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+.readiness-page input[type="checkbox"] {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  margin-top: 3px;
+}
+.readiness-page .text-button {
+  padding: 0;
+  border: 0;
+  color: #216d51;
+  background: none;
+  text-decoration: underline;
+}
+@media (max-width: 1050px) {
+  .readiness-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .readiness-details {
+    position: static;
+    max-height: none;
+  }
+}
+@media (max-width: 600px) {
+  .readiness-check > div {
+    flex-wrap: wrap;
+  }
+  .readiness-check,
+  .readiness-details {
+    padding: 16px;
+  }
+  .readiness-page .quality-actions {
+    flex-wrap: wrap;
+  }
+}

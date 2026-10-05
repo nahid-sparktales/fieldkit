@@ -16,6 +16,11 @@ import {
   PortalFooter,
   brandStyle,
 } from "./PortalBrand.js";
+import {
+  AttachmentPicker,
+  attachmentIds,
+  attachmentsPending,
+} from "./Attachments.js";
 import { MessageList, useConversationEvents } from "./conversation-ui.js";
 import { ConversationFeedback } from "./ConversationFeedback.js";
 import { Field, Notice, type Row } from "./quality-ui.js";
@@ -171,6 +176,12 @@ export function Portal({
       document.head.appendChild(document.createElement("link"));
     icon.rel = "icon";
     icon.href = info.data.appearance.logoUrl || "/favicon.svg";
+    const touchIcon = document.querySelector<HTMLLinkElement>(
+      'link[rel="apple-touch-icon"]',
+    );
+    if (touchIcon)
+      touchIcon.href =
+        info.data.appearance.logoUrl || "/brand/apple-touch-icon.png";
   }, [info.data]);
   function select(id: string) {
     setSelected(id);
@@ -594,8 +605,9 @@ function NewTicket({
   const a = useAction(),
     [subject, setSubject] = useState(""),
     [body, setBody] = useState(""),
+    [files, setFiles] = useState<Row[]>([]),
     key = useRef(crypto.randomUUID());
-  useDraftWarning(Boolean(body || subject), onDraftChange);
+  useDraftWarning(Boolean(body || subject || files.length), onDraftChange);
   return (
     <form
       className="ticket-compose"
@@ -606,6 +618,7 @@ function NewTicket({
             subject,
             body,
             requestKey: key.current,
+            attachments: attachmentIds(files),
             channelId: identity.channelId,
           });
           onCreated(c.id);
@@ -627,7 +640,7 @@ function NewTicket({
       </Field>
       <Field label="Message">
         <textarea
-          required
+          required={!attachmentIds(files).length}
           maxLength={12000}
           rows={7}
           value={body}
@@ -638,6 +651,17 @@ function NewTicket({
           placeholder="Tell us what happened, what you expected, and any details that might help."
         />
       </Field>
+      <AttachmentPicker
+        ws={identity.workspaceId}
+        channelId={identity.channelId}
+        customer
+        files={files}
+        onChange={(rows) => {
+          setFiles(rows);
+          key.current = crypto.randomUUID();
+        }}
+        disabled={a.busy}
+      />
       <p className="email-hint">
         Replies will be emailed to <strong>{identity.email}</strong>. Please
         don’t include passwords or payment details.
@@ -646,7 +670,12 @@ function NewTicket({
       <div className="button-row">
         <button
           className="primary"
-          disabled={a.busy || !body.trim() || !subject.trim()}
+          disabled={
+            a.busy ||
+            (!body.trim() && !attachmentIds(files).length) ||
+            attachmentsPending(files) ||
+            !subject.trim()
+          }
         >
           {a.busy ? "Submitting…" : "Send ticket"}
         </button>
@@ -701,8 +730,9 @@ function TicketThread({
     a = useAction(),
     [reply, setReply] = useState(false),
     [body, setBody] = useState(""),
+    [files, setFiles] = useState<Row[]>([]),
     key = useRef(crypto.randomUUID());
-  useDraftWarning(Boolean(body), onDraftChange);
+  useDraftWarning(Boolean(body || files.length), onDraftChange);
   useConversationEvents(
     identity.workspaceId,
     id,
@@ -771,7 +801,11 @@ function TicketThread({
         </p>
       </div>
       <section className="ticket-correspondence" aria-label="Ticket messages">
-        <MessageList messages={l.data.messages} />
+        <MessageList
+          messages={l.data.messages}
+          ws={identity.workspaceId}
+          customer
+        />
       </section>
       <ClosedFeedback
         identity={identity}
@@ -794,9 +828,14 @@ function TicketThread({
                 await api(
                   identity.workspaceId,
                   `/conversations/${id}/messages`,
-                  { body, requestKey: key.current },
+                  {
+                    body,
+                    requestKey: key.current,
+                    attachments: attachmentIds(files),
+                  },
                 );
                 setBody("");
+                setFiles([]);
                 key.current = crypto.randomUUID();
                 setReply(false);
                 l.reload();
@@ -808,7 +847,7 @@ function TicketThread({
               <textarea
                 autoFocus
                 disabled={a.busy}
-                required
+                required={!attachmentIds(files).length}
                 maxLength={12000}
                 rows={5}
                 value={body}
@@ -818,8 +857,26 @@ function TicketThread({
                 }}
               />
             </Field>
+            <AttachmentPicker
+              ws={identity.workspaceId}
+              conversationId={id}
+              customer
+              files={files}
+              onChange={(rows) => {
+                setFiles(rows);
+                key.current = crypto.randomUUID();
+              }}
+              disabled={a.busy}
+            />
             <div className="button-row">
-              <button className="primary" disabled={a.busy || !body.trim()}>
+              <button
+                className="primary"
+                disabled={
+                  a.busy ||
+                  (!body.trim() && !attachmentIds(files).length) ||
+                  attachmentsPending(files)
+                }
+              >
                 {a.busy
                   ? "Sending…"
                   : closed
@@ -907,7 +964,8 @@ function LiveChat({
         return "";
       }
     }),
-    [body, setBody] = useState("");
+    [body, setBody] = useState(""),
+    [files, setFiles] = useState<Row[]>([]);
   const a = useAction(),
     key = useRef(crypto.randomUUID()),
     composer = useRef<HTMLTextAreaElement>(null),
@@ -938,7 +996,7 @@ function LiveChat({
     session?.token,
     true,
   );
-  useDraftWarning(Boolean(body), onDraftChange);
+  useDraftWarning(Boolean(body || files.length), onDraftChange);
   useEffect(() => {
     setReopening(false);
   }, [selected, l.data?.conversation.status]);
@@ -970,6 +1028,7 @@ function LiveChat({
         setSession(v);
         setSelected("");
         setBody("");
+        setFiles([]);
       });
     };
     window.addEventListener("message", receive);
@@ -992,7 +1051,11 @@ function LiveChat({
           await api(
             identity.workspaceId,
             `/conversations/${selected}/messages`,
-            { body, requestKey: key.current },
+            {
+              body,
+              requestKey: key.current,
+              attachments: attachmentIds(files),
+            },
             undefined,
             identity.token,
           );
@@ -1000,13 +1063,19 @@ function LiveChat({
           const c = await api(
             identity.workspaceId,
             "/conversations",
-            { body, requestKey: key.current, channelId: config.data.channelId },
+            {
+              body,
+              requestKey: key.current,
+              channelId: config.data.channelId,
+              attachments: attachmentIds(files),
+            },
             undefined,
             identity.token,
           );
           setSelected(c.id);
         }
         setBody("");
+        setFiles([]);
         key.current = crypto.randomUUID();
         nearBottom.current = true;
         l.reload();
@@ -1046,6 +1115,7 @@ function LiveChat({
                 setSelected("");
                 if (!account) setSession(undefined);
                 setBody("");
+                setFiles([]);
                 a.setError("");
               }}
             >
@@ -1096,7 +1166,12 @@ function LiveChat({
           </div>
         ) : l.data ? (
           <>
-            <MessageList messages={l.data.messages} />
+            <MessageList
+              messages={l.data.messages}
+              ws={session?.workspaceId}
+              bearer={session?.token}
+              customer
+            />
             {closed ? (
               <div className="chat-state">
                 Chat closed. Continue the conversation if you need more help.
@@ -1154,7 +1229,7 @@ function LiveChat({
             placeholder={
               closed ? "Send a message to reopen…" : "Type your question…"
             }
-            required
+            required={!attachmentIds(files).length}
             maxLength={12000}
             rows={2}
             value={body}
@@ -1170,16 +1245,42 @@ function LiveChat({
                 !e.nativeEvent.isComposing
               ) {
                 e.preventDefault();
-                if (body.trim() && !a.busy && !l.error && config.data)
+                if (
+                  (body.trim() || attachmentIds(files).length) &&
+                  !attachmentsPending(files) &&
+                  !a.busy &&
+                  !l.error &&
+                  config.data
+                )
                   e.currentTarget.form?.requestSubmit();
               }
             }}
           />
+          {session && selected && (
+            <AttachmentPicker
+              ws={session.workspaceId}
+              conversationId={selected}
+              bearer={session.token}
+              customer
+              files={files}
+              onChange={(rows) => {
+                setFiles(rows);
+                key.current = crypto.randomUUID();
+              }}
+              disabled={a.busy}
+            />
+          )}
           <div>
             <small>Enter to send · Shift + Enter for a new line</small>
             <button
               className="primary"
-              disabled={a.busy || !body.trim() || !config.data || !!l.error}
+              disabled={
+                a.busy ||
+                (!body.trim() && !attachmentIds(files).length) ||
+                attachmentsPending(files) ||
+                !config.data ||
+                !!l.error
+              }
             >
               {a.busy ? "Sending…" : "Send"}
             </button>

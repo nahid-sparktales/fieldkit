@@ -1,0 +1,123 @@
+.sla-page {
+  max-width: 1200px;
+  margin: auto;
+}
+.sla-title,
+.sla-notification {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+.sla-queue-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 1rem;
+  padding: 1.2rem 0;
+  border-bottom: 1px solid var(--line, #dce5e1);
+  text-decoration: none;
+  color: inherit;
+}
+.sla-queue-row span,
+.sla-queue-row time,
+.sla-queue-row small {
+  display: block;
+  margin-top: 0.35rem;
+}
+.sla-queue-row > div:last-child {
+  text-align: right;
+}
+.sla-policy fieldset {
+  border: 1px solid var(--line, #dce5e1);
+  border-radius: 12px;
+  padding: 1.1rem;
+  margin: 1.25rem 0;
+}
+.sla-policy legend {
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+.sla-shift,
+.sla-targets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+.sla-shift {
+  grid-template-columns: 2fr 1fr 1fr auto;
+  align-items: end;
+  margin: 0.7rem 0;
+}
+.sla-shift input,
+.sla-shift select {
+  width: 100%;
+  min-width: 0;
+}
+.sla-shift label {
+  display: grid;
+  gap: 0.4rem;
+}
+.sla-choice-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin: 1rem 0;
+}
+.sla-choice-row label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.sla-choice-row input {
+  width: auto;
+}
+.sla-rule {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line, #dce5e1);
+}
+.sla-notification {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line, #dce5e1);
+}
+.sla-conversation {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--line, #dce5e1);
+  border-radius: 12px;
+}
+.sla-page details {
+  margin: 1.2rem 0;
+}
+.sla-page summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.sla-page .quality-actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 640px) {
+  .sla-targets,
+  .sla-queue-row {
+    grid-template-columns: 1fr;
+  }
+  .sla-queue-row > div:last-child {
+    text-align: left;
+  }
+  .sla-shift {
+    grid-template-columns: 1fr 1fr;
+  }
+  .sla-shift label:first-child {
+    grid-column: 1/-1;
+  }
+  .sla-policy {
+    padding: 1rem;
+  }
+  .sla-policy fieldset {
+    min-width: 0;
+    padding: 0.7rem;
+  }
+  .sla-title > * {
+    max-width: 100%;
+  }
+}

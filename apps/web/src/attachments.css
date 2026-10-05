@@ -1,0 +1,107 @@
+.attachment-picker {
+  margin: 10px 0;
+  font-size: 12px;
+}
+.attachment-picker summary {
+  cursor: pointer;
+  min-height: 24px;
+  color: #216d51;
+}
+.attachment-picker p {
+  margin: 6px 0;
+  color: #607068;
+}
+.attachment-picker input[type="file"] {
+  display: block;
+  max-width: 100%;
+  padding: 8px 0;
+}
+.attachment-picker ul {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.attachment-picker li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid #dbe4de;
+  border-radius: 6px;
+  margin: 6px 0;
+}
+.attachment-picker li strong {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.attachment-picker li span {
+  flex-basis: 100%;
+}
+.attachment-picker button,
+.attachment-card button {
+  font-size: 12px;
+  padding: 6px 10px;
+}
+.attachment-cards {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.attachment-card {
+  background: #fff;
+  border: 1px solid #d4e0d8;
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.attachment-card > span,
+.attachment-card small {
+  display: block;
+  color: #607068;
+  font-size: 11px;
+  margin-top: 4px;
+}
+.attachment-card > p {
+  font-size: 12px;
+  margin: 8px 0;
+}
+.attachment-card > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.attachment-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 400px;
+  object-fit: contain;
+}
+.attachment-preview pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  width: 100%;
+  font-size: 12px;
+}
+.inbox-stacked .reply-form .attachment-picker {
+  grid-column: 1/-1;
+  grid-row: 4;
+  margin: 0 10px 4px;
+  max-height: 180px;
+  overflow: auto;
+}
+.chat-composer .attachment-picker {
+  width: 100%;
+  max-height: 180px;
+  overflow: auto;
+}
+@media (max-width: 600px) {
+  .attachment-picker button,
+  .attachment-card button {
+    min-height: 40px;
+  }
+}

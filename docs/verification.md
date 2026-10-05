@@ -2,6 +2,62 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Operational controls and Navigated Support identity — 2026-10-04
+
+Local implementation started from `0f23512d08c833a3e63d2de854c940e4fb99faf3`
+on `main` with schema 13 and a clean working tree. The final local source adds
+migrations 14–17 and the Readiness, attachments, SLA, shadow and rollout services.
+See [implementation map](implementation-priorities-1-4.md),
+[operator guide](operational-controls.md), and [API contracts](api.md#operational-controls-additive-v2-resources).
+
+| Check actually run                                                          | Observed result                                                                                                                                              |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npx tsc --noEmit --noUnusedLocals --noUnusedParameters`                    | Passed                                                                                                                                                       |
+| `npm run build`                                                             | Passed; existing main-chunk size warning remains (about 588 kB minified)                                                                                     |
+| `npm test`                                                                  | **166 passed**, no skipped or failed tests; 50.4 seconds                                                                                                     |
+| `npm run test:browser`                                                      | Complete isolated browser journey passed in **1.3 minutes**                                                                                                  |
+| `npm run test:demo`                                                         | **33 passed**, reported separately from production/provider evidence                                                                                         |
+| Independent fresh `npm ci` and `npm ci --prefix examples/demo`              | Both passed in temporary copies; no SQLite entries in root lock/install                                                                                      |
+| Schema-13 upgrade from the actual starting revision                         | Passed on the disposable test database: retained message IDs/bodies/roles, schema 17, repeated migration, new controls default-off, worker restart heartbeat |
+| Docker build, real runner, Compose and real scanner smoke                   | **BLOCKED locally:** no Docker executable/runtime; CI includes these checks, but this local run does not establish their result                              |
+| Live model, SMTP receipt, Postmark, Zendesk, Stripe and custom test service | **NOT RUN:** dedicated resources/authorization required; no live verification claim                                                                          |
+
+The host runtime was **Node 25.5.0**. Node 24 remains the Docker/CI target; these
+local passes are not evidence that the container checks ran. Both app and store
+installations were left on their existing databases/processes; no customer database
+was migrated or reset. Only isolated `_test` data and temporary copies were used.
+
+New deterministic regressions exercise configuration/evidence freshness and
+provenance, exact dedicated diagnostic resources, revoked actors, uncertain writes
+and read-only reconciliation, scoped diagnostic service keys, atomic token caps,
+private file ownership and note visibility, scanner failure/retry/protocol parsing,
+retention and deletion, inbound staging/idempotency, business-time/DST arithmetic,
+SLA event transitions, reminder cancellation, notification recovery, immutable
+shadow snapshots, captured reads and missing fixtures, zero shadow business or
+customer effects, interrupted attempts, source/identity revocation, stable canary
+assignment and its kill switch. Existing approval, takeover and restart-recovery
+regressions remain included.
+
+The browser journey covers the branded sign-in/sidebar, preserved customer logos
+and favicon, document ingestion and conversations, taller full-width inbox queue,
+private notes, read sections, workflow/component editors, customer feedback,
+Readiness evidence, attachment upload and safe staff preview, SLA policy/deadline
+preview and warning queue, shadow comparison/review and explicit rollout stop.
+Desktop and 390-pixel screenshots were inspected. The verification caught and
+fixed a duplicate-favicon conflict and a mobile test race during navigation resize.
+The real model/provider/scanner paths were replaced only by explicit, labeled test
+adapters; the normal application has no simulated fallback.
+
+The explicitly invoked `npm run sandbox -- --operations` fixture is covered by
+the backend suite: a failed then recovered diagnostic, accepted/rejected files,
+an overdue ticket, a canceled waiting reminder, a shadow action proposal with
+no effect, and a stopped unsent canary. This is local training evidence only.
+
+The supplied Navigated Support compass assets, charcoal/forest/mint palette,
+product copy, account-email names, browser icons and light/dark README wordmarks
+are included. Customer-specific branding, installation/environment/API identifiers,
+and the archived demo remain compatible. See [brand usage](branding.md#navigated-support-product-identity).
+
 ## Guided workflow editor — 2026-10-04
 
 All **124 backend/unit tests**, strict TypeScript checks (including unused bindings), the production build, and the complete browser journey passed. The final browser run took 57.4 seconds. Four new deterministic regressions verify branch insertion, unchanged component/action settings, explicit fallback connections, disconnected steps, invalid cycles, and template approval defaults.

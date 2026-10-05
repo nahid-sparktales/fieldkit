@@ -116,6 +116,106 @@ export class LiveModel implements ModelPort {
       if (used + amount > Settings.parse(workspace.settings).monthlyTokenBudget)
         throw new HttpError(429, "Workspace model usage budget reached");
       const scope = usageContext.getStore();
+      if (scope?.shadowId) {
+        const result = requireValue(
+          await this.db.one(
+            "SELECT r.status,r.experiment_id,e.status experiment_status,e.config,e.ends_at,e.created_by FROM shadow_results r JOIN shadow_experiments e ON e.id=r.experiment_id WHERE r.workspace_id=$1 AND r.id=$2",
+            [ws, scope.shadowId],
+            q,
+          ),
+        );
+        if (
+          result.status !== "running" ||
+          result.experiment_status !== "active" ||
+          new Date(result.ends_at) <= new Date()
+        )
+          throw new HttpError(409, "Shadow evaluation is no longer authorized");
+        if (
+          !(await this.db.one(
+            "SELECT 1 FROM memberships WHERE workspace_id=$1 AND user_id=$2 AND role IN ('owner','admin')",
+            [ws, result.created_by],
+            q,
+          ))
+        )
+          throw new HttpError(403, "Shadow administrator access revoked");
+        const totals = requireValue(
+          await this.db.one(
+            "SELECT coalesce(sum(input_tokens+output_tokens+reserved),0) aggregate,coalesce(sum(input_tokens+output_tokens+reserved) FILTER(WHERE context_id=$3),0) run FROM usage WHERE workspace_id=$1 AND experiment_id=$2",
+            [ws, result.experiment_id, scope.shadowId],
+            q,
+          ),
+        );
+        if (
+          Number(totals.aggregate) + amount > result.config.tokenCap ||
+          Number(totals.run) + amount > result.config.perRunTokenCap
+        )
+          throw new HttpError(429, "Shadow token cap reached");
+        if (
+          used + amount + result.config.productionReserve >
+          Settings.parse(workspace.settings).monthlyTokenBudget
+        )
+          throw new HttpError(
+            429,
+            "Production token allocation is reserved; shadow budget exhausted",
+          );
+      }
+      if (scope?.rolloutId) {
+        const rollout = requireValue(
+          await this.db.one(
+            "SELECT status,token_cap,ends_at FROM canary_rollouts WHERE workspace_id=$1 AND id=$2",
+            [ws, scope.rolloutId],
+            q,
+          ),
+        );
+        if (
+          rollout.status !== "active" ||
+          new Date(rollout.ends_at) <= new Date()
+        )
+          throw new HttpError(409, "Rollout stopped before model call");
+        const spent = Number(
+          (await this.db.one(
+            "SELECT coalesce(sum(input_tokens+output_tokens+reserved),0) n FROM usage WHERE workspace_id=$1 AND rollout_id=$2",
+            [ws, scope.rolloutId],
+            q,
+          ))!.n,
+        );
+        if (spent + amount > rollout.token_cap)
+          throw new HttpError(429, "Rollout token cap reached");
+      }
+      if (scope?.diagnosticId) {
+        const check = requireValue(
+          await this.db.one(
+            "SELECT * FROM diagnostic_runs WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+            [ws, scope.diagnosticId],
+            q,
+          ),
+        );
+        if (check.status !== "running" || check.cancel_requested)
+          throw new HttpError(
+            409,
+            "Diagnostic is no longer authorized to call a model",
+          );
+        if (
+          !(await this.db.one(
+            "SELECT 1 FROM memberships WHERE workspace_id=$1 AND user_id=$2 AND role IN ('owner','admin')",
+            [ws, check.actor_id],
+            q,
+          ))
+        )
+          throw new HttpError(
+            403,
+            "Diagnostic administrator access was revoked",
+          );
+        const spent = Number(
+          (await this.db.one(
+            "SELECT COALESCE(sum(input_tokens+output_tokens+reserved),0) n FROM usage WHERE workspace_id=$1 AND context_id=$2",
+            [ws, check.id],
+            q,
+          ))!.n,
+        );
+        if (spent + amount > check.token_cap)
+          throw new HttpError(429, "Diagnostic token cap reached");
+      }
       if (scope?.jobId) {
         const job = requireValue(
           await this.db.one(
@@ -172,10 +272,15 @@ export class LiveModel implements ModelPort {
               : kind === "response"
                 ? "production"
                 : "assistance"),
-          scope?.jobId ?? null,
+          scope?.jobId ?? scope?.diagnosticId ?? scope?.shadowId ?? null,
           scope?.runId ?? null,
         ],
       );
+      if (scope?.shadowId || scope?.rolloutId)
+        await q.query(
+          "UPDATE usage SET experiment_id=$2,rollout_id=$3 WHERE id=$1",
+          [id, scope?.experimentId ?? null, scope?.rolloutId ?? null],
+        );
       return id;
     });
   }

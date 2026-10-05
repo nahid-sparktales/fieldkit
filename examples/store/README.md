@@ -1,6 +1,6 @@
 # Trail Supply: persistent local store sandbox
 
-This runs the current FieldKit application with a fictional outdoor store. It is separate from the archived `demo-v1` and the disposable automated test database. Nothing is seeded in normal installations.
+This runs the current Navigated Support application with a fictional outdoor store. It is separate from the archived `demo-v1` and the disposable automated test database. Nothing is seeded in normal installations.
 
 ## Start
 
@@ -54,7 +54,7 @@ The first start creates five approved public documents (returns, shipping, produ
 
 ## What is real, and what is simulated?
 
-**Real:** FieldKit authentication, PostgreSQL/pgvector storage, ingestion, visibility rules, citations, LangGraph execution, checkpoints, durable jobs, customer isolation, approvals, policies, inbox, feedback, branding, rule-based evaluation, and restart recovery.
+**Real:** Navigated Support authentication, PostgreSQL/pgvector storage, ingestion, visibility rules, citations, LangGraph execution, checkpoints, durable jobs, customer isolation, approvals, policies, inbox, feedback, branding, rule-based evaluation, and restart recovery.
 
 **Simulated:** model responses, embedding vectors, purchases, subscriptions, and payment receipts. Responses use simple word matching against retrieved passages. FAQ/support-assistant outputs are labelled scripted drafts. Model instructions and model comparisons do not measure AI behavior here. No token usage is fabricated; the usage counter stays at zero.
 
@@ -73,3 +73,7 @@ npm run sandbox -- --reset
 This explicitly drops the sandbox database’s application, queue, and checkpoint schemas, and clears its uploads/outbox. It keeps local installation secrets and the initial generated password. A reset of the regular installation or automated test database is rejected by the sandbox database guard. Restarting without `--reset` never restores defaults over your changes. An interrupted first initialization reports an error and requires inspection or this explicit reset.
 
 Regression coverage lives in `tests/store-sandbox.test.ts` and uses the existing disposable `TEST_DATABASE_URL`, **not** your persistent store sandbox. Run it with `npx tsx --test tests/store-sandbox.test.ts` (it clears that test database). It checks database guards, source visibility, account separation, exact-once simulated receipts, restart persistence, and all six evaluation turns.
+
+## Operational-control scenarios
+
+From a source checkout run `npm run sandbox -- --operations` on a fresh offline store sandbox. This explicit option adds a scanner outage/recovery history, a clean screenshot and rejected log, a one-minute SLA example with an advanced injected clock, a customer reply that cancels a reminder, a reviewed shadow action proposal, and a stopped canary before its candidate sends. The scanner is a labeled test double, not ClamAV; mail is captured locally and payments/models stay simulated. Existing sandbox records are not reset. Use the normal `--reset` option only when intentionally recreating this isolated data. Open Readiness, Needs attention, Shadow & rollout, and the inbox to inspect the scenarios.

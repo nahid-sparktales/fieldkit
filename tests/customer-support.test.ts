@@ -287,7 +287,7 @@ test("outbound public ticket emails are durable, deduplicated, private and suppo
         Attachments: [{ Name: "private.pdf" }],
       })
     ).status,
-    "rejected",
+    "received",
   );
   await app.message(
     w.owner,
@@ -331,6 +331,7 @@ test("uncertain SMTP attempts require explicit recovery; revoked contacts skip d
       throw new Error("timeout after SMTP accept");
     },
     (p, id, input) => app.message(p, id, input),
+    app.attachments,
   );
   const m = await app.message(w.owner, c.id, {
       body: "A reply",

@@ -33,6 +33,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
     [judgeModel, setJudgeModel] = useState(""),
     [judgeProvider, setJudgeProvider] = useState("");
   const [fixtureText, setFixtureText] = useState("{}");
+  const importShadow = new URLSearchParams(location.search).get("importShadow");
   const importConversation = new URLSearchParams(location.search).get(
       "importConversation",
     ),
@@ -84,6 +85,9 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
       <header>
         <span className="eyebrow">REPEATABLE CUSTOMER SCENARIOS</span>
         <h1>Test Lab</h1>
+        <a href={`/?workspace=${ws}&view=shadow%20%26%20rollout`}>
+          Shadow comparisons and gradual rollout ↗
+        </a>
         <p>
           Compare workflows and response models before publishing. Account and
           API reads use fixtures; proposed business actions stop for inspection.
@@ -91,7 +95,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
         </p>
       </header>
       <Notice action={a} error={suites.error || runs.error} />
-      {(importConversation || importGap) && admin && (
+      {(importConversation || importGap || importShadow) && admin && (
         <section className="panel">
           <p>
             Review copied personal information and reference answers before
@@ -103,9 +107,11 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
               void a.run(async () => {
                 const draft = await api(
                   ws,
-                  importConversation
-                    ? `/conversations/${importConversation}/test-case`
-                    : `/knowledge/gaps/${importGap}/case`,
+                  importShadow
+                    ? `/shadow/results/${importShadow}/case`
+                    : importConversation
+                      ? `/conversations/${importConversation}/test-case`
+                      : `/knowledge/gaps/${importGap}/case`,
                 );
                 select({
                   name: "Imported regression",

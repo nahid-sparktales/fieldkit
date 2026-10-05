@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { AttachmentCards } from "./Attachments.js";
 type Row = Record<string, any>;
 export function useConversationEvents(
   ws: string,
@@ -53,20 +54,32 @@ export function useConversationEvents(
     };
   }, [ws, id, bearer, customer]);
 }
-export function MessageList({ messages }: { messages: Row[] }) {
+export function MessageList({
+  messages,
+  ws,
+  bearer,
+  customer = false,
+}: {
+  messages: Row[];
+  ws?: string;
+  bearer?: string;
+  customer?: boolean;
+}) {
   return (
     <>
       {messages.map((m) => (
         <article className={`message ${m.role}`} key={m.id}>
           <div>
             <strong>
-              {m.role === "assistant"
-                ? "FieldKit"
-                : m.role === "note"
-                  ? `Internal note${m.author_name ? " · " + m.author_name : ""}`
-                  : m.role === "staff"
-                    ? "Support team"
-                    : "Customer"}
+              {m.role === "reminder"
+                ? "Support follow-up"
+                : m.role === "assistant"
+                  ? "Navigated Support"
+                  : m.role === "note"
+                    ? `Internal note${m.author_name ? " · " + m.author_name : ""}`
+                    : m.role === "staff"
+                      ? "Support team"
+                      : "Customer"}
             </strong>
             <time
               dateTime={m.created_at}
@@ -81,6 +94,14 @@ export function MessageList({ messages }: { messages: Row[] }) {
             </time>
           </div>
           <p>{m.body}</p>
+          {ws && !!m.attachments?.length && (
+            <AttachmentCards
+              ws={ws}
+              files={m.attachments}
+              bearer={bearer}
+              customer={customer}
+            />
+          )}
           {m.citations?.length > 0 && (
             <details className="citations">
               <summary>

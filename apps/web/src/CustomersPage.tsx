@@ -569,7 +569,7 @@ function AccountLinks({
           </dd>
         </div>
         <div>
-          <dt>FieldKit customer ID</dt>
+          <dt>Navigated Support customer ID</dt>
           <dd>{c.id}</dd>
         </div>
         {c.external_id && (

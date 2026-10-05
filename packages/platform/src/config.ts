@@ -11,6 +11,40 @@ const Schema = z.object({
   FIELDKIT_DATA: z.string().default(".fieldkit/v2"),
   FIELDKIT_RUNNER_URL: z.string().default(""),
   FIELDKIT_RUNNER_TOKEN: z.string().default(""),
+  FIELDKIT_CLAM_HOST: z.string().default(""),
+  FIELDKIT_CLAM_PORT: z.coerce.number().int().min(1).max(65535).default(3310),
+  FIELDKIT_SCAN_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1000)
+    .max(120000)
+    .default(30000),
+  FIELDKIT_SCAN_MAX_AGE_HOURS: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(168)
+    .default(48),
+  FIELDKIT_ATTACHMENT_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(20 * 1024 * 1024)
+    .default(8 * 1024 * 1024),
+  FIELDKIT_ATTACHMENT_MESSAGE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024)
+    .max(40 * 1024 * 1024)
+    .default(20 * 1024 * 1024),
+  FIELDKIT_ATTACHMENT_COUNT: z.coerce.number().int().min(1).max(10).default(5),
+  FIELDKIT_ATTACHMENT_STORAGE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(1024 * 1024)
+    .max(100 * 1024 * 1024 * 1024)
+    .default(1024 * 1024 * 1024),
+  FIELDKIT_ATTACHMENT_SCANS: z.coerce.number().int().min(1).max(4).default(2),
   FIELDKIT_MODEL_ENDPOINTS: z.string().default(""),
   FIELDKIT_ENCRYPTION_KEY: z
     .string()
@@ -21,7 +55,7 @@ const Schema = z.object({
   BETTER_AUTH_SECRET: z.string().min(32),
   FIELDKIT_SETUP_TOKEN: z.string().min(24),
   SMTP_URL: z.string().optional(),
-  SMTP_FROM: z.string().default("FieldKit <support@localhost>"),
+  SMTP_FROM: z.string().default("Navigated Support <support@localhost>"),
   ZENDESK_CLIENT_ID: z.string().optional(),
   ZENDESK_CLIENT_SECRET: z.string().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),

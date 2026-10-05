@@ -60,3 +60,7 @@ Use **Test Lab** for saved multi-turn scenarios and up to two workflow/model var
 ## Separate ticket and chat graphs
 
 Use the Channel workflow selector to edit the workspace default, support tickets/email, live chat/widget, or Zendesk. Unspecialized channels inherit the published default. Publication histories and drafts are separate; reusable steps and governed resources remain shared. See [customer support workflows](customer-support.md#independent-channel-workflows).
+
+## Observe a candidate before publication
+
+**Shadow & rollout** snapshots a saved graph and expanded components without publication. It compares future sampled turns using exact captured read fixtures, stops at action proposals and cannot send customer replies. A separately reviewed canary gives only new assigned conversations explicit version/generation authority. Stopping revokes unsent work; promotion uses normal exact-draft publication. Read [sampling, budgets and the transition matrix](operational-controls.md#shadow-comparisons-and-gradual-rollout).

@@ -189,6 +189,13 @@ export async function verifyInbox(page: Page, customer: Page) {
   await size.fill("70");
   const originalBox = (await thread.boundingBox())!;
   const queueBox = (await queue.boundingBox())!;
+  expect(queueBox.height).toBeGreaterThanOrEqual(520);
+  // The queue grows with its rows; it must not turn back into a tiny nested scroller.
+  expect(
+    await queue
+      .locator(".conversation-items")
+      .evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+  ).toBe(true);
   expect(queueBox.y).toBeGreaterThanOrEqual(
     originalBox.y + originalBox.height - 1,
   );

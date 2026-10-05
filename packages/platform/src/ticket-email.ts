@@ -5,6 +5,7 @@ import { type Mailer, type Principal, requireAdmin } from "./auth.js";
 import { Connections } from "./connections.js";
 import { HttpError, requireValue } from "./config.js";
 import { token, tokenHash, equal, seal, unseal, digest } from "./security.js";
+import type { Attachments } from "./attachments.js";
 
 const EmailSetup = z
   .object({
@@ -41,7 +42,7 @@ export async function queueTicketEmail(
     `INSERT INTO ticket_emails(id,workspace_id,conversation_id,message_id)
     SELECT $1,$2,c.id,m.id FROM messages m JOIN conversations c ON c.id=m.conversation_id
     JOIN channels ch ON ch.id=c.channel_id JOIN contacts ct ON ct.id=c.contact_id
-    WHERE m.id=$3 AND m.workspace_id=$2 AND m.role IN ('staff','assistant') AND m.delivered_at IS NOT NULL
+    WHERE m.id=$3 AND m.workspace_id=$2 AND m.role IN ('staff','assistant','reminder') AND m.delivered_at IS NOT NULL
     AND ch.kind='portal' AND c.external_id IS NULL AND ct.verified AND ct.email IS NOT NULL
     ON CONFLICT(message_id) DO NOTHING RETURNING id`,
     [uid(), ws, messageId],
@@ -51,6 +52,11 @@ export async function queueTicketEmail(
     await db.enqueue(q, "ticket-email", { workspaceId: ws, emailId: row.id });
 }
 export class TicketEmail {
+  beforeSend?: (
+    q: PoolClient,
+    ws: string,
+    messageId: string,
+  ) => Promise<boolean>;
   constructor(
     public db: Database,
     private connections: Connections,
@@ -60,6 +66,7 @@ export class TicketEmail {
       id: string,
       input: unknown,
     ) => Promise<unknown>,
+    private attachments: Attachments,
   ) {}
   async settings(p: Principal) {
     requireAdmin(p);
@@ -159,7 +166,12 @@ export class TicketEmail {
         [ws, email.message_id],
         q,
       );
-      if (!data?.verified || !data.email || !data.published) {
+      if (
+        !data?.verified ||
+        !data.email ||
+        !data.published ||
+        (this.beforeSend && !(await this.beforeSend(q, ws, email.message_id)))
+      ) {
         await q.query(
           "UPDATE ticket_emails SET status='skipped',error='Customer or channel is no longer eligible for email' WHERE id=$1",
           [id],
@@ -223,7 +235,7 @@ export class TicketEmail {
       await this.send(
         item.email,
         `Re: ${item.subject.replace(/[\r\n]/g, " ")}`,
-        `${item.body}\n\n— ${item.name} support\n${item.replyTo ? "Reply to this email or view your ticket:" : "To reply, open your ticket:"}\n${link}\n\nTicket ${item.id.slice(0, 8)}. Text-only replies are supported; attachments cannot be processed. Please do not forward this email; its reply address is private.`,
+        `${item.body || "The support team sent files. Open your ticket to view their status and download them after scanning."}\n\n— ${item.name} support\n${item.replyTo ? "Reply to this email or view your ticket:" : "To reply, open your ticket:"}\n${link}\n\nTicket ${item.id.slice(0, 8)}. Files are available through the authenticated portal. Incoming files, when enabled, are scanned before access. Please do not forward this email; its reply address is private.`,
         {
           messageId: item.ref,
           replyTo: item.replyTo,
@@ -291,10 +303,17 @@ export class TicketEmail {
       "Reply address expired. Reply through the portal.",
     );
     const prior = await this.db.one(
-      "SELECT status FROM inbound_ticket_emails WHERE workspace_id=$1 AND provider_id=$2",
+      "SELECT status,payload_hash FROM inbound_ticket_emails WHERE workspace_id=$1 AND provider_id=$2",
       [ws, data.MessageID],
     );
-    if (prior) return prior;
+    if (prior) {
+      if (prior.payload_hash && prior.payload_hash !== digest(data))
+        throw new HttpError(
+          409,
+          "Inbound message identity reused with changed content",
+        );
+      return { status: prior.status };
+    }
     const header = (name: string) =>
       data.Headers.filter((h) => h.Name.toLowerCase() === name)
         .map((h) => h.Value)
@@ -311,24 +330,54 @@ export class TicketEmail {
                   header("auto-submitted").toLowerCase() !== "no") ||
                 /bulk|list|junk/i.test(header("precedence"))
               ? "Automatic email ignored to prevent reply loops"
-              : data.Attachments.length
-                ? "Attachments are not supported. Ask the customer to send a text-only reply through the portal."
-                : !body || body.length > 12000
-                  ? "Reply is empty or too long; use the portal"
-                  : "";
+              : (!body && !data.Attachments.length) || body.length > 12000
+                ? "Reply is empty or too long; use the portal"
+                : "";
     if (!reason) {
       // The unguessable address is an email-delivered capability, additionally bound to the verified sender.
       // A deterministic request key also covers a crash after message commit but before receipt commit.
-      await this.append(
-        { workspaceId: ws, contactId: route.contact_id, role: "customer" },
+      const customer: Principal = {
+        workspaceId: ws,
+        contactId: route.contact_id,
+        role: "customer",
+      };
+      const attachments = await this.attachments.stageEmail(
+        customer,
         route.conversation_id,
-        { body, requestKey: `email:${digest(data.MessageID)}` },
+        data.MessageID,
+        data.Attachments,
       );
+      const current = await this.db.one(
+        "SELECT ct.verified,ct.email,ch.published,c.external_id FROM conversations c JOIN contacts ct ON ct.id=c.contact_id JOIN channels ch ON ch.id=c.channel_id WHERE c.workspace_id=$1 AND c.id=$2 AND c.contact_id=$3",
+        [ws, route.conversation_id, route.contact_id],
+      );
+      if (
+        !current?.verified ||
+        !current.published ||
+        current.external_id ||
+        current.email?.toLowerCase() !== data.FromFull.Email.toLowerCase()
+      )
+        throw new HttpError(
+          403,
+          "Reply authority changed while attachments were staged",
+        );
+      await this.append(customer, route.conversation_id, {
+        body,
+        requestKey: `email:${digest(data.MessageID)}`,
+        attachments,
+      });
     }
     const status = reason ? "rejected" : "received";
     await this.db.pool.query(
-      "INSERT INTO inbound_ticket_emails(workspace_id,provider_id,conversation_id,status,error) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING",
-      [ws, data.MessageID, route.conversation_id, status, reason || null],
+      "INSERT INTO inbound_ticket_emails(workspace_id,provider_id,conversation_id,status,error,payload_hash) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING",
+      [
+        ws,
+        data.MessageID,
+        route.conversation_id,
+        status,
+        reason || null,
+        digest(data),
+      ],
     );
     await this.db.event(
       this.db.pool,

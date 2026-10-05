@@ -119,26 +119,36 @@
 }
 @media (min-width: 961px) {
   .workspace-body.inbox-body {
-    min-height: 820px;
+    height: auto;
+    min-height: calc(100dvh - 64px);
+  }
+  .inbox-stacked {
+    height: auto;
   }
   .inbox-stacked .inbox {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(440px, var(--viewer-fr, 2.33fr)) minmax(
-        240px,
-        1fr
-      );
+    grid-template-rows:
+      max(440px, calc(var(--viewer-scale, 0.7) * (100dvh - 160px)))
+      auto;
+    flex: none;
   }
   .inbox-stacked.no-selection .inbox {
-    grid-template-rows: 160px minmax(0, 1fr);
+    grid-template-rows: 160px auto;
   }
   .inbox-stacked.wide-conversation .inbox {
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: max(600px, calc(100dvh - 140px));
   }
   .inbox-stacked .conversation-list {
     border-right: 0;
     border-top: 1px solid #d4e0d8;
-    min-height: 0;
+    min-height: 520px;
     background: #fff;
+  }
+  /* Let the page grow with the queue instead of squeezing its rows into the
+     space left below the transcript and filters. Mobile keeps its own view. */
+  .inbox-stacked .conversation-items {
+    flex: none;
+    overflow: visible;
   }
   .inbox-stacked .conversation-detail {
     min-width: 0;

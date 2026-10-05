@@ -499,6 +499,9 @@ function WorkflowEditor({
         <div>
           <span className="eyebrow">LANGGRAPH WORKFLOW</span>
           <h1>Design how your agent helps.</h1>
+          <a href={`/?workspace=${ws}&view=shadow%20%26%20rollout`}>
+            Test a saved candidate with shadow traffic ↗
+          </a>
           <p>
             Build with guided steps or a visual graph, and test the route before
             publishing.
@@ -1967,7 +1970,7 @@ function WorkflowEditor({
                   );
                   const a = document.createElement("a");
                   a.href = url;
-                  a.download = "fieldkit-workflow.json";
+                  a.download = "navigated-support-workflow.json";
                   a.click();
                   URL.revokeObjectURL(url);
                 }}

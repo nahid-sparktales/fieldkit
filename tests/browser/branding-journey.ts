@@ -177,6 +177,10 @@ export async function verifyBrandedPortal(page: Page) {
     "href",
     /\/appearance\/logo/,
   );
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+    "href",
+    /\/appearance\/logo/,
+  );
   await expect(page.locator(".portal-hero")).toHaveCSS(
     "background-color",
     "rgb(234, 241, 255)",

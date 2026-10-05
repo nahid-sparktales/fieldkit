@@ -25,3 +25,26 @@ Display names are shared across an account's workspaces and linked customer prof
 Run migrations on upgrade (schema 10). Appearance settings and logo bytes are stored in PostgreSQL in `workspace_branding`, so normal database backups include them. Saved logos are never exposed in configuration JSON as image bytes. Logo responses use their detected raster content type, `nosniff`, and no browser caching. Public logos require a published portal or widget; private previews require an owner/admin session. Replacing/removing the logo or unpublishing both channels immediately withdraws the old resource. Workspace deletion cascades to its appearance record.
 
 The staff preview and published page have separate authenticated/public logo URLs. No remote logo fetch, arbitrary CSS, script injection, or model call is needed for customization.
+
+## Navigated Support product identity
+
+Navigated Support is the product name; FieldKit is the previous name. The supplied
+Navigated Support Logo Kit is the source of the compass artwork and wordmark.
+Editable SVG masters are in [`apps/web/public/brand`](../apps/web/public/brand/).
+The [supplied brand guide](assets/navigated-support-brand-guide.pdf) specifies
+charcoal `#0F1720`, forest `#4E7A5F`, mint `#A7C4B0`, off-white `#F7F9F8`, and slate
+`#334155`, with the tagline **Guide · Resolve · Together**.
+
+Use the light lockup on light backgrounds and the white/mint lockup on dark ones.
+Keep at least one-quarter of the visible compass width clear around the mark.
+Do not stretch, rotate, add shadows or recolor it. The minimum full-lockup width
+is 180 pixels. The staff sidebar uses the supplied compass with a compact,
+readable name; account screens and the README share the same identity. Arial is
+the guide's supported local fallback for the wordmark.
+
+Customer help centers continue using their own saved logos, colors and names.
+Only their product attribution changes to Navigated Support. Existing installation
+paths, `FIELDKIT_*` environment variables, the `fieldkit` CLI, `FieldKitClient`,
+`window.FieldKit`, crawler identity and provider operation markers stay stable.
+No credentials, customer data or workspace settings are changed by the rebrand.
+The `demo-v1` archive retains its original FieldKit identity.

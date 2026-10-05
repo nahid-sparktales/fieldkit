@@ -46,7 +46,7 @@ export function createAuth(db: Database, mailer?: Mailer) {
       });
     });
   const auth = betterAuth({
-    appName: "FieldKit",
+    appName: "Navigated Support",
     baseURL: c.FIELDKIT_URL,
     basePath: "/api/auth",
     secret: c.BETTER_AUTH_SECRET,
@@ -59,7 +59,7 @@ export function createAuth(db: Database, mailer?: Mailer) {
       sendResetPassword: async ({ user, url }) =>
         send(
           user.email,
-          "Reset your FieldKit password",
+          "Reset your Navigated Support password",
           `Reset your password: ${url}`,
         ),
     },
@@ -69,7 +69,7 @@ export function createAuth(db: Database, mailer?: Mailer) {
       sendVerificationEmail: async ({ user, url }) =>
         send(
           user.email,
-          "Verify your FieldKit email",
+          "Verify your Navigated Support email",
           `Verify your email: ${url}`,
         ),
     },

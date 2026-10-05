@@ -7,11 +7,19 @@ import { sandboxConfig, ensureDatabase, storeOrigin } from "./config.js";
 import { StoreModel } from "./model.js";
 import { storeProviders } from "./providers.js";
 import { seedStore } from "./seed.js";
+import { sandboxScanner, seedOperationalScenarios } from "./operations.js";
 import { launcher } from "./launcher.js";
 
-if (process.argv.slice(2).some((arg) => arg !== "--reset"))
-  throw new Error("Usage: npm run sandbox [-- --reset]");
+if (
+  process.argv
+    .slice(2)
+    .some((arg) => !["--reset", "--operations"].includes(arg))
+)
+  throw new Error("Usage: npm run sandbox [-- --reset] [-- --operations]");
 const { config, password } = await sandboxConfig();
+let clockOffset = 0;
+if (process.argv.includes("--operations"))
+  config.FIELDKIT_CLAM_HOST = "offline-sandbox-double";
 // Check both listener ports before provisioning or resetting anything.
 for (const port of [4320, 4321]) {
   const probe = createServer();
@@ -49,6 +57,8 @@ try {
   }
   app = await createApp(config, {
     migrate: true,
+    scanner: sandboxScanner,
+    clock: () => new Date(Date.now() + clockOffset),
     model: new StoreModel(),
     fetch: async (url, init) => {
       if (!app) throw new Error("Sandbox is still starting");
@@ -79,6 +89,10 @@ try {
       { address: "support@inbound.example.test" },
     );
   }
+  if (process.argv.includes("--operations"))
+    await seedOperationalScenarios(app.app, ws, (ms) => {
+      clockOffset += ms;
+    });
   await app.app.workers();
   const home = launcher(app.app, ws, password, storeOrigin);
   const application = app;

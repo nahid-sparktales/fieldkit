@@ -1,3 +1,4 @@
+import { rolloutFence } from "./rollout-authority.js";
 import { effectiveWorkflow } from "./channel-workflows.js";
 import { Actions } from "./actions.js";
 import type { Database } from "./db.js";
@@ -309,11 +310,13 @@ export class Support {
   }
   async deliver(ws: string, id: string) {
     const link = await this.db.one(
-      "SELECT conversation_id FROM deliveries WHERE workspace_id=$1 AND id=$2",
+      "SELECT conversation_id,payload FROM deliveries WHERE workspace_id=$1 AND id=$2",
       [ws, id],
     );
     if (!link) return;
     return this.db.tx(async (q) => {
+      if (link.payload.workflowRunId)
+        await rolloutFence(this.db, q, ws, link.payload.workflowRunId);
       // The same row lock is used by takeover, new messages, and agent execution.
       await q.query(
         "SELECT id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
@@ -384,7 +387,7 @@ export class Support {
       try {
         const run = requireValue(
           await this.db.one(
-            "SELECT state,workflow_version FROM runs WHERE workspace_id=$1 AND id=$2",
+            "SELECT * FROM runs WHERE workspace_id=$1 AND id=$2",
             [ws, delivery.payload.workflowRunId],
             q,
           ),
@@ -395,7 +398,11 @@ export class Support {
           conv.channel_id,
           q,
         );
-        if (workflow?.version !== run.workflow_version)
+        if (run.rollout_id) {
+          if (!this.db.rolloutAuthority)
+            throw new Error("Rollout authority unavailable");
+          await this.db.rolloutAuthority(run, q);
+        } else if (workflow?.version !== run.workflow_version)
           throw new Error("Workflow changed before publication");
         if (run.state.accountContactRevision !== undefined) {
           const contact = await this.db.one(
@@ -664,12 +671,10 @@ export async function enqueueTurn(
   conv: any,
 ) {
   const id = uid();
-  const workflow = await effectiveWorkflow(
-    db,
-    conv.workspace_id,
-    conv.channel_id,
-    q,
-  );
+  const workflow = db.selectWorkflow
+    ? await db.selectWorkflow(q, conv)
+    : await effectiveWorkflow(db, conv.workspace_id, conv.channel_id, q);
+  if (workflow?.blocked) return;
   const r = await q.query(
     "INSERT INTO runs(id,workspace_id,conversation_id,revision,graph_version,workflow_definition,workflow_version) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(conversation_id,revision) DO NOTHING RETURNING id",
     [
@@ -682,6 +687,13 @@ export async function enqueueTurn(
       workflow?.version ?? null,
     ],
   );
-  if (r.rowCount)
+  if (r.rowCount) {
+    if (workflow?.rolloutId)
+      await q.query(
+        "UPDATE runs SET rollout_id=$2,rollout_generation=$3 WHERE id=$1",
+        [id, workflow.rolloutId, workflow.rolloutGeneration],
+      );
+    await db.onTurn?.(q, conv, id);
     await db.enqueue(q, "turn", { workspaceId: conv.workspace_id, runId: id });
+  }
 }

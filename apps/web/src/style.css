@@ -1,12 +1,12 @@
 :root {
   font-family: "DM Sans", system-ui, sans-serif;
-  color: #24362e;
-  background: #f8faf8;
+  color: #0f1720;
+  background: #f7f9f8;
   font-synthesis: none;
-  --accent: #146b57;
-  --muted: #596b62;
-  --line: #e2e9e4;
-  --soft: #eef4ef;
+  --accent: #4e7a5f;
+  --muted: #334155;
+  --line: #dfe7e2;
+  --soft: #edf4ef;
 }
 * {
   box-sizing: border-box;
@@ -118,16 +118,26 @@ p {
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  color: #255a42;
-  font-size: 23px;
-  letter-spacing: -1px;
-  font-weight: 800;
+  gap: 12px;
+  color: #0f1720;
+  font:
+    700 23px/1.12 Arial,
+    Helvetica,
+    sans-serif;
+  letter-spacing: -0.6px;
   white-space: nowrap;
 }
-.brand svg {
-  width: 31px;
-  height: 31px;
+.brand-mark {
+  width: 56px;
+  height: 56px;
+  flex-shrink: 0;
+}
+.brand-name,
+.brand-name > span {
+  display: block;
+}
+.brand-name > span {
+  color: #4e7a5f;
 }
 .edition {
   font-size: 12px;
@@ -168,8 +178,12 @@ p {
   z-index: 20;
 }
 .sidebar .brand {
-  font-size: 22px;
-  gap: 7px;
+  font-size: 19px;
+  gap: 10px;
+}
+.sidebar .brand-mark {
+  width: 44px;
+  height: 44px;
 }
 .sidebar .edition {
   font-size: 12px;
@@ -1190,7 +1204,7 @@ pre {
   background: white;
 }
 .auth-story {
-  background: #edf3e9;
+  background: #edf4ef;
   padding: 46px 60px;
   display: flex;
   flex-direction: column;
@@ -1198,7 +1212,7 @@ pre {
   min-height: 100vh;
   background-image: radial-gradient(
     ellipse at bottom right,
-    #d4e5c9,
+    #a7c4b0,
     transparent 70%
   );
 }

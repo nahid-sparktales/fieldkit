@@ -1,6 +1,6 @@
 # Security
 
-FieldKit is a development release candidate. Automated safety tests are not a security certification. See [verification](docs/verification.md) for the tested boundaries and outstanding live-account gates. Fixes are currently developed on `main`; the archived `demo-v1` example is not a supported deployment for real customer data.
+Navigated Support is a development release candidate. Automated safety tests are not a security certification. See [verification](docs/verification.md) for the tested boundaries and outstanding live-account gates. Fixes are currently developed on `main`; the archived `demo-v1` example is not a supported deployment for real customer data.
 
 ## Report a vulnerability privately
 

@@ -3,6 +3,7 @@ import { verifyCustomerSupport } from "./customer-support-journey.js";
 import { verifyCustomers } from "./customers-journey.js";
 import { verifyGuidedWorkflow } from "./guided-workflow-journey.js";
 import { verifyInbox } from "./inbox-journey.js";
+import { verifyOperationalControls } from "./operations-journey.js";
 import { readFile } from "node:fs/promises";
 import {
   customizeHelpCenter,
@@ -18,6 +19,20 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.goto("/");
+  await expect(page.locator(".brand")).toHaveAccessibleName(
+    "Navigated Support",
+  );
+  await expect(page.locator(".brand-mark")).toBeVisible();
+  expect(
+    await page
+      .locator(".brand-mark")
+      .evaluate(
+        (image) =>
+          (image as HTMLImageElement).complete &&
+          (image as HTMLImageElement).naturalWidth > 0,
+      ),
+  ).toBe(true);
+  await page.screenshot({ path: "test-results/navigated-support-sign-in.png" });
   await expect(
     page.getByRole("heading", { name: "Welcome back" }),
   ).toBeVisible();
@@ -67,6 +82,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/workspace.png", fullPage: true });
+  await expect(page).toHaveTitle(/Navigated Support$/);
   await expect(
     page.getByRole("progressbar", { name: "Setup progress" }),
   ).toHaveAttribute("max", "3");
@@ -1190,6 +1206,12 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
       fullPage: true,
     });
   }
+  await verifyOperationalControls(
+    page,
+    customer,
+    new URL(page.url()).searchParams.get("workspace")!,
+  );
+  await page.setViewportSize({ width: 390, height: 844 });
   expect(errors).toEqual([]);
   await customerContext.close();
   await page

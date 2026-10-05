@@ -82,7 +82,7 @@ npm run test:runner
 ## API steps
 
 - **Public JSON endpoint (GET):** a fixed public HTTPS URL returning a JSON object. No credentials or request parameters are sent; inputs are not substituted into the URL. It works for anonymous visitors, for example a service-status endpoint. DNS and response limits apply, private-network destinations and redirects are blocked.
-- **Existing customer read action:** choose an enabled `custom_read` from **Actions**. The editor copies its schemas. Map the action's parameters, and choose a verified test customer with the required reviewed provider mapping. FieldKit sends the existing action envelope with its server-derived identity, authentication, and stable operation ID. The endpoint must implement a read even though the envelope is sent by POST. Writes cannot be selected here.
+- **Existing customer read action:** choose an enabled `custom_read` from **Actions**. The editor copies its schemas. Map the action's parameters, and choose a verified test customer with the required reviewed provider mapping. Navigated Support sends the existing action envelope with its server-derived identity, authentication, and stable operation ID. The endpoint must implement a read even though the envelope is sent by POST. Writes cannot be selected here.
 
 Read authority is checked again before using a result, publishing a reply, executing a later governed action, or delivering a queued Zendesk reply. Revoked mappings, disabled actions, changed policies, and changed credentials invalidate the result.
 

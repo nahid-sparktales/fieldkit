@@ -156,6 +156,7 @@ export class Actions {
           currency: c.currency,
           paid: c.paid,
           captured: c.captured,
+          disputed: Boolean(c.disputed),
           created: c.created,
         })),
       subscriptions: subs

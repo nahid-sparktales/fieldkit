@@ -1,6 +1,10 @@
 import { CUSTOMER_SUPPORT_SCHEMA } from "./customer-support-schema.js";
 import { CUSTOMER_SCHEMA } from "./customer-schema.js";
 import { INBOX_READ_SCHEMA } from "./inbox-read.js";
+import { READINESS_SCHEMA } from "./readiness-schema.js";
+import { ATTACHMENT_SCHEMA } from "./attachment-schema.js";
+import { SHADOW_SCHEMA } from "./shadow-schema.js";
+import { SLA_SCHEMA } from "./sla-schema.js";
 import { QUALITY_SCHEMA } from "./quality-schema.js";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 import { PgBoss } from "pg-boss";
@@ -11,6 +15,14 @@ import { type Config, HttpError, log } from "./config.js";
 export const uid = randomUUID;
 export type Queryable = Pick<Pool, "query"> | PoolClient;
 export class Database {
+  selectWorkflow?: (q: PoolClient, conv: any) => Promise<any>;
+  rolloutAuthority?: (run: any, q?: Queryable) => Promise<void>;
+  onTurn?: (q: PoolClient, conv: any, runId: string) => Promise<void>;
+  captureRead?: (
+    run: any,
+    capture: import("./shadow-fixtures.js").CapturedRead,
+  ) => Promise<void>;
+  onEvent?: (q: PoolClient, event: Record<string, any>) => Promise<void>;
   pool: Pool;
   boss: PgBoss;
   saver: PostgresSaver;
@@ -70,11 +82,17 @@ export class Database {
     data: object = {},
     conversation?: string,
     publicEvent = false,
-  ) {
-    await q.query(
-      "INSERT INTO events(workspace_id,conversation_id,kind,data,public) VALUES($1,$2,$3,$4,$5)",
+  ): Promise<void> {
+    if (q === this.pool && this.onEvent) {
+      return this.tx((client) =>
+        this.event(client, ws, kind, data, conversation, publicEvent),
+      );
+    }
+    const result = await q.query(
+      "INSERT INTO events(workspace_id,conversation_id,kind,data,public) VALUES($1,$2,$3,$4,$5) RETURNING *",
       [ws, conversation ?? null, kind, data, publicEvent],
     );
+    if (this.onEvent) await this.onEvent(q as PoolClient, result.rows[0]);
   }
   async connection(ws: string, provider: string) {
     const r = await this.one(
@@ -90,8 +108,12 @@ export class Database {
     await this.pool.query(CUSTOMER_SUPPORT_SCHEMA);
     await this.pool.query(CUSTOMER_SCHEMA);
     await this.pool.query(INBOX_READ_SCHEMA);
+    await this.pool.query(READINESS_SCHEMA);
+    await this.pool.query(ATTACHMENT_SCHEMA);
+    await this.pool.query(SLA_SCHEMA);
+    await this.pool.query(SHADOW_SCHEMA);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(13) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();
@@ -105,6 +127,11 @@ export class Database {
       "quality",
       "feedback-sync",
       "ticket-email",
+      "diagnostic",
+      "attachment",
+      "sla",
+      "sla-email",
+      "shadow",
     ])
       await this.boss.createQueue(name, {
         retryLimit: 4,

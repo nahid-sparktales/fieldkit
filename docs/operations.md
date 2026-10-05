@@ -14,7 +14,7 @@ support.example.com {
 }
 ```
 
-Set `FIELDKIT_URL=https://support.example.com` before startup. Use the same origin for authentication and OAuth callbacks. Configure proxy request limits at least 21 MB for uploads, disable response buffering for SSE, and allow long-lived connections. Authentication rate limits use the socket peer address; when proxied, this is conservatively shared at the proxy address. Configure additional per-client rate limiting at the trusted edge. Untrusted forwarded IP headers are not accepted as identity.
+Set `FIELDKIT_URL=https://support.example.com` before startup. Use the same origin for authentication and OAuth callbacks. Configure proxy request limits at least 29 MiB for the default inbound attachment envelope, disable response buffering for SSE, and allow long-lived connections. Authentication rate limits use the socket peer address; when proxied, this is conservatively shared at the proxy address. Configure additional per-client rate limiting at the trusted edge. Untrusted forwarded IP headers are not accepted as identity.
 
 SMTP is mandatory for verification, recovery, invitations, and channel publication. Use an authorized sender with your provider's domain authentication. Test actual inbox delivery before inviting customers. The first workspace requires the setup token; later workspaces require an existing owner. There are no seeded users or demo passwords.
 
@@ -70,3 +70,7 @@ For containers, mount the protected key file read-only into a one-off app contai
 Workspace settings control retention for resolved conversations (default 90 days). Maintenance deletes their messages and queues checkpoint cleanup. Unresolved operations prevent deletion. Administrators can explicitly delete a conversation through the authenticated API; the same outcome guard applies. Removing a knowledge source immediately removes it from retrieval/publication and deletes its local upload. Historical citations remain part of conversation history until that history is removed. Provider records are not deleted by local retention.
 
 Before upgrading, stop writes, back up, pull the intended commit, rebuild, run migrations, and restart. Graph version mismatches fail visibly; never automatically replay a saved run under incompatible workflow code. The original demo database, sessions, and approvals are not migrated. Keep demo data and v2 installation data in separate directories and databases.
+
+## Optional operational controls
+
+Read [the operational controls guide](operational-controls.md) before enabling attachments, SLA reminders or live rollout. Private scanning uses the optional `attachments` Compose profile and 4 GiB scanner memory. Default inbound attachment envelopes need a proxy allowance of at least 29 MiB; direct upload limits remain separately enforced by the app. Readiness checks are cached workspace diagnostics, separate from `/v2/health` and `/v2/readiness`. Upgrade requires the app and worker on the same schema-17 build; rollback uses a complete pre-upgrade backup, not table deletion.

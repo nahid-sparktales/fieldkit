@@ -97,7 +97,7 @@ export function PortalFooter({ config }: { config: AppearanceConfig }) {
             target="_blank"
             rel="noreferrer"
           >
-            FieldKit
+            Navigated Support
           </a>
         </span>
       </nav>

@@ -104,8 +104,9 @@ export function TicketEmailSettings({ ws }: { ws: string }) {
         <p>
           Reply addresses are private, customer-specific credentials. Incoming
           mail must match the verified customer. Automated mail, mismatched
-          senders, and attachments are rejected and listed below. Text-only
-          replies are supported.
+          senders are rejected and listed below. If attachments are enabled,
+          permitted files are quarantined and scanned. A rejected file does not
+          discard valid reply text; its status is shown in the ticket.
         </p>
       </details>
       <Notice action={a} error={l.error} />

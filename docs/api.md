@@ -100,7 +100,7 @@ Research, triage, escalation, and article drafting search all ready indexed sour
 
 `/compose` accepts `{ "body": "Reviewed text" }`, checks that the conversation and source access are still current, and returns `{ body, internal }`. It never sends a message. Staff explicitly send through the existing message/note endpoints. `/apply` accepts `{ "title": "Reviewed title", "body": "Reviewed content", "priority": "low|normal|high|urgent", "category": "Reviewed category" }`. For triage it updates local priority/category and queues the priority change for Zendesk-owned tickets. For an article it creates a staff-only `article` source and queues indexing; customer approval and publication remain separate source/document operations. Apply is idempotent per task and rejects changed conversation revisions or revoked evidence. User-supplied titles and text remain subject to ordinary size limits. Escalation outputs can be copied with citations or put into an internal-note draft; no engineering issue is filed automatically.
 
-The `/customer-support` shortcut is local to FieldKit's staff conversation composer. These internal workflows are not exposed through customer-scoped SDK, CLI, widget, or MCP credentials.
+The `/customer-support` shortcut is local to Navigated Support's staff conversation composer. These internal workflows are not exposed through customer-scoped SDK, CLI, widget, or MCP credentials.
 
 ## Visual agent workflow API
 
@@ -211,14 +211,14 @@ Administrators use `GET/PUT/DELETE .../ticket-email` for inbound configuration a
 
 All of these resources require a current staff session in the workspace. Customers, widget visitors, and service credentials cannot read them.
 
-| Resource under `/v2/workspaces/:workspaceId` | Method | Behavior |
-| --- | --- | --- |
-| `/inbox` | GET | Full retained inbox, filtered and paginated; defaults to customer grouping. |
-| `/customers` | GET | Searchable customer directory with open/total conversation counts. |
-| `/customers/:id` | GET | Identity, reviewed mappings, and customer support totals. |
-| `/customers/:id/conversations` | GET | Paginated support history; same filters as the inbox, scoped to this customer. |
-| `/customers/:id/notes` | GET | Paginated private customer notes plus internal notes from their conversations. |
-| `/customers/:id/notes` | POST | Add `{body, requestKey}`; exact retries return the same note. No customer message or workflow is created. |
+| Resource under `/v2/workspaces/:workspaceId` | Method | Behavior                                                                                                  |
+| -------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------- |
+| `/inbox`                                     | GET    | Full retained inbox, filtered and paginated; defaults to customer grouping.                               |
+| `/customers`                                 | GET    | Searchable customer directory with open/total conversation counts.                                        |
+| `/customers/:id`                             | GET    | Identity, reviewed mappings, and customer support totals.                                                 |
+| `/customers/:id/conversations`               | GET    | Paginated support history; same filters as the inbox, scoped to this customer.                            |
+| `/customers/:id/notes`                       | GET    | Paginated private customer notes plus internal notes from their conversations.                            |
+| `/customers/:id/notes`                       | POST   | Add `{body, requestKey}`; exact retries return the same note. No customer message or workflow is created. |
 
 Inbox queries accept `section=all|open|unread|read|closed` (API default `all`; inbox UI default `open`), `type=all|ticket|chat`, `group=customer|conversation`, `state=all|human|approval|agent|resolved`, `assignee=all|unassigned|<staff ID>`, `q`, optional `contactId`, and one-based `page`. The page size is 40. Grouping happens before pagination; results include `total` (groups or rows), `conversation_total`, counts by status, and grouped customer counts. Ticket type includes Zendesk; chat type follows the widget channel even after handoff. Search matches name, email, or conversation subject, without treating percent signs as wildcards.
 
@@ -231,3 +231,53 @@ Schema 13 adds a monotonic message sequence and per-staff `conversation_reads` m
 Inbox results include `unread`, `group_unread`, and `section_counts` (conversation counts after type/search/assignee filters, before the section/status filter). Open contains every unresolved conversation; Unread and Read subdivide Open for the current staff member. Closed contains resolved conversations regardless of read state. All includes both. Customer history still defaults to all conversations. The staff-only API never exposes another person's read markers.
 
 `GET /connections` includes `googleSetup` with boolean configuration checks, the local origin, and OAuth callback URL. No keys or client secrets are included. Google OAuth availability in this response requires both OAuth credentials and Picker configuration.
+
+## Operational controls (additive v2 resources)
+
+All paths below are relative to `/v2/workspaces/:workspace`. Staff sessions derive
+workspace permissions server-side. Customer/visitor credentials cannot access
+readiness, SLA, or shadow resources. JSON contracts live in the corresponding
+`packages/platform/src/{readiness,attachment,sla,shadow}-contracts.ts` modules.
+See the [operational controls guide](operational-controls.md) for effect boundaries,
+retention, defaults and uncertainty handling.
+
+| Resource                                | Methods and purpose                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------- |
+| `/readiness`                            | `GET` staff dashboard with cached evidence                                            |
+| `/readiness/summary`                    | `GET` sanitized summary, also accessible with a `diagnostics:read` service credential |
+| `/readiness/runs`                       | `POST` explicitly authorized diagnostic with an idempotent request key                |
+| `/readiness/runs/:id`                   | `PATCH` cancel, retry eligible work, or reconcile the original uncertain operation    |
+| `/readiness/checks/:check`              | `GET` evidence history; URL-encode the check identifier                               |
+| `/readiness/checks/:check/attestations` | `POST` attributable manual evidence; never bypasses hard checks                       |
+| `/readiness/settings`                   | `PUT` owner-only future strict-publication setting                                    |
+| `/attachments/settings`                 | `GET` limits/admission settings; owner-only `PUT` enable/anonymous choices            |
+| `/attachments`                          | `POST` reserve a file for the authorized channel, conversation and visibility         |
+| `/attachments/:id`                      | `GET` authorized file status; `PATCH` retry, cancel or delete                         |
+| `/attachments/:id/content`              | `PUT` bounded raw bytes; authenticated `GET` download, or staff-only `?preview=true`  |
+| `/sla`                                  | `GET` deadlines and the current staff member's notifications                          |
+| `/sla/policy`                           | `GET` current policy; owner/admin `PUT` optimistic versioned save                     |
+| `/sla/preview`                          | `POST` deterministic business-time deadline calculation                               |
+| `/sla/recalculate`                      | `POST` bounded preview, followed by explicit application of its exact preview hash    |
+| `/sla/notifications/:id/read`           | `POST` mark the current staff member's notification read                              |
+| `/conversations/:id/sla`                | `GET` staff-only timer history                                                        |
+| `/conversations/:id/waiting`            | `PUT` staff-controlled waiting, with separate reminder consent                        |
+| `/shadow`                               | `GET` immutable candidates, experiments and rollout summaries                         |
+| `/shadow/candidates`                    | owner/admin `POST` snapshot a reviewed saved workflow; never publishes                |
+| `/shadow/experiments`                   | owner/admin `POST` explicitly budgeted future sampling                                |
+| `/shadow/experiments/:id`               | staff `GET` results; owner/admin `PATCH` stop or explicitly retry unfinished work     |
+| `/shadow/results/:id/review`            | staff `POST` review retained alongside original rules and AI results                  |
+| `/shadow/results/:id/case`              | `GET` a review-required Test Lab import                                               |
+| `/rollouts`                             | owner/admin `POST` separately authorize eligible future customer traffic              |
+| `/rollouts/:id`                         | owner/admin `PATCH` stop, increase future traffic or use normal workflow publication  |
+
+`/readiness/events`, `/sla/events`, and `/shadow/events` provide session-authenticated
+staff SSE progress. Ordinary conversation streams expose only customer-safe file
+status/message updates; they exclude diagnostic, comparison, policy and notification
+payloads. Files are passed to the existing message APIs by `attachments` (an array of reserved file IDs); the
+server revalidates exact uploader, customer, workspace and private/public scope.
+Downloads are private and non-cacheable. No public storage URLs are issued.
+
+Diagnostic/canary effectful requests require explicit authorization in addition to
+roles. Checks and model usage are queued transactionally. A repeated request key
+with changed parameters is a conflict, not permission for another effect. The
+existing SDK/CLI/MCP execution and approval boundaries are unchanged.

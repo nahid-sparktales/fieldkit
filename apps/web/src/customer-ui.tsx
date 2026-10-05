@@ -132,6 +132,18 @@ export function ConversationCard({
       </p>
       <div className="conversation-labels">
         <CustomerStatus c={c} />
+        {c.sla && (
+          <span
+            className={`badge ${c.sla.urgency === "overdue" ? "bad" : c.sla.urgency === "at risk" ? "warning" : "neutral"}`}
+            title={new Date(c.sla.dueAt).toLocaleString()}
+          >
+            Response {c.sla.urgency} ·{" "}
+            {new Date(c.sla.dueAt).toLocaleTimeString([], {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
+        )}
         {["high", "urgent"].includes(c.priority) && (
           <span className="badge warning">{c.priority}</span>
         )}

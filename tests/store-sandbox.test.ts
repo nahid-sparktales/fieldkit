@@ -12,11 +12,22 @@ import {
 } from "../scripts/store-sandbox/providers.js";
 import { seedStore } from "../scripts/store-sandbox/seed.js";
 
-const config = { ...testConfig(), FIELDKIT_DATA: ".fieldkit/tests-store" };
+import {
+  sandboxScanner,
+  seedOperationalScenarios,
+} from "../scripts/store-sandbox/operations.js";
+let clockOffset = 0;
+const config = {
+  ...testConfig(),
+  FIELDKIT_DATA: ".fieldkit/tests-store",
+  FIELDKIT_CLAM_HOST: "local-test-double",
+};
 const model = new StoreModel();
 const makeApp = (): Platform =>
   new Platform(config, {
     model,
+    scanner: sandboxScanner,
+    clock: () => new Date(Date.now() + clockOffset),
     mailer: async () => {},
     fetch: (url, init) => storeProviders(app.db)(url, init),
   });
@@ -213,4 +224,62 @@ test("a second customer cannot use Alex's purchase or see Alex's conversation", 
   ))!;
   const { conversation } = await import("../packages/platform/src/auth.js");
   await assert.rejects(() => conversation(app.db, principal, alex.id));
+});
+
+test("explicit operational sandbox scenarios exercise files, deadlines, shadow proposal and unsent canary stop", async () => {
+  await seedOperationalScenarios(app, ws, (ms) => {
+    clockOffset += ms;
+  });
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM attachments WHERE workspace_id=$1 AND status='available'",
+      [ws],
+    ),
+  );
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM attachments WHERE workspace_id=$1 AND status='blocked'",
+      [ws],
+    ),
+  );
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM sla_obligations WHERE workspace_id=$1 AND breached_at IS NOT NULL",
+      [ws],
+    ),
+  );
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM sla_waits WHERE workspace_id=$1 AND status='canceled'",
+      [ws],
+    ),
+  );
+  const comparison = await app.db.one(
+    "SELECT output FROM shadow_results WHERE workspace_id=$1 AND status='completed'",
+    [ws],
+  );
+  assert.ok(comparison?.output.action);
+  assert.equal(comparison?.output.actionsExecuted, false);
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM canary_rollouts WHERE workspace_id=$1 AND status='stopped'",
+      [ws],
+    ),
+  );
+  const before = Number(
+    (await app.db.one(
+      "SELECT count(*) n FROM conversations WHERE workspace_id=$1",
+      [ws],
+    ))!.n,
+  );
+  await seedOperationalScenarios(app, ws, () => {});
+  assert.equal(
+    Number(
+      (await app.db.one(
+        "SELECT count(*) n FROM conversations WHERE workspace_id=$1",
+        [ws],
+      ))!.n,
+    ),
+    before,
+  );
 });

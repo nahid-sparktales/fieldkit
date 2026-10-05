@@ -33,7 +33,7 @@ export function Notice({
           <p className="error">{error || action.error}</p>
         )}
       </div>
-      <div role="status">
+      <div aria-live="polite" role={action.success ? "status" : undefined}>
         {action.success && <p className="success">{action.success}</p>}
       </div>
     </>

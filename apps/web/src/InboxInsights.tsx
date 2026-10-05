@@ -44,7 +44,7 @@ export function FeedbackPanel({ feedback }: { feedback: Row[] }) {
             <div className="feedback-meta">
               <span>
                 {f.source === "native"
-                  ? "FieldKit customer"
+                  ? "Navigated Support customer"
                   : f.source === "zendesk_modern"
                     ? "Zendesk survey"
                     : "Zendesk rating"}
@@ -75,9 +75,11 @@ export function FeedbackPanel({ feedback }: { feedback: Row[] }) {
 export function NotesPanel({
   messages,
   compose,
+  ws,
 }: {
   messages: Row[];
   compose: () => void;
+  ws: string;
 }) {
   const [query, setQuery] = useState("");
   const notes = messages
@@ -109,7 +111,7 @@ export function NotesPanel({
       )}
       {filtered.length ? (
         <div className="notes-list">
-          <MessageList messages={filtered} />
+          <MessageList messages={filtered} ws={ws} />
         </div>
       ) : (
         <div className="inbox-insight-empty">

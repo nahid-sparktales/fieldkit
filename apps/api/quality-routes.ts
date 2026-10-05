@@ -19,7 +19,15 @@ export async function qualityRoutes(
   const method = req.method ?? "GET",
     q = app.quality;
   let m: RegExpMatchArray | null, result: unknown;
-  if (path === "/quality/events" && method === "GET") {
+  if (
+    [
+      "/quality/events",
+      "/readiness/events",
+      "/sla/events",
+      "/shadow/events",
+    ].includes(path) &&
+    method === "GET"
+  ) {
     requireStaff(p);
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -37,8 +45,8 @@ export async function qualityRoutes(
       try {
         requireStaff(await principal(app.db, app.auth, req, p.workspaceId));
         const events = await app.db.rows(
-          "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND id>$2 AND (kind LIKE 'quality.%' OR kind LIKE 'gap.%') ORDER BY id LIMIT 100",
-          [p.workspaceId, after],
+          "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND id>$2 AND (($3='readiness' AND kind LIKE 'readiness.%') OR ($3='sla' AND kind LIKE 'sla.%') OR ($3='shadow' AND (kind LIKE 'shadow.%' OR kind LIKE 'rollout.%')) OR ($3='quality' AND (kind LIKE 'quality.%' OR kind LIKE 'gap.%'))) ORDER BY id LIMIT 100",
+          [p.workspaceId, after, path.split("/")[1]],
         );
         for (const e of events) {
           after = Number(e.id);

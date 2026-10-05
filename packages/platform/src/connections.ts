@@ -292,7 +292,7 @@ export class Connections {
       if (!/^rk_(test|live)_/.test(apiKey))
         throw new HttpError(
           400,
-          "Use a restricted key from the FieldKit Stripe App installation",
+          "Use a restricted key from the Navigated Support Stripe App installation",
         );
       const res = await this.fetch(
         "https://api.stripe.com/v1/customers?limit=1",
@@ -455,6 +455,9 @@ export class Connections {
       {
         ...(provider === "zendesk" ? { subdomain: row.context.subdomain } : {}),
         ...(provider === "notion" ? { workspace: result.workspace_name } : {}),
+        ...(result.scope
+          ? { scopes: String(result.scope).slice(0, 2000) }
+          : {}),
       },
     );
     return row.workspace_id as string;

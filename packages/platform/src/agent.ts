@@ -1,3 +1,5 @@
+import { rolloutFence } from "./rollout-authority.js";
+import { fixtureKey } from "./shadow-fixtures.js";
 import { queueTicketEmail } from "./ticket-email.js";
 import { effectiveWorkflow } from "./channel-workflows.js";
 import { classifyHandoff } from "./quality.js";
@@ -172,6 +174,12 @@ export class Agent {
   }
   private async workflowAuthority(run: any, q?: import("./db.js").Queryable) {
     if (run.preview) return;
+    if (run.rollout_id) {
+      if (!this.db.rolloutAuthority)
+        throw new HttpError(409, "Rollout authority unavailable");
+      await this.db.rolloutAuthority(run, q);
+      return;
+    }
     const conv = await this.db.one(
       "SELECT channel_id FROM conversations WHERE workspace_id=$1 AND id=$2",
       [run.workspace_id, run.conversation_id],
@@ -312,16 +320,39 @@ export class Agent {
               : {}),
             ...(node.data.billing
               ? {
-                  billing: run.evaluation
-                    ? (requireValue(
-                        run.evaluation.fixtures.account,
-                        409,
-                        "Missing account fixture",
-                      ).billing ?? run.evaluation.fixtures.account)
-                    : await this.actions.account(ws, c, node.data.modes),
+                  billing: run.evaluation?.readFixture
+                    ? await run.evaluation.readFixture({
+                        kind: "account",
+                        node,
+                        input: {
+                          modes: node.data.modes,
+                          contactId: c.id,
+                          revision: c.revision,
+                        },
+                      })
+                    : run.evaluation
+                      ? (requireValue(
+                          run.evaluation.fixtures.account,
+                          409,
+                          "Missing account fixture",
+                        ).billing ?? run.evaluation.fixtures.account)
+                      : await this.actions.account(ws, c, node.data.modes),
                 }
               : {}),
           };
+          if (!run.preview && node.data.billing && this.db.captureRead)
+            await this.db.captureRead(run, {
+              key: fixtureKey("account", node, {
+                modes: node.data.modes,
+                contactId: c.id,
+                revision: c.revision,
+              }),
+              result: run.state.account.billing,
+            });
+          if (run.evaluation?.readFixture && node.data.billing)
+            run.evaluation.fixtures.account = {
+              billing: run.state.account.billing,
+            };
           run.state.accountContactRevision = c.revision;
           run.state.accountContactId = c.id;
         }
@@ -505,7 +536,8 @@ export class Agent {
           preview: true,
           previewContact: contact,
           previewConversation: {
-            id: "preview",
+            ...options?.evaluation.conversation,
+            id: options?.evaluation.conversation?.id ?? "preview",
             contact_id: contact.id,
             mode: "agent",
             revision: 0,
@@ -707,6 +739,7 @@ export class Agent {
             : await this.actions.account(run.workspace_id, contact),
         instructions:
           settings.instructions +
+          "\nCustomer attachments have not been inspected by the AI. Never claim to have read or seen their contents; ask a staff member to review them when needed." +
           (options?.instructions
             ? `\nWorkflow step guidance: ${options.instructions}`
             : ""),
@@ -831,7 +864,8 @@ export class Agent {
             !automaticPolicy(
               action,
               parameters,
-              evaluation.fixtures.dailyActionCount,
+              evaluation.actionCounts?.[action.id] ??
+                evaluation.fixtures.dailyActionCount,
             ),
         };
         run.state.response =
@@ -956,6 +990,7 @@ export class Agent {
     if (!(await this.current(run))) return;
     try {
       await this.db.tx(async (q) => {
+        await rolloutFence(this.db, q, run.workspace_id, run.id);
         // Serialize the final side-effect boundary with takeover and incoming messages.
         const conv = requireValue(
           await this.db.one(
@@ -1076,6 +1111,7 @@ export class Agent {
       return;
     }
     await this.db.tx(async (q) => {
+      await rolloutFence(this.db, q, run.workspace_id, run.id);
       const conv = requireValue(
         await this.db.one(
           "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
@@ -1327,8 +1363,13 @@ export class Agent {
         if (!saved.next.length) return;
         input = null;
       }
-      await usageContext.run({ purpose: "production", runId: id }, () =>
-        graph.invoke(input, config),
+      await usageContext.run(
+        {
+          purpose: "production",
+          runId: id,
+          rolloutId: run.rollout_id ?? undefined,
+        },
+        () => graph.invoke(input, config),
       );
     } finally {
       await lock.query("SELECT pg_advisory_unlock(hashtextextended($1,0))", [

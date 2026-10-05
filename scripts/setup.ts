@@ -15,7 +15,7 @@ FIELDKIT_SETUP_TOKEN=${randomBytes(32).toString("base64url")}
 FIELDKIT_RUNNER_TOKEN=${randomBytes(32).toString("base64url")}
 # Configure SMTP before creating verified accounts or publishing support.
 SMTP_URL=
-SMTP_FROM=FieldKit <support@example.com>
+SMTP_FROM=Navigated Support <support@example.com>
 `;
 writeFileSync(".env", content, { flag: "wx", mode: 0o600 });
 console.log(

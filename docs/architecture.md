@@ -33,7 +33,7 @@ An operation ID, proposal hash, resource lock, and sent intent are committed bef
 
 Timeouts and malformed responses after a write leave an unknown outcome. Reads can retry with bounded backoff; uncertain writes are never blindly replayed. Reconciliation locates Stripe metadata or asks the original configured custom lookup endpoint. Each operation stores its immutable action contract and identity for read-only reconciliation after later policy/mapping edits; this never revives an approval or authorizes a second write. Pending Stripe refunds remain unknown until confirmed. Unresolved operations prevent conversation retention from deleting their evidence.
 
-Zendesk deliveries have a separate durable ledger. Ticket creation uses a stable external ID; updates carry audit metadata. Reconciliation searches external IDs/audits. Safe updates use Zendesk's timestamp; changed tickets invalidate queued automatic replies. Synchronization checks ticket audit comment IDs to suppress FieldKit feedback loops. Zendesk is authoritative for externally handled ticket history/status.
+Zendesk deliveries have a separate durable ledger. Ticket creation uses a stable external ID; updates carry audit metadata. Reconciliation searches external IDs/audits. Safe updates use Zendesk's timestamp; changed tickets invalidate queued automatic replies. Synchronization checks ticket audit comment IDs to suppress Navigated Support feedback loops. Zendesk is authoritative for externally handled ticket history/status.
 
 ## Knowledge and outbound access
 
@@ -64,3 +64,7 @@ Schema 9 adds tenant-scoped suites, immutable quality jobs, per-turn evaluation 
 An async usage context attributes retrieval/response/judge calls and enforces run caps and optional daily analysis caps inside the workspace budget lock. Provider-reported usage replaces reservations; ambiguous attempts retain reservations. Persisted completed turns are reused; interrupted model attempts require an acknowledged retry. Workers recheck the initiating administrator, source versions, imports, cancellation and scheduled-owner authority.
 
 Gap evidence points to the original customer message and survives later follow-ups. Feedback updates keep history, and current resolution confirmation is calculated against later customer messages. Delivered timestamps and explicit transition events drive metrics; historical unknowns are not reconstructed. Retention/deletion removes derived transcripts and invalidates imported cases while preserving aggregate model accounting.
+
+## Operational controls
+
+Migrations 14–17 add diagnostic evidence, attachment lifecycle records, SLA obligations and shadow/rollout authority. Focused `readiness`, `attachments`, `sla`, and `shadow` services use existing transactional queues. Database event/turn hooks capture bounded observations; only canary runs carry explicit rollout generation/assignment authority. Ordinary version checks remain unchanged. Attachment bytes are excluded from model inputs. See [states, isolation and transitions](operational-controls.md).

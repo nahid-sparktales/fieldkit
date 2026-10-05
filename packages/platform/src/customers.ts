@@ -85,6 +85,7 @@ export class Customers {
     if (rows.length) {
       const summaries = await this.db.rows(
         `SELECT c.id,
+        (SELECT jsonb_build_object('dueAt',o.due_at,'state',o.state,'urgency',CASE WHEN o.breached_at IS NOT NULL OR o.due_at<=now() THEN 'overdue' WHEN o.warning_at<=now() THEN 'at risk' ELSE 'on track' END) FROM sla_obligations o WHERE o.workspace_id=c.workspace_id AND o.conversation_id=c.id AND o.ended_at IS NULL AND o.state<>'paused' ORDER BY o.due_at LIMIT 1) sla,
         (SELECT left(body,240) FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1) last_message,
         (SELECT count(*)::int FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id) feedback_count,
         (SELECT resolved FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id ORDER BY updated_at DESC LIMIT 1) feedback_resolved,

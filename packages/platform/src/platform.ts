@@ -1,4 +1,9 @@
 import { SupportOptionsInput } from "./support-options.js";
+import { Readiness } from "./readiness.js";
+import { Attachments } from "./attachments.js";
+import { Shadow } from "./shadow.js";
+import { Sla } from "./sla.js";
+import type { AttachmentScanner } from "./attachment-scanner.js";
 import { Customers } from "./customers.js";
 import { TicketEmail, queueTicketEmail } from "./ticket-email.js";
 import { Quality } from "./quality.js";
@@ -52,6 +57,10 @@ export class Platform {
   feedbackSync: FeedbackSync;
   ticketEmail: TicketEmail;
   customers: Customers;
+  readiness: Readiness;
+  attachments: Attachments;
+  sla: Sla;
+  shadow: Shadow;
   constructor(
     public config: Config,
     options: {
@@ -59,19 +68,26 @@ export class Platform {
       fetch?: Fetcher;
       model?: ModelPort;
       runner?: CodeRunner;
+      scanner?: AttachmentScanner;
+      clock?: () => Date;
     } = {},
   ) {
     this.db = new Database(config);
+    this.attachments = new Attachments(this.db, options.scanner);
     this.customers = new Customers(this.db);
     this.branding = new Branding(this.db);
     this.auth = createAuth(this.db, options.mailer);
+    this.sla = new Sla(this.db, this.auth.send, options.clock);
+    this.db.onEvent = (q, event) => this.sla.observe(q, event);
     this.connections = new Connections(this.db, options.fetch);
     this.ticketEmail = new TicketEmail(
       this.db,
       this.connections,
       this.auth.send,
       (p, id, input) => this.message(p, id, input),
+      this.attachments,
     );
+    this.ticketEmail.beforeSend = (q, ws, id) => this.sla.emailGuard(q, ws, id);
     this.model = options.model ?? new LiveModel(this.db, this.connections);
     this.knowledge = new Knowledge(this.db, this.connections, this.model);
     this.actions = new Actions(this.db, this.connections);
@@ -114,6 +130,29 @@ export class Platform {
       );
     this.agent.onOutcome = (ws, id, q) => this.quality.captureRun(ws, id, q);
     this.support.onSynced = (ws, id) => this.feedbackSync.queue(ws, id);
+    this.readiness = new Readiness(
+      this,
+      options.model ||
+      options.fetch ||
+      options.mailer ||
+      options.scanner ||
+      options.clock
+        ? "local_test"
+        : "live",
+    );
+    this.shadow = new Shadow(this);
+    this.db.onEvent = async (q, event) => {
+      await this.sla.observe(q, event);
+      await this.shadow.observe(q, event);
+    };
+    this.db.onTurn = (q, conv, runId) =>
+      this.shadow.captureTurn(q, conv, runId);
+    this.db.captureRead = (run, read) => this.shadow.captureRead(run, read);
+    this.db.selectWorkflow = (q, conv) => this.shadow.selectWorkflow(q, conv);
+    this.db.rolloutAuthority = (run, q) => this.shadow.authority(run, q);
+    this.ticketEmail.beforeSend = async (q, ws, id) =>
+      (await this.sla.emailGuard(q, ws, id)) &&
+      (await this.shadow.emailGuard(q, ws, id));
   }
   async migrate() {
     await this.db.migrate();
@@ -123,6 +162,58 @@ export class Platform {
     await this.db.boss.start();
   }
   async workers() {
+    await this.db.boss.work<{ workspaceId: string; resultId: string }>(
+      "shadow",
+      { batchSize: 1, localConcurrency: 1 },
+      async (jobs) => {
+        for (const { data } of jobs)
+          await this.shadow.advance(data.workspaceId, data.resultId);
+      },
+    );
+    await this.db.boss.work<{ workspaceId?: string; conversationId?: string }>(
+      "sla",
+      { batchSize: 1, localConcurrency: 2 },
+      async (jobs) => {
+        for (const { data } of jobs)
+          data.workspaceId && data.conversationId
+            ? await this.sla.advance(data.workspaceId, data.conversationId)
+            : await (async () => {
+                await this.sla.reconcile();
+                await this.shadow.reconcile();
+              })();
+      },
+    );
+    await this.db.boss.work<{ workspaceId: string; notificationId: string }>(
+      "sla-email",
+      { batchSize: 1, localConcurrency: 1 },
+      async (jobs) => {
+        for (const { data } of jobs)
+          await this.sla.deliverStaffEmail(
+            data.workspaceId,
+            data.notificationId,
+          );
+      },
+    );
+    await this.db.boss.schedule("sla", "* * * * *", {});
+    await this.db.boss.work<{ workspaceId: string; attachmentId: string }>(
+      "attachment",
+      { batchSize: 1, localConcurrency: this.config.FIELDKIT_ATTACHMENT_SCANS },
+      async (jobs) => {
+        for (const job of jobs)
+          await this.attachments.scan(
+            job.data.workspaceId,
+            job.data.attachmentId,
+          );
+      },
+    );
+    await this.db.boss.work<{ workspaceId: string; runId: string }>(
+      "diagnostic",
+      { batchSize: 1, localConcurrency: 2 },
+      async (jobs) => {
+        for (const job of jobs)
+          await this.readiness.advance(job.data.workspaceId, job.data.runId);
+      },
+    );
     const heartbeat = () =>
       this.db.pool
         .query(
@@ -219,6 +310,8 @@ export class Platform {
     await this.db.boss.schedule("maintenance", "0 * * * *", {});
   }
   async maintenance() {
+    await this.attachments.reconcile();
+    await this.shadow.reconcile();
     await this.quality.schedule();
     for (const c of await this.db.rows(
       "SELECT workspace_id FROM connections WHERE provider='zendesk' AND status='connected'",
@@ -248,6 +341,9 @@ export class Platform {
     for (const ws of await this.db.rows("SELECT id,settings FROM workspaces")) {
       const days = Settings.parse(ws.settings).retentionDays;
       await this.quality.retain(ws.id, days);
+      await this.readiness.retain(ws.id, days);
+      await this.attachments.retain(ws.id, days);
+      await this.shadow.retain(ws.id, days);
       await this.db.pool.query(
         "DELETE FROM contact_notes WHERE workspace_id=$1 AND created_at<now()-($2::int*interval '1 day')",
         [ws.id, days],
@@ -323,7 +419,7 @@ export class Platform {
     );
     await this.auth.send(
       email,
-      "Join your team on FieldKit",
+      "Join your team on Navigated Support",
       `Sign in or create an account, then accept your invitation: ${this.config.FIELDKIT_URL}/?invite=${encodeURIComponent(value)}`,
     );
     return { id, email, role };
@@ -408,6 +504,7 @@ export class Platform {
     kind: string,
     handoff: string,
   ) {
+    await this.readiness.assertPublication(ws);
     if (!this.config.SMTP_URL)
       throw new HttpError(
         409,
@@ -509,11 +606,13 @@ export class Platform {
       subject?: string;
       channelId?: string;
       contactId?: string;
+      attachments?: string[];
     },
   ) {
     const message = MessageInput.parse({
       body: input.body,
       requestKey: input.requestKey,
+      attachments: input.attachments,
     });
     const contactId = staff(p) ? input.contactId : p.contactId;
     if (!contactId) throw new HttpError(400, "A customer identity is required");
@@ -559,7 +658,7 @@ export class Platform {
         `${p.workspaceId}:${contactId}:${message.requestKey}`,
       ]);
       const previous = await this.db.one(
-        "SELECT c.*,m.body first_body FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE c.workspace_id=$1 AND c.contact_id=$2 AND m.request_key=$3",
+        "SELECT c.*,m.body first_body,m.id first_message_id FROM conversations c JOIN messages m ON m.conversation_id=c.id WHERE c.workspace_id=$1 AND c.contact_id=$2 AND m.request_key=$3",
         [p.workspaceId, contactId, message.requestKey],
         q,
       );
@@ -570,6 +669,13 @@ export class Platform {
             "Request key already belongs to a different message",
           );
         delete previous.first_body;
+        await this.attachments.verifyBinding(
+          p.workspaceId,
+          previous.first_message_id,
+          message.attachments,
+          q,
+        );
+        delete previous.first_message_id;
         return previous;
       }
       const conv = (
@@ -580,15 +686,17 @@ export class Platform {
             p.workspaceId,
             contactId,
             channel.id,
-            input.subject?.slice(0, 160) ?? message.body.slice(0, 100),
+            input.subject?.slice(0, 160) ??
+              (message.body.slice(0, 100) || "Files for the support team"),
           ],
           q,
         )
       )[0];
+      const firstMessageId = uid();
       await q.query(
         "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id) VALUES($1,$2,$3,'customer',$4,$5,$6)",
         [
-          uid(),
+          firstMessageId,
           p.workspaceId,
           conv.id,
           message.body,
@@ -596,7 +704,29 @@ export class Platform {
           p.userId ?? contactId,
         ],
       );
-      await enqueueTurn(this.db, q, conv);
+      await this.attachments.bind(
+        p,
+        conv,
+        firstMessageId,
+        message.attachments,
+        false,
+        q,
+      );
+      if (message.body) await enqueueTurn(this.db, q, conv);
+      else {
+        await q.query("UPDATE conversations SET mode='human' WHERE id=$1", [
+          conv.id,
+        ]);
+        conv.mode = "human";
+        await this.db.event(
+          q,
+          p.workspaceId,
+          "attachment.staff_review_required",
+          {},
+          conv.id,
+          true,
+        );
+      }
       await this.db.event(
         q,
         p.workspaceId,
@@ -631,6 +761,12 @@ export class Platform {
             409,
             "Request key already belongs to another message",
           );
+        await this.attachments.verifyBinding(
+          p.workspaceId,
+          old.id,
+          data.attachments,
+          q,
+        );
         return old;
       }
       const role = note ? "note" : staff(p) ? "staff" : "customer";
@@ -649,6 +785,7 @@ export class Platform {
           q,
         )
       )[0];
+      await this.attachments.bind(p, conv, msg.id, data.attachments, note, q);
       if (note) {
         if (conv.external_id)
           await this.support.queue(q, p.workspaceId, id, {
@@ -676,7 +813,7 @@ export class Platform {
       const next = (
         await this.db.rows(
           "UPDATE conversations SET revision=revision+1,status='open',mode=$1,updated_at=now() WHERE id=$2 RETURNING *",
-          [role === "staff" ? "human" : conv.mode, id],
+          [role === "staff" || !data.body ? "human" : conv.mode, id],
           q,
         )
       )[0];

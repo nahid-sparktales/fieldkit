@@ -1,3 +1,10 @@
+const ShadowPage = React.lazy(() =>
+  import("./ShadowPage.js").then((m) => ({ default: m.ShadowPage })),
+);
+const SlaPage = React.lazy(() =>
+  import("./SlaPage.js").then((m) => ({ default: m.SlaPage })),
+);
+import { SlaConversation } from "./SlaConversation.js";
 const TestLabPage = React.lazy(() =>
   import("./TestLabPage.js").then((m) => ({ default: m.TestLabPage })),
 );
@@ -9,11 +16,21 @@ const KnowledgeGapsPage = React.lazy(() =>
 const AnalyticsPage = React.lazy(() =>
   import("./AnalyticsPage.js").then((m) => ({ default: m.AnalyticsPage })),
 );
+const ReadinessPage = React.lazy(() =>
+  import("./ReadinessPage.js").then((m) => ({ default: m.ReadinessPage })),
+);
+import { ReadinessLink } from "./ReadinessLink.js";
 import { Portal } from "./Portal.js";
 import { MessageList, useConversationEvents } from "./conversation-ui.js";
 import { NotesPanel, FeedbackPanel, feedbackLabel } from "./InboxInsights.js";
 import { ConnectorLogo } from "./ConnectorLogo.js";
 import { InboxReadControl } from "./InboxReadControl.js";
+import {
+  AttachmentPicker,
+  AttachmentSettingsPanel,
+  attachmentIds,
+  attachmentsPending,
+} from "./Attachments.js";
 import { InboxQueue } from "./InboxQueue.js";
 import { CustomerProfile, CustomersPage } from "./CustomersPage.js";
 import { appLink } from "./customer-ui.js";
@@ -65,12 +82,17 @@ import {
 type Row = Record<string, any>;
 function Logo() {
   return (
-    <span className="brand">
-      <svg viewBox="0 0 32 32" aria-hidden="true">
-        <rect width="32" height="32" rx="10" fill="currentColor" />
-        <path d="M10 9h13v4h-9v4h7v4h-7v5h-4z" fill="white" />
-      </svg>
-      FieldKit<span className="edition">OPEN SOURCE</span>
+    <span className="brand" aria-label="Navigated Support">
+      <img
+        className="brand-mark"
+        src="/brand/icon-charcoal.svg"
+        alt=""
+        width="56"
+        height="56"
+      />
+      <span className="brand-name">
+        Navigated<span>Support</span>
+      </span>
     </span>
   );
 }
@@ -161,7 +183,7 @@ function Field({
 function AuthScreen({
   done,
   compact = false,
-  brandName = "FIELDKIT",
+  brandName = "NAVIGATED SUPPORT",
 }: {
   done: () => void;
   compact?: boolean;
@@ -221,7 +243,7 @@ function AuthScreen({
         <div className="auth-story">
           <Logo />
           <div>
-            <span className="eyebrow">SUPPORT THAT KNOWS YOUR BUSINESS</span>
+            <span className="eyebrow">GUIDE · RESOLVE · TOGETHER</span>
             <h1>
               Good answers.
               <br />
@@ -383,24 +405,41 @@ function WorkspaceSetup({ done }: { done: () => void }) {
   );
 }
 const navigation = [
-  { label: "Support", items: ["Inbox", "Customers", "Knowledge", "Analytics"] },
-  { label: "Agent", items: ["Workflow", "Test Lab", "Actions"] },
+  {
+    label: "Support",
+    items: ["Inbox", "Needs attention", "Customers", "Knowledge", "Analytics"],
+  },
+  {
+    label: "Agent",
+    items: ["Workflow", "Test Lab", "Shadow & rollout", "Actions"],
+  },
   {
     label: "Workspace",
-    items: ["Setup", "Connections", "Publish", "Team", "Settings", "Activity"],
+    items: [
+      "Setup",
+      "Readiness",
+      "Connections",
+      "Publish",
+      "Team",
+      "Settings",
+      "Activity",
+    ],
   },
 ];
 const sections = navigation.flatMap((group) => group.items);
 const staffSections = [
   "Settings",
   "Inbox",
+  "Needs attention",
   "Customers",
   "Knowledge",
   "Workflow",
   "Actions",
   "Activity",
   "Test Lab",
+  "Shadow & rollout",
   "Analytics",
+  "Readiness",
 ];
 function App() {
   const [session, setSession] = useState<any>(undefined),
@@ -425,7 +464,9 @@ function App() {
   useEffect(() => {
     if (
       !Object.values(inboxDrafts).some((workspace) =>
-        Object.values(workspace).some((draft) => draft.body.trim()),
+        Object.values(workspace).some(
+          (draft) => draft.body.trim() || draft.files?.length,
+        ),
       )
     )
       return;
@@ -497,7 +538,7 @@ function App() {
     };
   }, [menu, mobile]);
   useEffect(() => {
-    document.title = `${view} · FieldKit`;
+    document.title = `${view} · Navigated Support`;
   }, [view]);
   const refresh = () =>
     request("/v2/me")
@@ -733,6 +774,12 @@ function App() {
               <TestLabPage ws={ws} admin={role !== "agent"} />
             ) : activeView === "Analytics" ? (
               <AnalyticsPage ws={ws} />
+            ) : activeView === "Shadow & rollout" ? (
+              <ShadowPage ws={ws} role={role} />
+            ) : activeView === "Needs attention" ? (
+              <SlaPage ws={ws} role={role} />
+            ) : activeView === "Readiness" ? (
+              <ReadinessPage ws={ws} role={role} />
             ) : activeView === "Connections" ? (
               <ConnectionsPage ws={ws} owner={role === "owner"} />
             ) : activeView === "Actions" ? (
@@ -850,6 +897,7 @@ function Setup({ ws, go }: { ws: string; go: (s: string) => void }) {
         Connect your knowledge, test the answers, and choose where customers can
         reach you.
       </Heading>
+      <ReadinessLink ws={ws} />
       <Alert>{l.error}</Alert>
       {l.error && <button onClick={l.reload}>Try again</button>}
       <div className="setup-summary">
@@ -1009,7 +1057,12 @@ function InboxStatus({ conversation }: { conversation: Row }) {
     </span>
   );
 }
-type InboxDraft = { body: string; note: boolean; requestKey: string };
+type InboxDraft = {
+  body: string;
+  note: boolean;
+  requestKey: string;
+  files?: Row[];
+};
 function Inbox({
   ws,
   role,
@@ -1049,7 +1102,7 @@ function Inbox({
       className={`inbox-workspace inbox-stacked ${selected ? "has-selection" : "no-selection"} ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
       style={
         {
-          "--viewer-fr": `${conversationSize / (100 - conversationSize)}fr`,
+          "--viewer-scale": conversationSize / 100,
         } as React.CSSProperties
       }
     >
@@ -1140,6 +1193,12 @@ function Inbox({
               setSelected(c.id);
               setSummary(c);
               setShowDetail(true);
+              requestAnimationFrame(() =>
+                listRef.current?.previousElementSibling?.scrollIntoView({
+                  block: "start",
+                  behavior: "instant",
+                }),
+              );
               history.replaceState(
                 {},
                 "",
@@ -1194,12 +1253,23 @@ function InboxConversation({
   const nearBottom = useRef(true);
   const lastMessage = useRef<string | undefined>(undefined);
   const currentDraft = draft ?? { body: "", note: false, requestKey: "" };
-  const updateDraft = (changes: Partial<InboxDraft>) =>
+  const updateDraft = (changes: Partial<InboxDraft>) => {
+    if (
+      changes.note !== undefined &&
+      changes.note !== currentDraft.note &&
+      currentDraft.files?.length
+    ) {
+      a.setError(
+        "Remove attached files before changing between a public reply and an internal note.",
+      );
+      return;
+    }
     changeDraft({
       ...currentDraft,
       ...changes,
       requestKey: crypto.randomUUID(),
     });
+  };
   const refresh = () => {
     detail.reload();
     reloadQueue();
@@ -1458,7 +1528,7 @@ function InboxConversation({
             el.scrollHeight - el.scrollTop - el.clientHeight < 80;
         }}
       >
-        <MessageList messages={detail.data.messages} />
+        <MessageList messages={detail.data.messages} ws={ws} />
         {pending.map((p: Row) => {
           const expired = new Date(p.expires_at).getTime() <= now;
           return (
@@ -1503,8 +1573,8 @@ function InboxConversation({
                 <summary>Approval safeguards</summary>
                 <p>
                   Applies only to this customer, these parameters, and the
-                  current action and policy revisions. FieldKit rechecks them
-                  before execution.
+                  current action and policy revisions. Navigated Support
+                  rechecks them before execution.
                 </p>
               </details>
               {role === "agent" ? (
@@ -1582,6 +1652,7 @@ function InboxConversation({
         hidden={tab !== "notes"}
       >
         <NotesPanel
+          ws={ws}
           messages={detail.data.messages}
           compose={() => {
             updateDraft({ note: true });
@@ -1629,6 +1700,7 @@ function InboxConversation({
         tabIndex={0}
         hidden={tab !== "activity"}
       >
+        <SlaConversation ws={ws} id={id} revision={conv.revision} />
         <h3>Improve future answers</h3>
         <p>
           Capture this conversation for testing or highlight missing knowledge.
@@ -1717,7 +1789,13 @@ function InboxConversation({
         hidden={tab !== "conversation"}
         onSubmit={(e) => {
           e.preventDefault();
-          if (a.busy || !draft?.body.trim()) return;
+          if (
+            a.busy ||
+            !draft ||
+            (!draft.body.trim() && !attachmentIds(draft.files).length) ||
+            attachmentsPending(draft.files)
+          )
+            return;
           if (draft.body.trim() === "/customer-support") {
             openAssistant();
             return;
@@ -1728,7 +1806,11 @@ function InboxConversation({
               await api(
                 ws,
                 `/conversations/${id}/${sent.note ? "notes" : "messages"}`,
-                { body: sent.body, requestKey: sent.requestKey },
+                {
+                  body: sent.body,
+                  requestKey: sent.requestKey,
+                  attachments: attachmentIds(sent.files),
+                },
               );
               clearDraft(sent);
               refresh();
@@ -1749,6 +1831,12 @@ function InboxConversation({
             <input
               type="checkbox"
               checked={currentDraft.note}
+              disabled={!!currentDraft.files?.length}
+              title={
+                currentDraft.files?.length
+                  ? "Remove files before changing their visibility"
+                  : undefined
+              }
               onChange={(e) => updateDraft({ note: e.target.checked })}
             />
             Internal note
@@ -1776,12 +1864,20 @@ function InboxConversation({
               else e.currentTarget.form?.requestSubmit();
             }
           }}
-          required
+          required={!attachmentIds(currentDraft.files).length}
           placeholder={
             currentDraft.note
               ? "Write a private note for your team…"
               : "Write a reply to the customer…"
           }
+        />
+        <AttachmentPicker
+          ws={ws}
+          conversationId={id}
+          privateNote={currentDraft.note}
+          files={currentDraft.files ?? []}
+          onChange={(files) => updateDraft({ files })}
+          disabled={a.busy}
         />
         <div className="composer-footer">
           <div>
@@ -1798,7 +1894,12 @@ function InboxConversation({
           </div>
           <button
             className="primary"
-            disabled={a.busy || !currentDraft.body.trim()}
+            disabled={
+              a.busy ||
+              (!currentDraft.body.trim() &&
+                !attachmentIds(currentDraft.files).length) ||
+              attachmentsPending(currentDraft.files)
+            }
           >
             {a.busy
               ? "Working…"
@@ -3219,6 +3320,7 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
         Credentials stay encrypted on your server. Each connection belongs to
         this workspace.
       </Heading>
+      <ReadinessLink ws={ws} />
       <Alert>{l.error || a.error}</Alert>
       {a.success && <p className="success">{a.success}</p>}
       <div className="connections-layout">
@@ -3364,7 +3466,7 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                       </Field>
                       <Field
                         label="Structured output format"
-                        hint="Choose the format your server supports. Every response is still validated against FieldKit’s schema."
+                        hint="Choose the format your server supports. Every response is still validated against Navigated Support’s schema."
                       >
                         <select
                           name="jsonMode"
@@ -3440,7 +3542,8 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                   </ul>
                   <p>
                     Connect your account, then choose individual files in
-                    Knowledge. Only selected files are available to FieldKit.
+                    Knowledge. Only selected files are available to Navigated
+                    Support.
                   </p>
                   <details>
                     <summary>Server setup details</summary>
@@ -3737,7 +3840,7 @@ function ActionsPage({ ws, owner }: { ws: string; owner: boolean }) {
             {edit.kind.startsWith("custom") && (
               <Field
                 label="Custom API configuration"
-                hint="Provide endpoint, inputSchema, outputSchema, mappingKey, optional credentialId, and (for automatic writes) idempotent and lookupEndpoint. See the integration guide."
+                hint="Provide endpoint, inputSchema, outputSchema, mappingKey, optional credentialId, and (for automatic writes) idempotent and lookupEndpoint. Set diagnosticTest=true only for a dedicated test endpoint to allow explicit Readiness probes. See the integration guide."
               >
                 <textarea
                   className="code-editor"
@@ -3820,6 +3923,8 @@ function PublishPage({
         Publish the full portal, embed a bot on your website, or work inside
         Zendesk.
       </Heading>
+      <ReadinessLink ws={ws} />
+      <AttachmentSettingsPanel ws={ws} owner={owner} />
       <nav className="settings-tabs" aria-label="Publish sections">
         <button
           aria-current={tab === "channels" ? "page" : undefined}
@@ -3915,7 +4020,9 @@ function PublishPage({
                       name="handoff"
                       defaultValue={channel.settings.handoff ?? "native"}
                     >
-                      <option value="native">Hand off to FieldKit inbox</option>
+                      <option value="native">
+                        Hand off to Navigated Support inbox
+                      </option>
                       <option value="zendesk">Create a Zendesk ticket</option>
                     </select>
                   </Field>
@@ -4026,6 +4133,7 @@ function ServiceCredentials({ ws }: { ws: string }) {
               (
                 await api(ws, "/credentials", {
                   label: d.get("label"),
+                  scopes: [d.get("scope")],
                   days: Number(d.get("days")),
                 })
               ).token,
@@ -4035,6 +4143,14 @@ function ServiceCredentials({ ws }: { ws: string }) {
         }}
       >
         <div className="form-grid">
+          <Field label="Key permission">
+            <select name="scope">
+              <option value="requests:create">Customer requests</option>
+              <option value="diagnostics:read">
+                Read diagnostic summaries only
+              </option>
+            </select>
+          </Field>
           <Field label="Key name">
             <input name="label" required placeholder="Website backend" />
           </Field>
@@ -4312,6 +4428,7 @@ function ActivityPage({ ws, admin }: { ws: string; admin: boolean }) {
         Confirmed actions, uncertain outcomes, background work, and the
         decisions behind them.
       </Heading>
+      <ReadinessLink ws={ws} />
       <Alert>{l.error || a.error}</Alert>
       <section className="panel">
         <h2>Account operations</h2>

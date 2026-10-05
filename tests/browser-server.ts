@@ -8,11 +8,24 @@ import {
 import { writeFile, mkdir } from "node:fs/promises";
 import { docsFixture } from "./website-fixture.js";
 const c = testConfig(4351);
+c.FIELDKIT_CLAM_HOST = "browser-test-double";
 const docs = docsFixture(),
   providers = new TestProviders();
 await resetDatabase(c.DATABASE_URL);
 await mkdir(".fieldkit/browser", { recursive: true });
 const app = await createApp(c, {
+  scanner: {
+    health: async () => ({
+      engine: "Browser test double — not live ClamAV",
+      signaturesAt: new Date().toISOString(),
+    }),
+    scan: async () => ({
+      engine: "Browser test double — not live ClamAV",
+      signaturesAt: new Date().toISOString(),
+      scannedAt: new Date().toISOString(),
+      clean: true,
+    }),
+  },
   migrate: true,
   workers: true,
   model: new TestModel(),
@@ -23,7 +36,12 @@ const app = await createApp(c, {
         ? docs.fetch(url, init)
         : providers.fetch(url, init),
   mailer: async (to, subject, text, options) => {
-    if(options?.messageId) await writeFile(`.fieldkit/browser/ticket-${options.messageId.replace(/[^a-zA-Z0-9-]/g,"_")}.json`,JSON.stringify({to,subject,text,options}),{mode:0o600});
+    if (options?.messageId)
+      await writeFile(
+        `.fieldkit/browser/ticket-${options.messageId.replace(/[^a-zA-Z0-9-]/g, "_")}.json`,
+        JSON.stringify({ to, subject, text, options }),
+        { mode: 0o600 },
+      );
     await writeFile(
       ".fieldkit/browser/" + to.replace(/[^a-zA-Z0-9]/g, "_") + ".txt",
       text,

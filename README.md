@@ -1,16 +1,24 @@
-# FieldKit
+# Navigated Support
 
-![FieldKit — Open-source AI support](docs/assets/fieldkit-readme-banner.png)
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="apps/web/public/brand/horizontal-dark.svg" />
+  <img src="apps/web/public/brand/horizontal-light.svg" alt="Navigated Support — Guide · Resolve · Together" width="960" />
+</picture>
 
-An open-source, self-hosted AI support platform. Add an agent to your Zendesk operation, or publish your own help center, embedded chat, and customer portal with a staff inbox. Both use the same knowledge, visual LangGraph workflow, verified customer identities, and governed business actions.
+An open-source, self-hosted AI support platform, previously called FieldKit. Add an agent to your Zendesk operation, or publish your own help center, embedded chat, and customer portal with a staff inbox. Both use the same knowledge, visual LangGraph workflow, verified customer identities, and governed business actions.
 
-Bring your own model provider and documents: OpenAI, Claude, Kimi, OpenRouter, DeepSeek, vLLM, or another OpenAI-compatible service. FieldKit retrieves evidence and proposes actions; application code controls identity, approval, and execution. Your application data, uploads, and encrypted credentials live on your server; model inputs and enabled provider requests are sent to the services you connect.
+Bring your own model provider and documents: OpenAI, Claude, Kimi, OpenRouter, DeepSeek, vLLM, or another OpenAI-compatible service. Navigated Support retrieves evidence and proposes actions; application code controls identity, approval, and execution. Your application data, uploads, and encrypted credentials live on your server; model inputs and enabled provider requests are sent to the services you connect.
 
 **Status: development release candidate.** The application and automated tests are implemented; several real vendor test-account verification gates remain open. See [verification and release boundaries](docs/verification.md) before using it for customer-facing operations.
 
 Licensed under [Apache-2.0](LICENSE). **Version 2 is a breaking replacement of the original demonstration.** Fresh installations contain no fictional businesses, customers, connections, or credentials. The original is preserved at the `demo-v1` tag and in `examples/demo`. To run it explicitly, install its separate dependencies with `npm ci --prefix examples/demo`, then run `npm run demo`. Its SQLite dependencies are excluded from the production installation.
 
 ## What is implemented
+
+- **Readiness:** cached operational evidence, safe checks, explicit budgeted model/mail tests, dedicated resource probes and uncertain-outcome lookup.
+- **Private customer attachments:** screenshots, PDF downloads and logs with quarantine, private ClamAV scanning, authenticated access and safe staff previews. Admission starts off.
+- **Needs attention:** versioned business-hour SLA policies, response deadlines, staff notifications and reviewed waiting reminders. Automation starts off.
+- **Shadow & rollout:** immutable no-effect workflow comparisons, captured read fixtures, bounded budgets, staff review and separately authorized gradual rollout with a kill switch. [Operational controls guide](docs/operational-controls.md).
 
 - Verified email/password accounts, recovery, staff invitations, workspace roles, isolated customer history, and server-signed widget identities.
 - Guided setup, model connection, document review, answer preview, publishing, customer accounts, articles, ticket conversations, private notes, assignment, approvals, and human takeover.
@@ -32,7 +40,9 @@ Use **Publish → Appearance** to customize the help center's logo, colors, welc
 
 ## Try a local store sandbox
 
-Run `npm run sandbox` with local PostgreSQL/pgvector available, then open [the store launch page](http://127.0.0.1:4321/). It creates a separate, persistent **Trail Supply** sandbox with staff/customer logins, policies, a portal and widget, starter tickets, refund/cancellation approvals, and Test Lab cases. Responses and payments are explicitly simulated; no model tokens or real orders are used. Restarting preserves edits; resetting requires `--reset`. [Setup and walkthrough](examples/store/README.md).
+Run `npm run sandbox` with local PostgreSQL/pgvector available, then open [the store launch page](http://127.0.0.1:4321/). It creates a separate, persistent **Trail Supply** sandbox with staff/customer logins, policies, a portal and widget, starter tickets, refund/cancellation approvals, and Test Lab cases. Responses and payments are explicitly simulated; no model tokens or real orders are used. Restarting preserves edits; resetting requires `--reset`. Add `-- --operations` for clearly labeled operational-control scenarios in a fresh offline sandbox. [Setup and walkthrough](examples/store/README.md).
+
+The project is now **Navigated Support**. The repository URL, `FIELDKIT_*` configuration, `fieldkit` CLI, `FieldKitClient` SDK, and `window.FieldKit` widget API retain their existing names for compatibility. See the [identity and brand assets](docs/branding.md#navigated-support-product-identity).
 
 ## Installation
 

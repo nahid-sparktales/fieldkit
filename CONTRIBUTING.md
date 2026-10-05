@@ -1,6 +1,6 @@
-# Contributing to FieldKit
+# Contributing to Navigated Support
 
-FieldKit uses React, TypeScript, Node 24+, PostgreSQL 17 with pgvector, pg-boss, and LangGraph. Contributions are provided under the repository's Apache-2.0 license. The current focus is the self-hosted release and the [open verification gates](docs/verification.md).
+Navigated Support uses React, TypeScript, Node 24+, PostgreSQL 17 with pgvector, pg-boss, and LangGraph. Contributions are provided under the repository's Apache-2.0 license. The current focus is the self-hosted release and the [open verification gates](docs/verification.md).
 
 ## Local setup
 

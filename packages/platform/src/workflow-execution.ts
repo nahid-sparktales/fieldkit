@@ -1,3 +1,4 @@
+import { fixtureKey } from "./shadow-fixtures.js";
 import type { Database, Queryable } from "./db.js";
 import type { Actions } from "./actions.js";
 import type { WorkflowNode } from "./workflow-definition.js";
@@ -227,9 +228,16 @@ export class WorkflowExecution {
               "Action input",
             );
           }
-          const fixture =
-            run.evaluation.fixtures.steps[node.id] ??
-            run.evaluation.fixtures.steps[node.origin || node.id];
+          const fixture = run.evaluation.readFixture
+            ? {
+                output: await run.evaluation.readFixture({
+                  kind: "api",
+                  node,
+                  input,
+                }),
+              }
+            : (run.evaluation.fixtures.steps[node.id] ??
+              run.evaluation.fixtures.steps[node.origin || node.id]);
           if (!fixture) {
             run.state.evaluationBlocked = `Missing API fixture for ${node.origin || node.id}`;
             throw new Error(run.state.evaluationBlocked);
@@ -289,6 +297,12 @@ export class WorkflowExecution {
             ],
           );
       }
+      if (!run.preview && definition.kind !== "code" && this.db.captureRead)
+        await this.db.captureRead(run, {
+          key: fixtureKey("api", node, input),
+          result: output,
+          proof,
+        });
       if (proof) {
         run.state.readProofs ??= [];
         run.state.readProofs.push(proof);
