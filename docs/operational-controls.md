@@ -109,6 +109,13 @@ reserve 4 GiB for the scanner. A missing/stale/unavailable engine fails closed w
 unrelated text support continues. See `.env.example` for limits. Verify private
 network reachability from both app and worker, then enable a workspace's files.
 
+On every container start, `scanner/start.sh` completes a foreground signature
+update before launching clamd and its background updater. An update failure stops
+startup; Compose retries it under the existing restart policy. This prevents the
+daemon from keeping an old database loaded when an update finishes before its
+notification socket exists. The application still checks the **loaded** signature
+date before each scan, with the unchanged default maximum age of **48 hours**.
+
 ```sh
 docker compose --profile attachments up --build -d
 # Explicit actual-engine clean/EICAR smoke test, only after configuring the scanner:
@@ -116,6 +123,16 @@ docker compose exec -T app npm run test:scanner -- --live-scanner
 ```
 
 The smoke test uses the standard harmless antivirus test marker, not real malware.
+Failures print JSON diagnostics: the bounded daemon version reply, check time,
+parsed signature time, age in hours, configured limit, and a reason. `stale` means
+the loaded signatures exceed the limit; `invalid_timestamp` means parsing failed;
+`future_timestamp` means the date is more than five minutes ahead of the app clock.
+Check UTC clocks and `docker compose logs scanner`; for stale signatures, verify
+the download completed and restart the scanner so it refreshes before loading.
+An unavailable socket during startup is distinct from stale signatures. Never
+change clocks or relax the age limit to make verification pass. CI exercises real
+clean-file/EICAR detection after both initial startup and a retained-volume restart.
+
 Mock scanner tests do not verify a real engine. Configure the reverse proxy to
 accept `ceil(decoded message limit × 4/3) + 256 KiB` for inbound email; with defaults
 use at least **29 MiB**. Direct upload requests remain limited to per-file bytes.

@@ -54,16 +54,22 @@ jobs:
       - name: Verify real private attachment scanner
         timeout-minutes: 10
         run: |
-          docker compose --profile attachments up -d scanner
           # The first startup downloads signatures. The check uses only harmless
           # synthetic text and the standard EICAR test string, never user files.
-          for attempt in $(seq 1 40); do
-            if docker compose exec -T -e FIELDKIT_CLAM_HOST=scanner -e FIELDKIT_SCAN_TIMEOUT_MS=5000 app npm run test:scanner -- --live-scanner; then exit 0; fi
-            sleep 5
-          done
-          # Compare loaded-engine diagnostics above with the downloaded database.
-          docker compose exec -T scanner sh -c 'date -u; for db in /var/lib/clamav/daily.cvd /var/lib/clamav/daily.cld; do if [ -f "$db" ]; then sigtool --info "$db"; fi; done'
-          exit 1
+          verify_scanner() {
+            for attempt in $(seq 1 40); do
+              if docker compose exec -T -e FIELDKIT_CLAM_HOST=scanner -e FIELDKIT_SCAN_TIMEOUT_MS=5000 app npm run test:scanner -- --live-scanner; then return 0; fi
+              sleep 5
+            done
+            # Compare loaded-engine diagnostics above with the downloaded database.
+            docker compose exec -T scanner sh -c 'date -u; for db in /var/lib/clamav/daily.cvd /var/lib/clamav/daily.cld; do if [ -f "$db" ]; then sigtool --info "$db"; fi; done'
+            return 1
+          }
+          docker compose --profile attachments up -d scanner
+          verify_scanner
+          # A retained volume must also be refreshed before loading on restart.
+          docker compose --profile attachments restart scanner
+          verify_scanner
       - name: Container logs
         if: always()
         run: test ! -f .env || docker compose --profile attachments logs --no-color --tail=60

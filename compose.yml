@@ -17,11 +17,13 @@ services:
   scanner:
     profiles: [attachments]
     image: clamav/clamav:1.5.4
+    entrypoint: ["/bin/sh", "/etc/clamav/start.sh"]
     environment:
       TZ: UTC
     volumes:
       - scanner-signatures:/var/lib/clamav
       - ./scanner/clamd.conf:/etc/clamav/clamd.conf:ro
+      - ./scanner/start.sh:/etc/clamav/start.sh:ro
     # No host port: clamd has no authentication. Only the private Compose network.
     mem_limit: 4g
     pids_limit: 100
