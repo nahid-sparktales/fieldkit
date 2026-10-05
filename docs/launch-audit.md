@@ -44,12 +44,20 @@ Optional routes still download their own chunks when visited. Compression is don
 
 Tests use disposable `_test` PostgreSQL data, captured mail, and model/provider doubles. No paid model calls or live business writes were used. Existing user installations were not migrated or restarted. The local runtime is Node **25.5.0**; Node **24** remains the deployment/CI target.
 
+## Scanner CI follow-up — 2026-10-05
+
+The [diagnostic run](https://github.com/nahid-sparktales/fieldkit/actions/runs/37271407818) reproduced the failure with the original startup order. The daemon reported database **28136**, dated **2026-09-27 06:26:12 UTC**, nearly **192 hours** old. Meanwhile `sigtool` verified database **28143** on disk, dated **2026-10-04 06:25 UTC**. Parsing was correct; the **48-hour** gate correctly rejected the old loaded engine.
+
+The bundled entrypoint started freshclam and clamd concurrently. An update could finish before clamd's notification socket existed, while its startup file snapshot already reflected the new database. Reducing `SelfCheck` to 60 seconds alone did not repair that race. `scanner/start.sh` now finishes a foreground update before starting the daemon and background updater. Update failure blocks startup. No image/dependency versions, application clocks, or freshness limits changed.
+
+The [full verification run for `6d84d50`](https://github.com/nahid-sparktales/fieldkit/actions/runs/37271848160) **passed**: **176 backend tests**, **33 archived demo tests**, strict TypeScript, dependency audit, production/browser builds and journey, real isolated Python/JavaScript execution, the Node 24 Docker image, Compose installation/migrations/worker restart, and **real clean-file/EICAR scans after initial startup and a retained-volume scanner restart**. Additional freshness regressions reject malformed, future, and expired timestamps before streaming any file. Failure diagnostics report the bounded daemon version, parsed date, clock, age, configured limit, and reason; they do not include files or credentials.
+
+This closes the repository's real scanner and container CI blockers. Each deployment must still verify its own private scanner, current signatures, network, and clean/EICAR behavior before enabling attachments. Local Docker remains unavailable; the real-engine evidence above came from GitHub's Linux runner. Model/provider doubles remain separate from real connector verification.
+
 ## Outstanding launch gates
 
-1. **Private attachment scanning:** the baseline [GitHub run](https://github.com/nahid-sparktales/fieldkit/actions/runs/37253789813) failed because scanner signatures were unknown or older than the configured freshness limit. Its logs reported old databases and an initial failed Clamd update notification. The local configuration now checks for database updates every 60 seconds (instead of the daemon’s default 600) to recover a missed notification, and disables remote shutdown. These settings still require a real-daemon CI rerun. This does not prove a parsing defect or establish successful malware detection. Keep attachments disabled until signatures are current, the daemon has loaded them, and clean-file/EICAR verification passes. Do not weaken the freshness limit to turn the check green.
-2. **Container verification for this revision:** that baseline run passed the Node 24 app image build, fresh Compose installation/worker restart, and real isolated Python/JavaScript runner. Those passes apply to the baseline commit, not these local edits. Docker is unavailable on this workstation; rerun the full CI pipeline on this revision before release.
-3. **Real connected services:** verify dedicated SMTP receipt/inbound mail, models, Google Picker/OAuth, Notion, Zendesk, Stripe test mode, and custom test APIs as applicable. Automated payload/provider doubles and a CSP allowlist are not live-account verification.
-4. **Deployment operations:** complete a restore drill and expected-traffic load test on the deployment hardware. Configure TLS, proxy body/connection/rate limits, private runner/scanner networking, monitoring, and matching database/upload/secret backups. Proxy-aware per-client throttling belongs at the trusted edge; application auth limits currently use the socket peer.
+1. **Real connected services:** verify dedicated SMTP receipt/inbound mail, models, Google Picker/OAuth, Notion, Zendesk, Stripe test mode, and custom test APIs as applicable. Automated payload/provider doubles and a CSP allowlist are not live-account verification.
+2. **Deployment operations:** complete a restore drill and expected-traffic load test on the deployment hardware. Configure TLS, proxy body/connection/rate limits, private runner/scanner networking, monitoring, and matching database/upload/secret backups. Proxy-aware per-client throttling belongs at the trusted edge; application auth limits currently use the socket peer.
 
 ## Upgrade and client notes
 

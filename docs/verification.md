@@ -4,7 +4,7 @@ Status: development release candidate. A passing double-backed test is not a suc
 
 ## Launch security and performance review — 2026-10-04
 
-See the [launch audit](launch-audit.md) for the current changes, measured bundle/query reductions, schema 18, checks actually run, and remaining gates. The later baseline [GitHub run](https://github.com/nahid-sparktales/fieldkit/actions/runs/37253789813) passed Node 24 app/container/runner/Compose checks but failed real scanner freshness verification. That CI result is separate from both the earlier local report below and verification of the current launch-audit changes.
+See the [launch audit](launch-audit.md) for the current changes, measured bundle/query reductions, schema 18, checks actually run, and remaining gates. The [2026-10-05 CI run for `6d84d50`](https://github.com/nahid-sparktales/fieldkit/actions/runs/37271848160) passed all checks: 176 backend tests, 33 archived demo tests, strict types, dependency audit, builds/browser journey, Node 24 containers, real isolated runner, Compose installation/worker restart, and real scanner clean/EICAR detection after startup and restart. The earlier scanner failure was a startup race retaining old signatures in memory after an on-disk update; foreground refresh before daemon startup fixed it without changing the 48-hour limit. These CI results supersede the earlier container/scanner blockers and remain separate from the historical local report below and live vendor-account verification.
 
 ## Operational controls and Navigated Support identity — 2026-10-04
 

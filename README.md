@@ -9,7 +9,7 @@
 
 [Get started](#self-host-with-docker) · [Try the store sandbox](#try-it-locally) · [Documentation](#documentation) · [Contribute](CONTRIBUTING.md) · [Apache-2.0 license](LICENSE)
 
-> **Development release candidate.** Automated tests cover the application, but live connector and operational verification is still incomplete. The latest launch review also records a blocked real attachment-scanner check. Read the [launch audit](docs/launch-audit.md) and [release gates](docs/verification.md) before inviting real customers.
+> **Development release candidate.** Automated CI covers the application, containers, and real attachment scanning, including scanner restarts. Live connector and deployment verification is still incomplete. Read the [launch audit](docs/launch-audit.md) and [release gates](docs/verification.md) before inviting real customers.
 
 ## What you can build
 
