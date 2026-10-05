@@ -2,7 +2,10 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
 import type { AddressInfo } from "node:net";
-import { ClamScanner } from "../packages/platform/src/attachment-scanner.js";
+import {
+  ClamScanner,
+  ScannerHealthError,
+} from "../packages/platform/src/attachment-scanner.js";
 import { testConfig } from "./helpers.js";
 
 test("ClamAV streaming protocol validates exact clean verdict, current signatures and fragmented replies", async () => {
@@ -73,6 +76,78 @@ test("ClamAV streaming protocol validates exact clean verdict, current signature
     }
     mode = "stale";
     await assert.rejects(() => scanner.health(), /too old/);
+  } finally {
+    await new Promise<void>((resolve, reject) =>
+      server.close((e) => (e ? reject(e) : resolve())),
+    );
+  }
+});
+
+test("ClamAV freshness diagnostics distinguish invalid, future and stale timestamps without streaming files", async () => {
+  const now = Date.parse("2026-10-04T12:00:00Z");
+  let reply = "",
+    streams = 0;
+  const server = createServer((socket) => {
+    socket.once("data", (data) => {
+      if (data.toString() === "zVERSIONCOMMANDS\0") socket.end(`${reply}\0`);
+      else {
+        streams++;
+        socket.end("stream: OK\0");
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const c = testConfig();
+  c.FIELDKIT_CLAM_HOST = "127.0.0.1";
+  c.FIELDKIT_CLAM_PORT = (server.address() as AddressInfo).port;
+  const scanner = new ClamScanner(c, () => now);
+  const version = (stamp: string) =>
+    `ClamAV 1.5.4/28143/${stamp}| COMMANDS: PING VERSIONCOMMANDS INSTREAM`;
+  try {
+    // Exactly 48 hours and up to five minutes of future clock skew remain allowed.
+    for (const stamp of [
+      "Fri Oct  2 12:00:00 2026",
+      "Sun Oct  4 12:05:00 2026",
+      "Sun Oct  4 13:00:00 2026 +0100",
+    ]) {
+      reply = version(stamp);
+      const health = await scanner.health();
+      assert.ok(health.signaturesAt.endsWith("Z"));
+    }
+    for (const [stamp, reason, ageHours] of [
+      ["unparseable", "invalid_timestamp", null],
+      ["Fri Oct  2 11:59:59 2026", "stale", 48 + 1 / 3600],
+      ["Sun Oct  4 12:05:01 2026", "future_timestamp", -301 / 3600],
+    ] as const) {
+      reply = version(stamp);
+      await assert.rejects(
+        () => scanner.scan(Buffer.from("never sent")),
+        (e: unknown) => {
+          assert.ok(e instanceof ScannerHealthError);
+          assert.equal(e.status, 503);
+          assert.equal(e.diagnostics.reason, reason);
+          assert.equal(e.diagnostics.versionReply, reply);
+          assert.equal(e.diagnostics.checkedAt, new Date(now).toISOString());
+          assert.equal(e.diagnostics.maxAgeHours, 48);
+          assert.equal(e.diagnostics.ageHours, ageHours);
+          assert.equal(
+            e.diagnostics.signaturesAt === null,
+            reason === "invalid_timestamp",
+          );
+          return true;
+        },
+      );
+    }
+    reply = "ClamAV 1.5.4/28143/Sun Oct  4 12:00:00 2026| COMMANDS: PING";
+    await assert.rejects(
+      () => scanner.health(),
+      (e: unknown) => {
+        assert.ok(e instanceof ScannerHealthError);
+        assert.equal(e.diagnostics.reason, "protocol");
+        return true;
+      },
+    );
+    assert.equal(streams, 0);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((e) => (e ? reject(e) : resolve())),

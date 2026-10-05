@@ -12,6 +12,21 @@ export interface AttachmentScanner {
   health(): Promise<Omit<ScanInfo, "clean" | "scannedAt">>;
   scan(bytes: Buffer): Promise<ScanInfo>;
 }
+export class ScannerHealthError extends HttpError {
+  constructor(
+    message: string,
+    readonly diagnostics: {
+      reason: "protocol" | "invalid_timestamp" | "future_timestamp" | "stale";
+      versionReply: string;
+      checkedAt: string;
+      signaturesAt: string | null;
+      ageHours: number | null;
+      maxAgeHours: number;
+    },
+  ) {
+    super(503, message);
+  }
+}
 // The endpoint comes only from installation configuration, never a workspace or file.
 // Clamd has no authentication: operators must keep this socket on a private network.
 export class ClamScanner implements AttachmentScanner {
@@ -87,28 +102,44 @@ export class ClamScanner implements AttachmentScanner {
   }
   async health() {
     const value = await this.command("VERSIONCOMMANDS");
+    const now = this.clock();
+    const diagnostics = {
+      versionReply: value,
+      checkedAt: new Date(now).toISOString(),
+      signaturesAt: null as string | null,
+      ageHours: null as number | null,
+      maxAgeHours: this.config.FIELDKIT_SCAN_MAX_AGE_HOURS,
+    };
     const match = value.match(
       /^ClamAV ([^/\r\n]{1,60})\/(\d+)\/([^\r\n|]+)\| COMMANDS: (.+)$/,
     );
     if (!match || !match[4].split(/\s+/).includes("INSTREAM"))
-      throw new HttpError(
-        503,
+      throw new ScannerHealthError(
         "Scanner version or streaming capability cannot be verified",
+        { ...diagnostics, reason: "protocol" },
       );
     // ClamAV's ctime timestamp is emitted in the daemon timezone. The bundled
     // scanner is UTC; require an explicit offset from remote daemons or UTC here.
     const stamp = Date.parse(
       /[+-]\d{4}$|GMT|UTC/.test(match[3]) ? match[3] : `${match[3]} UTC`,
     );
-    const age = this.clock() - stamp;
-    if (
-      !Number.isFinite(stamp) ||
-      age < -300000 ||
-      age > this.config.FIELDKIT_SCAN_MAX_AGE_HOURS * 3600000
-    )
-      throw new HttpError(
-        503,
-        "Scanner signature age is unknown or too old; update the scanner databases",
+    const age = now - stamp;
+    if (!Number.isFinite(stamp))
+      throw new ScannerHealthError(
+        "Scanner signature timestamp cannot be parsed; check the scanner version and timezone",
+        { ...diagnostics, reason: "invalid_timestamp" },
+      );
+    diagnostics.signaturesAt = new Date(stamp).toISOString();
+    diagnostics.ageHours = age / 3600000;
+    if (age < -300000)
+      throw new ScannerHealthError(
+        "Scanner signature timestamp is in the future; check the scanner and application clocks",
+        { ...diagnostics, reason: "future_timestamp" },
+      );
+    if (age > this.config.FIELDKIT_SCAN_MAX_AGE_HOURS * 3600000)
+      throw new ScannerHealthError(
+        "Scanner signatures are too old; update and reload the scanner databases",
+        { ...diagnostics, reason: "stale" },
       );
     return {
       engine: `ClamAV ${match[1]} / database ${match[2]}`,

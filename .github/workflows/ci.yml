@@ -61,6 +61,8 @@ jobs:
             if docker compose exec -T -e FIELDKIT_CLAM_HOST=scanner -e FIELDKIT_SCAN_TIMEOUT_MS=5000 app npm run test:scanner -- --live-scanner; then exit 0; fi
             sleep 5
           done
+          # Compare loaded-engine diagnostics above with the downloaded database.
+          docker compose exec -T scanner sh -c 'date -u; for db in /var/lib/clamav/daily.cvd /var/lib/clamav/daily.cld; do if [ -f "$db" ]; then sigtool --info "$db"; fi; done'
           exit 1
       - name: Container logs
         if: always()
