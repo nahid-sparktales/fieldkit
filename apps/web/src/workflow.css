@@ -151,10 +151,10 @@
 }
 .wf-input {
   position: absolute;
-  top: -12px;
-  left: 106px;
-  height: 24px;
-  width: 28px;
+  top: -22px;
+  left: 98px;
+  height: 44px;
+  width: 44px;
   padding: 0;
   border-radius: 20px;
   z-index: 2;
@@ -165,7 +165,7 @@
   padding-bottom: 7px;
 }
 .wf-ports button {
-  height: 25px;
+  height: 44px;
   padding: 2px 6px 2px 16px;
   display: flex;
   width: 100%;
@@ -571,5 +571,21 @@
   }
   .wf-stage-expanded .wf-map-tools button {
     padding: 7px 8px;
+  }
+}
+
+/* Editing connections stays comfortable at 100% and larger; smaller zoom is an overview. */
+.wf-map-tools button {
+  min-width: 44px;
+  min-height: 44px;
+}
+.wf-input:disabled,
+.wf-ports button:disabled {
+  cursor: default;
+}
+@media (max-width: 760px) {
+  .wf-field input,
+  .wf-field select {
+    min-height: 44px;
   }
 }

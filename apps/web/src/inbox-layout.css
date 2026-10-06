@@ -1,54 +1,283 @@
+/* Inbox: a stable list and reading pane, with secondary controls on demand.
+   Flex sizing also accounts for notices above the app, such as the sandbox banner. */
+body:has(.inbox-split) {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+}
+#root:has(.inbox-split) {
+  flex: 1;
+  min-height: 0;
+}
+.shell:has(.inbox-split) {
+  height: 100%;
+  min-height: 0;
+}
+.workspace:has(.inbox-split) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.workspace:has(.inbox-split) > .topbar {
+  flex-shrink: 0;
+}
+.workspace-body.inbox-body {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  height: auto;
+}
+.inbox-split {
+  --inbox-text: #263d33;
+  --inbox-muted: #596e63;
+  --inbox-line: #e0e7e2;
+  --inbox-selected: #eaf3ed;
+  --inbox-accent: #216d51;
+  color: var(--inbox-text);
+}
+.inbox-split ::selection {
+  background: #cee6d7;
+  color: #193f2d;
+}
+.inbox-split :is(input, textarea) {
+  caret-color: var(--inbox-accent);
+}
+.inbox-split :is(input, textarea)::placeholder {
+  color: var(--inbox-muted);
+  opacity: 1;
+}
+.inbox-split :is(button, summary, select, input):focus-visible {
+  outline: 2px solid var(--inbox-accent);
+  outline-offset: 2px;
+}
+.inbox-split .inbox-heading {
+  margin-bottom: 14px;
+}
+.inbox-split .inbox-heading p {
+  color: var(--inbox-muted);
+}
+.inbox-split .inbox-view-controls button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+}
+.inbox-split .inbox-view-controls .icon {
+  width: 15px;
+  height: 15px;
+}
+.inbox-split .inbox {
+  grid-template-columns: minmax(300px, 32%) minmax(0, 1fr);
+  min-height: 0;
+  border-radius: 10px;
+  box-shadow: none;
+}
+.inbox-split.wide-conversation .inbox {
+  grid-template-columns: minmax(0, 1fr);
+}
+.inbox-split .conversation-list {
+  background: #fcfdfc;
+  border-right: 1px solid var(--inbox-line);
+}
+.inbox-split .inbox-queue-search {
+  padding: 18px 16px 10px;
+  flex-shrink: 0;
+}
+.inbox-split .inbox-queue-search input {
+  width: 100%;
+  height: 40px;
+  padding: 9px 12px;
+  font-size: 13px;
+  background: #fff;
+  border: 1px solid #d4ded7;
+  border-radius: 7px;
+}
 .inbox-sections {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 10px 16px 0;
+  gap: 3px;
+  padding: 0 12px 10px;
   flex-shrink: 0;
-  overflow-x: auto;
 }
 .inbox-sections button {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 5px;
+  flex: 1;
   border: 0;
   background: transparent;
-  color: #536b60;
+  color: var(--inbox-muted);
   white-space: nowrap;
-  padding: 8px 12px;
+  padding: 8px 6px;
   font-size: 12px;
+  min-height: 36px;
+  border-radius: 6px;
+}
+.inbox-sections button:hover {
+  background: #f0f4f1;
 }
 .inbox-sections button[aria-pressed="true"] {
-  background: #e5f1e9;
-  color: #19563e;
+  background: #e5efe8;
+  color: #21533d;
 }
 .inbox-sections button span {
-  margin-left: 6px;
+  font-size: 11px;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
 }
-.read-explainer {
-  margin-left: auto;
-  padding-left: 12px;
-  font-size: 11px;
-  color: #61746a;
-  white-space: nowrap;
+.inbox-queue-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 12px;
+  flex-shrink: 0;
 }
-.inbox-read-control {
+.inbox-queue-toolbar select {
+  flex: 1;
+  min-width: 0;
+}
+.inbox-split .inbox-queue-toolbar :is(select, button) {
+  height: 36px;
+  padding: 6px 9px;
+  font-size: 12px;
+  border-color: #d4ded7;
+  background-color: #fff;
+  border-radius: 6px;
+}
+.inbox-split .inbox-filter-toggle {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+}
+.inbox-filter-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+.inbox-filter-count {
+  min-width: 18px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  color: #21533d;
+  background: #e5efe8;
+  font-variant-numeric: tabular-nums;
+}
+.inbox-split .inbox-filter-panel {
+  padding: 12px 16px;
+  display: grid;
+  gap: 12px;
+  background: #f3f6f4;
+  border-block: 1px solid var(--inbox-line);
+  max-height: 42%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.inbox-split .inbox-filter-panel select {
+  padding: 7px 8px;
+  font-size: 12px;
+  min-height: 36px;
+  border-color: #d4ded7;
+  background-color: #fff;
+}
+.inbox-read-filter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 12px;
+}
+.inbox-read-filter select {
+  width: auto;
+}
+.inbox-filter-help {
+  margin: 0;
+  color: var(--inbox-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.inbox-split .inbox-queue-caption {
+  align-items: center;
+  padding: 10px 16px;
+  min-height: 38px;
+  border-bottom: 1px solid var(--inbox-line);
+  flex-shrink: 0;
+}
+.inbox-split .inbox-clear-filters {
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  font-size: 11px;
+  color: var(--inbox-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.inbox-split .conversation-items {
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+.inbox-split .conversation-card,
+.inbox-split .conversation-card.active {
+  border-left: 0;
+  padding: 16px;
+}
+.inbox-split .conversation-card.active {
+  background: var(--inbox-selected);
+}
+.inbox-split .conversation-card .conversation-person {
+  margin-bottom: 8px;
   gap: 8px;
 }
-.inbox-read-control button {
-  font-size: 12px;
-  padding: 6px 10px;
+.inbox-split .conversation-person strong {
+  font-size: 13px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.inbox-read-control [role="alert"] {
-  color: #a1302d;
-  font-size: 12px;
+.inbox-split .conversation-person time {
+  margin-left: auto;
+  font-size: 11px;
+}
+.inbox-split .conversation-person .avatar {
+  width: 25px;
+  height: 25px;
+  flex-shrink: 0;
+  font-size: 11px;
+  border-radius: 7px;
+  background: #edf1ee;
+  color: #496657;
+}
+.inbox-split .conversation-card h3 {
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  -webkit-line-clamp: 1;
+}
+.inbox-split .conversation-card.is-unread h3,
+.inbox-split .conversation-card.active h3 {
+  font-weight: 700;
+}
+.inbox-split .conversation-preview {
+  margin-bottom: 10px;
+}
+.inbox-split .conversation-labels .badge {
+  padding: 2px 5px;
+  font-size: 10px;
+}
+.inbox-split .conversation-labels .inbox-status:not(.bad):not(.warning) {
+  background: transparent;
+  padding-left: 0;
+  color: var(--inbox-muted);
 }
 .unread-dot {
   display: inline-block;
-  width: 7px;
-  height: 7px;
-  background: #14775c;
+  width: 6px;
+  height: 6px;
+  background: #216d51;
   border-radius: 50%;
-  margin-right: 7px;
+  margin-right: 6px;
   vertical-align: middle;
 }
 .unread-label {
@@ -56,267 +285,265 @@
   padding: 2px 6px;
   font-size: 10px;
   border-radius: 4px;
-  color: #17664a;
-  background: #e3f2e9;
+  color: #21533d;
+  background: #e5efe8;
   white-space: nowrap;
 }
-.inbox-stacked .conversation-card.is-unread {
-  background-color: #f4faf6;
+.inbox-split .customer-group-toggle {
+  padding: 16px;
 }
-.inbox-stacked .conversation-card.active {
-  background-color: #e5f1e9;
+.inbox-split .customer-group-threads {
+  border-left-width: 1px;
+  margin-left: 16px;
 }
-.inbox-stacked .reply-form {
-  flex-shrink: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  margin: 6px 14px 10px;
+.inbox-split .conversation-detail {
+  overflow-y: auto;
 }
-.inbox-stacked .reply-form .composer-heading {
-  grid-column: 1 / -1;
-  padding: 5px 10px;
-}
-.inbox-stacked .reply-form textarea,
-.inbox-stacked .reply-form:focus-within textarea {
-  grid-column: 1;
-  grid-row: 2;
-  height: 44px;
-  min-height: 44px;
-  padding: 4px 10px;
-}
-.inbox-stacked .reply-form .composer-footer {
-  display: contents;
-}
-.inbox-stacked .composer-footer > div {
-  grid-column: 1 / -1;
-  grid-row: 3;
+.inbox-split .conversation-detail > .empty {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   align-items: center;
-  gap: 2px 12px;
-  padding: 4px 10px 6px;
+  justify-content: center;
+  height: 100%;
+  padding: 32px;
 }
-.inbox-stacked .composer-footer button {
-  grid-column: 2;
-  grid-row: 2;
-  align-self: center;
-  margin: 0 8px 0 4px;
+.inbox-split .empty-description {
+  max-width: 38ch;
+  color: var(--inbox-muted);
+  line-height: 1.7;
 }
-.inbox-stacked .ticket-panel {
-  min-height: 0;
+.inbox-split .ticket-header {
+  padding: 20px 24px 10px;
 }
-.inbox-size-control {
+.inbox-split .ticket-customer {
+  margin-bottom: 8px;
+}
+.inbox-split .ticket-header h2 {
+  font-family: "DM Sans", sans-serif;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.35px;
+  margin: 0;
+}
+.ticket-status-line {
+  padding: 0 24px;
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  flex-shrink: 0;
+}
+.ticket-status-line .agent-state {
+  font-size: 11px;
+  color: var(--inbox-muted);
+}
+.ticket-management {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0 24px 10px;
+}
+.ticket-management > summary {
+  width: fit-content;
+  margin-left: auto;
+  padding: 6px 0;
+  font-size: 12px;
+  color: var(--inbox-muted);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.ticket-management[open] > summary {
+  color: var(--inbox-accent);
+  margin-bottom: 8px;
+}
+.inbox-split .ticket-management .conversation-controls {
+  padding: 10px 0;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--inbox-line);
+}
+.inbox-split .ticket-management .ticket-context {
+  padding: 0;
+}
+.inbox-read-control {
+  display: inline-flex;
   align-items: center;
   gap: 8px;
+}
+.inbox-read-control [role="alert"] {
+  color: #a1302d;
+  font-size: 12px;
+}
+.inbox-split .ticket-tabs {
+  padding-inline: 24px;
+  gap: 20px;
+}
+.inbox-split .ticket-tabs > button {
+  font-size: 12px;
+  min-height: 42px;
+}
+.inbox-split .ticket-tabs .tab-count {
+  color: var(--inbox-muted);
+  background: #eff3f0;
+}
+.inbox-split #ticket-tab-conversation .tab-count {
+  color: #815600;
+  background: #fff2ce;
+}
+.inbox-split .ticket-panel {
+  min-height: 100px;
+  padding: 24px;
+}
+.inbox-split .messages {
+  background: #f8faf8;
+}
+.inbox-split .message,
+.inbox-split .message.assistant,
+.inbox-split .message.staff {
+  max-width: 72ch;
+  margin: 0 auto 24px;
+}
+.inbox-split .message > p {
+  font-size: 14px;
+  line-height: 1.7;
+  padding: 14px 16px;
+  border-radius: 8px;
+}
+.inbox-split .message.assistant > p {
+  background: #f0f3f6;
+  border-color: #e0e5ea;
+}
+.inbox-split .message.staff > p {
+  border-radius: 8px;
+}
+.inbox-split .reply-form {
+  display: flex;
+  flex-direction: column;
+  margin: 12px 20px 16px;
+  border-radius: 8px;
+  box-shadow: none;
+  max-height: 45%;
+  overflow-y: auto;
+}
+.inbox-split .reply-form:focus-within {
+  border-color: var(--inbox-accent);
+  box-shadow: none;
+}
+.inbox-split .reply-form .composer-heading {
+  padding: 10px 12px 6px;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.inbox-split .reply-form .checkbox {
+  color: var(--inbox-muted);
+  font-size: 12px;
+  min-height: 24px;
+}
+.inbox-split .reply-form textarea,
+.inbox-split .reply-form:focus-within textarea {
+  height: 76px;
+  min-height: 76px;
+  max-height: 180px;
+  padding: 6px 12px;
+  resize: vertical;
+}
+.inbox-split .reply-form .attachment-picker {
+  margin: 0 12px 8px;
+  max-height: 160px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.inbox-split .reply-form .composer-footer {
+  padding: 8px 12px;
+  gap: 12px;
+  flex-shrink: 0;
+}
+.inbox-split .composer-footer small {
   font-size: 11px;
-  color: #536b60;
 }
-.inbox-size-control input {
-  width: 80px;
-  padding: 0;
-  accent-color: #216d51;
+.inbox-split .composer-shortcut {
+  display: none;
 }
-@media (min-width: 961px) {
-  .workspace-body.inbox-body {
-    height: auto;
-    min-height: calc(100dvh - 64px);
+.inbox-split .composer-footer button {
+  min-height: 36px;
+}
+@media (max-width: 1200px) and (min-width: 961px) {
+  .inbox-split .inbox {
+    grid-template-columns: 310px minmax(0, 1fr);
   }
-  .inbox-stacked {
-    height: auto;
-  }
-  .inbox-stacked .inbox {
+  .inbox-split.wide-conversation .inbox {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows:
-      max(440px, calc(var(--viewer-scale, 0.7) * (100dvh - 160px)))
-      auto;
-    flex: none;
   }
-  .inbox-stacked.no-selection .inbox {
-    grid-template-rows: 160px auto;
+  .inbox-split .ticket-tabs {
+    gap: 14px;
   }
-  .inbox-stacked.wide-conversation .inbox {
-    grid-template-rows: max(600px, calc(100dvh - 140px));
-  }
-  .inbox-stacked .conversation-list {
-    border-right: 0;
-    border-top: 1px solid #d4e0d8;
-    min-height: 520px;
-    background: #fff;
-  }
-  /* Let the page grow with the queue instead of squeezing its rows into the
-     space left below the transcript and filters. Mobile keeps its own view. */
-  .inbox-stacked .conversation-items {
-    flex: none;
-    overflow: visible;
-  }
-  .inbox-stacked .conversation-detail {
-    min-width: 0;
-  }
-  .inbox-stacked .ticket-header {
-    padding: 10px 20px 6px;
-  }
-  .inbox-stacked .ticket-header h2 {
-    margin-block: 2px 0;
-  }
-  .inbox-stacked .ticket-customer {
-    margin-bottom: 4px;
-  }
-  .inbox-stacked.no-selection .conversation-detail .empty {
-    padding: 18px;
-  }
-  .inbox-stacked.no-selection .conversation-detail .empty svg {
-    display: none;
-  }
-  .inbox-stacked.no-selection .conversation-detail .empty h3 {
-    margin: 0 0 8px;
-    font-size: 18px;
-  }
-  .inbox-stacked.no-selection .conversation-detail .empty p {
-    margin: 0;
-  }
-  .inbox-stacked .inbox-filters {
-    display: grid;
-    grid-template-columns: 190px minmax(180px, 1fr) minmax(255px, 0.8fr) minmax(
-        150px,
-        0.5fr
-      );
-    gap: 8px 12px;
-    align-items: end;
-    padding: 8px 16px;
-  }
-  .inbox-stacked .inbox-filters input,
-  .inbox-stacked .inbox-filters select {
-    height: 36px;
-    padding-block: 6px;
-    font-size: 12px;
-  }
-  .inbox-stacked .inbox-types {
-    height: 36px;
-  }
-  .inbox-stacked .inbox-filter-pair label > span {
-    font-size: 10px;
-    margin-bottom: 3px;
-  }
-  .inbox-stacked .queue-caption {
-    grid-column: 1 / -1;
-    margin: 0;
-    font-size: 11px;
-  }
-  .inbox-stacked .conversation-card {
-    display: grid;
-    grid-template-columns: minmax(150px, 200px) minmax(0, 1fr) minmax(
-        200px,
-        auto
-      );
-    grid-template-rows: auto auto;
-    gap: 4px 20px;
-    align-items: center;
-    padding: 12px 20px;
-    border-left: 3px solid transparent;
-  }
-  .inbox-stacked .conversation-card.active {
-    border-left-color: #216d51;
-  }
-  .inbox-stacked .conversation-person {
-    grid-column: 1;
-    grid-row: 1 / 3;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin: 0;
-  }
-  .inbox-stacked .conversation-person time {
-    flex-basis: 100%;
-    margin-left: 34px;
-    font-size: 10px;
-  }
-  .inbox-stacked .grouped-ticket .conversation-person time {
-    margin-left: 0;
-  }
-  .inbox-stacked .conversation-card h3 {
-    grid-column: 2;
-    grid-row: 1;
-    margin: 0;
-    font-size: 13px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .inbox-stacked .conversation-preview {
-    grid-column: 2;
-    grid-row: 2;
-    margin: 0;
-    font-size: 12px;
-    display: block;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .inbox-stacked .conversation-labels {
-    grid-column: 3;
-    grid-row: 1 / 3;
-    justify-content: flex-end;
-    max-width: 340px;
-    margin: 0;
-  }
-  .inbox-stacked .customer-group-toggle {
-    padding: 12px 20px;
-    align-items: center;
-  }
-  .inbox-stacked .customer-group-info {
-    grid-template-columns: minmax(160px, 1fr) minmax(160px, 1fr) minmax(
-        190px,
-        1fr
-      );
-    align-items: center;
-    gap: 4px 20px;
-  }
-  .inbox-stacked .customer-group-info > strong {
-    grid-column: 1;
-    grid-row: 1;
-  }
-  .inbox-stacked .customer-group-info > span:nth-child(2) {
-    grid-column: 1;
-    grid-row: 2;
-    font-size: 11px;
-  }
-  .inbox-stacked .customer-group-info > span:nth-child(3) {
-    grid-column: 2;
-    grid-row: 1;
-  }
-  .inbox-stacked .customer-group-info .group-channels {
-    grid-column: 2;
-    grid-row: 2;
-  }
-  .inbox-stacked .customer-group-info .group-attention {
-    grid-column: 3;
-    grid-row: 1 / 3;
-    justify-content: flex-end;
-  }
-  .inbox-stacked .customer-group-threads {
-    margin-left: 24px;
-  }
-}
-@media (max-width: 1200px) {
-  .read-explainer {
-    display: none;
+  .inbox-split .ticket-header,
+  .inbox-split .ticket-panel {
+    padding-inline: 18px;
   }
 }
 @media (max-width: 960px) {
-  .inbox-size-control {
+  .inbox-split .inbox-view-controls .queue-width-toggle {
     display: none;
   }
-  .inbox-sections {
-    padding: 10px 8px 0;
+  .workspace-body.inbox-body {
+    min-height: 0;
   }
-  .inbox-sections button {
-    padding: 10px 8px;
+  .inbox-split .inbox-heading {
+    padding-inline: 4px;
+    margin-bottom: 10px;
   }
-  .inbox-stacked .conversation-controls {
-    flex-wrap: wrap;
-    gap: 8px;
+  .inbox-split .inbox {
+    display: flex;
+    min-height: 0;
   }
-  .inbox-stacked .inbox-filters {
-    padding-top: 10px;
+  .inbox-split .conversation-list {
+    border-right: 0;
+  }
+  .inbox-split .inbox-sections button,
+  .inbox-split .inbox-queue-toolbar :is(select, button),
+  .inbox-split .inbox-filter-panel :is(select, button) {
+    min-height: 40px;
+  }
+  .inbox-split .ticket-header {
+    padding: 10px 16px 8px;
+  }
+  .inbox-split .ticket-header h2 {
+    font-size: 18px;
+  }
+  .inbox-split .ticket-status-line {
+    padding-inline: 16px;
+  }
+  .inbox-split .ticket-management {
+    padding: 0 16px 6px;
+  }
+  .inbox-split .ticket-management > summary {
+    min-height: 36px;
+    padding-block: 9px;
+  }
+  .inbox-split .ticket-tabs {
+    padding-inline: 16px;
+    gap: 18px;
+  }
+  .inbox-split .ticket-panel {
+    padding: 16px;
+    min-height: 100px;
+  }
+  .inbox-split .reply-form {
+    margin: 8px 12px 12px;
+    max-height: 45%;
+  }
+  .inbox-split .reply-form textarea,
+  .inbox-split .reply-form:focus-within textarea {
+    height: 64px;
+    min-height: 64px;
+  }
+  .inbox-split .composer-footer button {
+    min-height: 40px;
+  }
+  .inbox-split .assignment-control {
+    margin-left: 0;
+  }
+  .inbox-split .customer-feedback-summary > span:last-child {
+    display: none;
   }
 }

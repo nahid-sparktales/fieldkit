@@ -18,9 +18,25 @@ export function TicketEmailSettings({ ws }: { ws: string }) {
           </p>
         </div>
         <span className="badge">
-          {l.data?.configured ? "Replies connected" : "Portal replies"}
+          {l.error
+            ? "Status unavailable"
+            : !l.data
+              ? "Loading status…"
+              : l.data.configured
+                ? "Replies connected"
+                : "Portal replies"}
         </span>
       </div>
+      {l.error && (
+        <div className="content-load-recovery">
+          <p>
+            {l.data
+              ? "Showing the last loaded email settings."
+              : "Email reply settings could not be loaded."}
+          </p>
+          <button onClick={l.reload}>Try again</button>
+        </div>
+      )}
       <details>
         <summary>Set up direct email replies</summary>
         <p>
@@ -59,7 +75,7 @@ export function TicketEmailSettings({ ws }: { ws: string }) {
             Saving replaces webhook credentials and revokes old reply addresses.
             Existing emails can still be answered through the portal link.
           </p>
-          <button className="primary" disabled={a.busy}>
+          <button className="primary" disabled={a.busy || !l.data || !!l.error}>
             {l.data?.configured
               ? "Replace email connection"
               : "Connect inbound email"}

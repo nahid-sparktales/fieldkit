@@ -1,5 +1,6 @@
 import { useId, useState } from "react";
 import { useAction } from "./useAction.js";
+import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
 import {
   EMPTY_SCHEMA,
   type ValueBindings,
@@ -161,9 +162,29 @@ export function WorkflowLibrary({
     [testInput, setTestInput] = useState("{}"),
     [contact, setContact] = useState(""),
     [result, setResult] = useState<Row | null>(null),
-    [recent, setRecent] = useState<Row[] | null>(null);
+    [recent, setRecent] = useState<Row[] | null>(null),
+    [savedDraft, setSavedDraft] = useState("");
+  const dirty =
+    !!draft && JSON.stringify({ draft, input, output }) !== savedDraft;
+  useUnsavedChanges(dirty);
+  const canDiscard = () =>
+    !dirty ||
+    confirmDiscardChanges("Discard unsaved changes to this reusable step?");
+  const openSubflow = (component: Row | null) => {
+    if (busy || !canDiscard()) return;
+    setDraft(null);
+    onSubflow(component);
+  };
   const { busy, error, setError, run: act } = useAction();
   const load = (definition: Row, row: Row | null = null) => {
+    if (busy || !canDiscard()) return;
+    setSavedDraft(
+      JSON.stringify({
+        draft: definition,
+        input: JSON.stringify(definition.inputSchema, null, 2),
+        output: JSON.stringify(definition.outputSchema, null, 2),
+      }),
+    );
     setEditing(row);
     setDraft(definition);
     setInput(JSON.stringify(definition.inputSchema, null, 2));
@@ -207,14 +228,18 @@ export function WorkflowLibrary({
       </p>
       {admin && (
         <div className="button-row">
-          <button onClick={() => create("code", "python")}>
+          <button disabled={busy} onClick={() => create("code", "python")}>
             New Python step
           </button>
-          <button onClick={() => create("code", "javascript")}>
+          <button disabled={busy} onClick={() => create("code", "javascript")}>
             New JavaScript step
           </button>
-          <button onClick={() => create("api")}>New API step</button>
-          <button onClick={() => onSubflow(null)}>New subflow</button>
+          <button disabled={busy} onClick={() => create("api")}>
+            New API step
+          </button>
+          <button disabled={busy} onClick={() => openSubflow(null)}>
+            New subflow
+          </button>
         </div>
       )}
       {!resources.runnerConfigured && (
@@ -236,13 +261,17 @@ export function WorkflowLibrary({
             {admin && (
               <div className="button-row">
                 <button
+                  disabled={busy}
                   onClick={() =>
-                    c.kind === "subflow" ? onSubflow(c) : load(c.definition, c)
+                    c.kind === "subflow"
+                      ? openSubflow(c)
+                      : load(c.definition, c)
                   }
                 >
                   Edit {c.name}
                 </button>
                 <button
+                  disabled={busy}
                   onClick={() => {
                     if (
                       confirm(
@@ -284,6 +313,13 @@ export function WorkflowLibrary({
           }}
         >
           <h3>{editing ? `Edit ${editing.name}` : "Create reusable step"}</h3>
+          <p className="wf-note" role="status">
+            {dirty
+              ? "Unsaved changes"
+              : editing
+                ? `Saved version ${editing.revision}`
+                : "New step · not saved"}
+          </p>
           <fieldset disabled={busy || !admin}>
             <label className="wf-field">
               <span>Component name</span>
@@ -433,7 +469,12 @@ export function WorkflowLibrary({
             </label>
             <div className="button-row">
               <button className="primary">Save component version</button>
-              <button type="button" onClick={() => setDraft(null)}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (canDiscard()) setDraft(null);
+                }}
+              >
                 Close component editor
               </button>
             </div>

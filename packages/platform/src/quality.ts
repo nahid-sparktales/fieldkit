@@ -1226,11 +1226,24 @@ export class Quality {
       EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at IS NULL) unknown_delivery,
       (c.created_at<(SELECT applied_at FROM app_migrations WHERE version=9) OR (c.external_id IS NOT NULL AND (SELECT min(created_at) FROM messages WHERE conversation_id=c.id)<(SELECT applied_at FROM app_migrations WHERE version=9))) unknown_history
       FROM cohort c)`;
-    const totals = await this.db.one(
-      base +
-        ` SELECT count(*)::int conversations,count(*) FILTER(WHERE ai)::int ai_conversations,count(*) FILTER(WHERE ai AND confirmed)::int confirmed_resolution,count(*) FILTER(WHERE ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_conversations,count(*) FILTER(WHERE ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_confirmed,count(*) FILTER(WHERE staff_resolved)::int staff_resolved,count(*) FILTER(WHERE handoff)::int handoffs,count(*) FILTER(WHERE reopened)::int reopened,count(*) FILTER(WHERE unknown_delivery)::int unknown_delivery,count(*) FILTER(WHERE unknown_history)::int unknown_history,count(first_reply)::int response_time_denominator,avg(extract(epoch FROM first_reply-first_customer)*1000)::float average_first_response_ms FROM metrics`,
-      args,
-    );
+    const totalsSQL = ` SELECT count(*)::int conversations,count(*) FILTER(WHERE ai)::int ai_conversations,count(*) FILTER(WHERE ai AND confirmed)::int confirmed_resolution,count(*) FILTER(WHERE ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_conversations,count(*) FILTER(WHERE ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_confirmed,count(*) FILTER(WHERE staff_resolved)::int staff_resolved,count(*) FILTER(WHERE handoff)::int handoffs,count(*) FILTER(WHERE reopened)::int reopened,count(*) FILTER(WHERE unknown_delivery)::int unknown_delivery,count(*) FILTER(WHERE unknown_history)::int unknown_history,count(first_reply)::int response_time_denominator,avg(extract(epoch FROM first_reply-first_customer)*1000)::float average_first_response_ms FROM metrics`;
+    const comparisonFrom = new Date(
+      Date.parse(from) - (Date.parse(to) - Date.parse(from)),
+    ).toISOString();
+    const [totals, previousTotals, trend] = await Promise.all([
+      this.db.one(base + totalsSQL, args),
+      this.db.one(base + totalsSQL, [
+        p.workspaceId,
+        comparisonFrom,
+        from,
+        d.channel ?? null,
+      ]),
+      this.db.rows(
+        base +
+          ` SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS "day",count(*)::int conversations FROM cohort GROUP BY 1 ORDER BY 1`,
+        args,
+      ),
+    ]);
     const satisfaction = await this.db.rows(
       base +
         ` SELECT f.source,count(*)::int rated,count(*) FILTER(WHERE f.rating='good')::int good,count(*) FILTER(WHERE f.rating='bad')::int bad,count(*) FILTER(WHERE f.rating='neutral')::int neutral FROM(SELECT DISTINCT ON(f.conversation_id,f.source) f.* FROM customer_feedback f JOIN cohort c ON c.id=f.conversation_id WHERE f.rating IS NOT NULL ORDER BY f.conversation_id,f.source,CASE WHEN f.source='native' THEN f.updated_at ELSE f.answered_at END DESC,f.external_id)f GROUP BY f.source`,
@@ -1238,7 +1251,7 @@ export class Quality {
     );
     const details = await this.db.rows(
       base +
-        " SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at FROM metrics ORDER BY created_at DESC LIMIT 200",
+        " SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at,(ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history) ai_only FROM metrics ORDER BY created_at DESC,id DESC LIMIT 200",
       args,
     );
     const handoffs = await this.db.rows(
@@ -1258,6 +1271,8 @@ export class Quality {
       from,
       to,
       totals,
+      comparison: { from: comparisonFrom, to: from, totals: previousTotals },
+      trend,
       satisfaction: satisfaction.map((s) => ({
         ...s,
         unrated: totals!.conversations - s.rated,

@@ -3,8 +3,10 @@ import { expect, type Page } from "@playwright/test";
 export async function verifyCustomers(staff: Page, customer: Page) {
   const ws = new URL(staff.url()).searchParams.get("workspace")!;
   await staff.goto(`/?workspace=${ws}&view=inbox`);
-  await staff.getByLabel("Group inbox by").selectOption("customer");
   const queue = staff.getByRole("region", { name: "Conversation queue" });
+  const filters = queue.getByRole("button", { name: /^Filters/ });
+  await filters.click();
+  await staff.getByLabel("Group inbox by").selectOption("customer");
   await queue
     .getByRole("group", { name: "Inbox sections" })
     .getByRole("button", { name: /^All conversations/ })
@@ -206,11 +208,13 @@ export async function verifyCustomers(staff: Page, customer: Page) {
     "Keep this ticket draft while looking at the customer",
   );
   await staff.getByLabel("Reply", { exact: true }).fill("");
+  await filters.click();
   await staff.getByLabel("Group inbox by").selectOption("customer");
   await staff
     .getByRole("group", { name: "Conversation type" })
     .getByRole("button", { name: "All", exact: true })
     .click();
+  await filters.click();
   await staff.screenshot({
     path: "test-results/inbox-grouped.png",
     fullPage: true,

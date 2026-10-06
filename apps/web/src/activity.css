@@ -1,0 +1,128 @@
+.activity-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.activity-sections button {
+  display: inline-flex;
+  gap: 10px;
+  align-items: center;
+}
+.activity-sections button[aria-pressed="true"] {
+  background: #e6f2ec;
+  color: #184e3b;
+  border-color: #80ad98;
+  box-shadow: inset 0 -3px 0 #216d51;
+}
+.activity-sections button span {
+  font-variant-numeric: tabular-nums;
+}
+.activity-filters {
+  display: grid;
+  grid-template-columns: minmax(180px, 2fr) repeat(3, minmax(120px, 1fr));
+  gap: 16px;
+  margin-block: 24px 12px;
+}
+.activity-filters label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.activity-filters input,
+.activity-filters select {
+  width: 100%;
+  min-width: 0;
+}
+.activity-count {
+  color: var(--muted);
+  font-size: 13px;
+  margin-block: 20px 8px;
+}
+.activity-empty {
+  padding: 36px 0;
+  text-align: center;
+}
+.activity-record {
+  padding: 22px 0;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+.activity-record-heading {
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+  align-items: start;
+}
+.activity-record-heading h3 {
+  font-size: 15px;
+  margin: 0;
+}
+.activity-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.activity-record p {
+  margin-block: 12px;
+}
+.activity-record-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.activity-record details {
+  margin-top: 12px;
+  font-size: 13px;
+}
+.activity-record summary {
+  cursor: pointer;
+  padding-block: 8px;
+}
+.activity-record pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 300px;
+  overflow: auto;
+  background: var(--surface-subtle, #f4f7f5);
+  padding: 12px;
+}
+.activity-record-id {
+  font-size: 12px;
+  color: var(--muted);
+}
+.activity-pagination {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-top: 24px;
+}
+.activity-pagination span {
+  font-size: 13px;
+}
+@media (max-width: 1000px) {
+  .activity-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .activity-search {
+    grid-column: 1/-1;
+  }
+  .activity-filters {
+    gap: 12px;
+  }
+  .activity-sections button,
+  .activity-page button,
+  .activity-record summary {
+    min-height: 44px;
+  }
+  .activity-pagination {
+    flex-wrap: wrap;
+  }
+}

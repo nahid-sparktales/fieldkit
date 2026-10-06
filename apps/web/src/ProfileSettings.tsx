@@ -3,6 +3,9 @@ import { auth } from "./auth-client.js";
 import { api, request, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
 import { LoadingState, SettingsField as Field } from "./ui.js";
+import { useSettingsForm } from "./settings-form.js";
+import { useUnsavedChanges } from "./unsaved-changes.js";
+import "./settings.css";
 function Notice({ action }: { action: ReturnType<typeof useAction> }) {
   return (
     <>
@@ -20,6 +23,9 @@ function Notice({ action }: { action: ReturnType<typeof useAction> }) {
   );
 }
 export function ProfileSettings({ changed }: { changed?: () => void }) {
+  const draft = useSettingsForm("profile");
+  const [passwordDirty, setPasswordDirty] = useState(false);
+  useUnsavedChanges(passwordDirty);
   const load = useLoad(async () => {
     const [session, sessions] = await Promise.all([
       auth.getSession(),
@@ -37,7 +43,7 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
   const profile = useAction(),
     password = useAction(),
     security = useAction();
-  if (load.error)
+  if (load.error && !load.data)
     return (
       <div className="alert" role="alert">
         {load.error}
@@ -48,6 +54,12 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
   const current = load.data;
   return (
     <div className="profile-settings">
+      {load.error && (
+        <div className="alert" role="alert">
+          {load.error}
+          <button onClick={load.reload}>Try again</button>
+        </div>
+      )}
       <section className="panel">
         <h2>Your profile</h2>
         <p className="muted">
@@ -56,11 +68,14 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
         </p>
         <Notice action={profile} />
         <form
+          ref={draft.ref}
+          onChange={draft.onChange}
           onSubmit={(event) => {
             event.preventDefault();
             const data = new FormData(event.currentTarget);
             void profile.run(async () => {
               await request("/v2/profile", { name: data.get("name") }, "PUT");
+              draft.saved();
               load.reload();
               changed?.();
             }, "Profile saved.");
@@ -70,6 +85,7 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
             <input
               key={current.user.name}
               name="name"
+              disabled={profile.busy}
               autoComplete="name"
               required
               maxLength={80}
@@ -85,9 +101,23 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
               : "Email not verified"}{" "}
             · This address is your sign-in identity.
           </p>
-          <button className="primary" disabled={profile.busy}>
-            {profile.busy ? "Saving…" : "Save profile"}
-          </button>
+          <div className="settings-save-actions">
+            <button className="primary" disabled={profile.busy || !draft.dirty}>
+              {profile.busy ? "Saving…" : "Save profile"}
+            </button>
+            {draft.dirty && (
+              <>
+                <button
+                  type="button"
+                  disabled={profile.busy}
+                  onClick={draft.discard}
+                >
+                  Discard changes
+                </button>
+                <span role="status">Unsaved changes</span>
+              </>
+            )}
+          </div>
         </form>
       </section>
       <section className="panel">
@@ -97,6 +127,16 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
         </p>
         <Notice action={password} />
         <form
+          onChange={(event) =>
+            setPasswordDirty(
+              Array.from(
+                event.currentTarget.querySelectorAll<HTMLInputElement>(
+                  'input[type="password"]',
+                ),
+              ).some((input) => !!input.value),
+            )
+          }
+          onReset={() => setPasswordDirty(false)}
           onSubmit={(event) => {
             event.preventDefault();
             const form = event.currentTarget,
@@ -121,6 +161,7 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
           <Field label="Current password">
             <input
               name="currentPassword"
+              disabled={password.busy}
               type="password"
               autoComplete="current-password"
               required
@@ -130,6 +171,7 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
           <Field label="New password">
             <input
               name="newPassword"
+              disabled={password.busy}
               type="password"
               autoComplete="new-password"
               minLength={12}
@@ -140,6 +182,7 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
           <Field label="Confirm new password">
             <input
               name="confirmPassword"
+              disabled={password.busy}
               type="password"
               autoComplete="new-password"
               minLength={12}
@@ -148,12 +191,24 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
             />
           </Field>
           <label className="checkbox">
-            <input name="revoke" type="checkbox" defaultChecked />
+            <input
+              name="revoke"
+              type="checkbox"
+              defaultChecked
+              disabled={password.busy}
+            />
             Sign out other sessions when changing password
           </label>
-          <button disabled={password.busy}>
-            {password.busy ? "Changing password…" : "Change password"}
-          </button>
+          <div className="settings-save-actions">
+            <button disabled={password.busy}>
+              {password.busy ? "Changing password…" : "Change password"}
+            </button>
+            {passwordDirty && (
+              <button type="reset" disabled={password.busy}>
+                Clear password fields
+              </button>
+            )}
+          </div>
         </form>
       </section>
       <section className="panel">
@@ -165,7 +220,21 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
               sign out the others.
             </p>
           </div>
-          <button onClick={load.reload}>Refresh sessions</button>
+          <div className="settings-save-actions">
+            <button onClick={load.reload}>Refresh sessions</button>
+            <button
+              disabled={security.busy || current.sessions.length < 2}
+              onClick={() =>
+                void security.run(async () => {
+                  const result = await auth.revokeOtherSessions();
+                  if (result.error) throw new Error(result.error.message);
+                  load.reload();
+                }, "Other sessions signed out.")
+              }
+            >
+              Sign out other sessions
+            </button>
+          </div>
         </div>
         <Notice action={security} />
         {current.staleSession ? (
@@ -210,38 +279,39 @@ export function ProfileSettings({ changed }: { changed?: () => void }) {
           )
         )}
         <ul className="profile-sessions">
-          {current.sessions.map((session: any) => (
-            <li key={session.id}>
-              <div>
-                <strong>
-                  {session.token === current.session.token
-                    ? "This session"
-                    : "Other session"}
-                </strong>
-                <span>
-                  {session.userAgent || "Device information unavailable"}
-                </span>
-              </div>
-              <small>
-                Signed in {new Date(session.createdAt).toLocaleString()}
-                <br />
-                Expires {new Date(session.expiresAt).toLocaleString()}
-              </small>
-            </li>
-          ))}
+          {[...current.sessions]
+            .sort(
+              (a: any, b: any) =>
+                Number(b.token === current.session.token) -
+                  Number(a.token === current.session.token) ||
+                new Date(b.updatedAt ?? b.createdAt).getTime() -
+                  new Date(a.updatedAt ?? a.createdAt).getTime(),
+            )
+            .map((session: any) => (
+              <li key={session.id}>
+                <div>
+                  <strong>{sessionDevice(session.userAgent)}</strong>
+                  {session.token === current.session.token && (
+                    <span className="session-current">This session</span>
+                  )}
+                  <details className="session-details">
+                    <summary>Device details</summary>
+                    <p>
+                      {session.userAgent || "Device information unavailable"}
+                    </p>
+                  </details>
+                </div>
+                <small>
+                  Last active{" "}
+                  {new Date(
+                    session.updatedAt ?? session.createdAt,
+                  ).toLocaleString()}
+                  <br />
+                  Signed in {new Date(session.createdAt).toLocaleString()}
+                </small>
+              </li>
+            ))}
         </ul>
-        <button
-          disabled={security.busy || current.sessions.length < 2}
-          onClick={() =>
-            void security.run(async () => {
-              const result = await auth.revokeOtherSessions();
-              if (result.error) throw new Error(result.error.message);
-              load.reload();
-            }, "Other sessions signed out.")
-          }
-        >
-          Sign out other sessions
-        </button>
       </section>
     </div>
   );
@@ -255,8 +325,9 @@ export function WorkspaceSettings({
   changed: () => void;
 }) {
   const load = useLoad(() => api(ws, ""), [ws]),
-    action = useAction();
-  if (load.error)
+    action = useAction(),
+    draft = useSettingsForm(ws);
+  if (load.error && !load.data)
     return (
       <div className="alert" role="alert">
         {load.error}
@@ -271,13 +342,22 @@ export function WorkspaceSettings({
         The workspace name identifies your team in Navigated Support. Set a
         different public name in Publish → Appearance.
       </p>
+      {load.error && (
+        <div className="alert" role="alert">
+          {load.error}
+          <button onClick={load.reload}>Try again</button>
+        </div>
+      )}
       <Notice action={action} />
       <form
+        ref={draft.ref}
+        onChange={draft.onChange}
         onSubmit={(event) => {
           event.preventDefault();
           const data = new FormData(event.currentTarget);
           void action.run(async () => {
             await api(ws, "/profile", { name: data.get("name") }, "PUT");
+            draft.saved();
             load.reload();
             changed();
           }, "Workspace name saved.");
@@ -286,6 +366,7 @@ export function WorkspaceSettings({
         <Field label="Workspace name">
           <input
             name="name"
+            disabled={action.busy}
             required
             minLength={2}
             maxLength={80}
@@ -302,9 +383,23 @@ export function WorkspaceSettings({
           The address stays the same when you rename the workspace, so existing
           links and widgets keep working.
         </p>
-        <button className="primary" disabled={action.busy}>
-          {action.busy ? "Saving…" : "Save workspace"}
-        </button>
+        <div className="settings-save-actions">
+          <button className="primary" disabled={action.busy || !draft.dirty}>
+            {action.busy ? "Saving…" : "Save workspace"}
+          </button>
+          {draft.dirty && (
+            <>
+              <button
+                type="button"
+                disabled={action.busy}
+                onClick={draft.discard}
+              >
+                Discard changes
+              </button>
+              <span role="status">Unsaved changes</span>
+            </>
+          )}
+        </div>
       </form>
     </section>
   );
@@ -327,6 +422,7 @@ export function SettingsPage({
       ? "profile"
       : "agent",
   );
+  const [visited, setVisited] = useState(() => new Set([tab]));
   return (
     <>
       <div className="page-heading">
@@ -356,19 +452,65 @@ export function SettingsPage({
           <button
             key={key}
             aria-current={key === tab ? "page" : undefined}
-            onClick={() => setTab(key)}
+            onClick={() => {
+              setVisited((previous) => new Set([...previous, key]));
+              setTab(key);
+            }}
           >
             {label}
           </button>
         ))}
       </nav>
-      {tab === "agent" && admin ? (
-        agentSettings
-      ) : tab === "workspace" && admin ? (
-        <WorkspaceSettings ws={ws} changed={changed} />
-      ) : (
-        <ProfileSettings changed={changed} />
+      {admin && visited.has("agent") && (
+        <div
+          key={`agent:${ws}`}
+          className="settings-section"
+          hidden={tab !== "agent"}
+        >
+          {agentSettings}
+        </div>
+      )}
+      {admin && visited.has("workspace") && (
+        <div
+          key={`workspace:${ws}`}
+          className="settings-section"
+          hidden={tab !== "workspace"}
+        >
+          <WorkspaceSettings ws={ws} changed={changed} />
+        </div>
+      )}
+      {visited.has("profile") && (
+        <div className="settings-section" hidden={tab !== "profile"}>
+          <ProfileSettings changed={changed} />
+        </div>
       )}
     </>
   );
+}
+
+function sessionDevice(userAgent?: string) {
+  if (!userAgent) return "Unrecognized device";
+  const browser = /Edg\//.test(userAgent)
+    ? "Edge"
+    : /Firefox\//.test(userAgent)
+      ? "Firefox"
+      : /Chrome\/|CriOS\//.test(userAgent)
+        ? "Chrome"
+        : /Safari\//.test(userAgent)
+          ? "Safari"
+          : "Browser";
+  const system = /iPhone/.test(userAgent)
+    ? "iPhone"
+    : /iPad/.test(userAgent)
+      ? "iPad"
+      : /Android/.test(userAgent)
+        ? "Android"
+        : /Windows/.test(userAgent)
+          ? "Windows"
+          : /Macintosh|Mac OS X/.test(userAgent)
+            ? "macOS"
+            : /Linux/.test(userAgent)
+              ? "Linux"
+              : "unknown device";
+  return `${browser} on ${system}`;
 }

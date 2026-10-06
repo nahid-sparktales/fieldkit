@@ -13,7 +13,11 @@ export function ShadowPage({ ws, role }: { ws: string; role: string }) {
     admin = ["owner", "admin"].includes(role);
   const candidateDraft = useFormDraft(`${ws}:candidate`);
   const [selected, setSelected] = useState(""),
-    [filter, setFilter] = useState("all");
+    [filter, setFilter] = useState("all"),
+    [loadedAt, setLoadedAt] = useState("");
+  useEffect(() => {
+    if (l.data) setLoadedAt(new Date().toLocaleTimeString());
+  }, [l.data]);
   const [launch, setLaunch] = useState(""),
     [rollout, setRollout] = useState("");
   const detail = useLoad(
@@ -54,9 +58,21 @@ export function ShadowPage({ ws, role }: { ws: string; role: string }) {
         <a href={link(ws, "workflow")}>Workflow editor ↗</a>
       </header>
       <Notice action={a} error={l.error || detail.error} />
-      {!l.data && <LoadingState label="Loading experiments…" />}
+      {l.error && (
+        <div className="load-recovery">
+          <p>
+            {l.data
+              ? `Showing results loaded at ${loadedAt}. The latest update failed.`
+              : "Experiments and rollout status could not be loaded. Try again to see their current status."}
+          </p>
+          <button disabled={l.loading} onClick={l.reload}>
+            Try again
+          </button>
+        </div>
+      )}
+      {l.loading && !l.data && <LoadingState label="Loading experiments…" />}
       {admin && (
-        <details className="panel">
+        <details className="panel" hidden={!l.data}>
           <summary>Create an immutable candidate</summary>
           <p>
             Save your workflow draft first. This snapshots the graph,
@@ -139,169 +155,178 @@ export function ShadowPage({ ws, role }: { ws: string; role: string }) {
           </form>
         </details>
       )}
-      <section className="panel">
-        <h2>Candidates</h2>
-        {!l.data?.candidates.length && (
-          <p>No candidates yet. Save a workflow and snapshot it here.</p>
-        )}
-        {l.data?.candidates.map((c: Row) => (
-          <article className="shadow-list-row" key={c.id}>
-            <div>
-              <strong>{c.name}</strong>
-              <p>
-                {c.snapshot.channel} · Immutable v{c.workflow_version} ·{" "}
-                {c.stale
-                  ? "Stale dependencies — create a new candidate"
-                  : "Current dependencies"}
-              </p>
-            </div>
-            {admin && (
-              <button
-                disabled={c.stale || a.busy}
-                onClick={() => setLaunch(launch === c.id ? "" : c.id)}
-              >
-                Configure shadow test
-              </button>
+      {l.data && (
+        <>
+          <section className="panel">
+            <h2>Candidates</h2>
+            {!l.data?.candidates.length && (
+              <p>No candidates yet. Save a workflow and snapshot it here.</p>
             )}
-            {launch === c.id && (
-              <ShadowLaunch
-                ws={ws}
-                candidate={c}
-                onDone={() => {
-                  setLaunch("");
-                  l.reload();
-                }}
-              />
+            {l.data?.candidates.map((c: Row) => (
+              <article className="shadow-list-row" key={c.id}>
+                <div>
+                  <strong>{c.name}</strong>
+                  <p>
+                    {c.snapshot.channel} · Immutable v{c.workflow_version} ·{" "}
+                    {c.stale
+                      ? "Stale dependencies — create a new candidate"
+                      : "Current dependencies"}
+                  </p>
+                </div>
+                {admin && (
+                  <button
+                    disabled={c.stale || a.busy}
+                    onClick={() => setLaunch(launch === c.id ? "" : c.id)}
+                  >
+                    Configure shadow test
+                  </button>
+                )}
+                {launch === c.id && (
+                  <ShadowLaunch
+                    ws={ws}
+                    candidate={c}
+                    onDone={() => {
+                      setLaunch("");
+                      l.reload();
+                    }}
+                  />
+                )}
+              </article>
+            ))}
+          </section>
+          <section className="panel">
+            <h2>Shadow experiments</h2>
+            {!l.data?.experiments.length && (
+              <p>
+                Sampling is off. Starting an experiment requires an explicit
+                token budget.
+              </p>
             )}
-          </article>
-        ))}
-      </section>
-      <section className="panel">
-        <h2>Shadow experiments</h2>
-        {!l.data?.experiments.length && (
-          <p>
-            Sampling is off. Starting an experiment requires an explicit token
-            budget.
-          </p>
-        )}
-        {l.data?.experiments.map((e: Row) => (
-          <article className="shadow-list-row" key={e.id}>
-            <div>
-              <strong>{e.name}</strong>
-              <p>
-                {words(e.status)} · {e.config.samplePercent}% sample · Ends{" "}
-                {new Date(e.ends_at).toLocaleString()}
-              </p>
-              <p>
-                {Object.entries(e.counts ?? {})
-                  .map(([state, count]) => `${count} ${words(state)}`)
-                  .join(" · ") || "No new traffic yet"}
-              </p>
-              <small>
-                {e.tokens} reported tokens · {e.reserved} unresolved
-                reservations{e.reason ? ` · ${e.reason}` : ""}
-              </small>
-            </div>
-            <div className="quality-actions">
-              <button
-                aria-pressed={selected === e.id}
-                onClick={() => setSelected(e.id)}
-              >
-                Inspect comparisons
-              </button>
-              {admin && e.status === "active" && (
-                <button
-                  className="danger-button"
-                  disabled={a.busy}
-                  onClick={() => control(e.id)}
-                >
-                  Stop shadow test
-                </button>
+            {l.data?.experiments.map((e: Row) => (
+              <article className="shadow-list-row" key={e.id}>
+                <div>
+                  <strong>{e.name}</strong>
+                  <p>
+                    {words(e.status)} · {e.config.samplePercent}% sample · Ends{" "}
+                    {new Date(e.ends_at).toLocaleString()}
+                  </p>
+                  <p>
+                    {Object.entries(e.counts ?? {})
+                      .map(([state, count]) => `${count} ${words(state)}`)
+                      .join(" · ") || "No new traffic yet"}
+                  </p>
+                  <small>
+                    {e.tokens} reported tokens · {e.reserved} unresolved
+                    reservations{e.reason ? ` · ${e.reason}` : ""}
+                  </small>
+                </div>
+                <div className="quality-actions">
+                  <button
+                    aria-pressed={selected === e.id}
+                    onClick={() => setSelected(e.id)}
+                  >
+                    Inspect comparisons
+                  </button>
+                  {admin && e.status === "active" && (
+                    <button
+                      className="danger-button"
+                      disabled={a.busy}
+                      onClick={() => control(e.id)}
+                    >
+                      Stop shadow test
+                    </button>
+                  )}
+                  {admin && (
+                    <button
+                      onClick={() => setRollout(rollout === e.id ? "" : e.id)}
+                    >
+                      Review live rollout
+                    </button>
+                  )}
+                </div>
+                {rollout === e.id && (
+                  <CanaryLaunch
+                    ws={ws}
+                    experiment={e}
+                    onDone={() => {
+                      setRollout("");
+                      l.reload();
+                    }}
+                  />
+                )}
+              </article>
+            ))}
+          </section>
+          {detail.data && (
+            <section className="panel" aria-label="Shadow comparisons">
+              <h2>Comparisons</h2>
+              <p>{detail.data.interpretation}</p>
+              {detail.data.stale && (
+                <p className="error">
+                  Dependencies changed. Outputs are hidden and this evidence
+                  cannot authorize rollout.
+                </p>
               )}
-              {admin && (
-                <button
-                  onClick={() => setRollout(rollout === e.id ? "" : e.id)}
+              <Field label="Comparison status">
+                <select
+                  value={filter}
+                  onChange={(e) => setFilter(e.target.value)}
                 >
-                  Review live rollout
-                </button>
-              )}
-            </div>
-            {rollout === e.id && (
-              <CanaryLaunch
-                ws={ws}
-                experiment={e}
-                onDone={() => {
-                  setRollout("");
-                  l.reload();
-                }}
-              />
-            )}
-          </article>
-        ))}
-      </section>
-      {detail.data && (
-        <section className="panel" aria-label="Shadow comparisons">
-          <h2>Comparisons</h2>
-          <p>{detail.data.interpretation}</p>
-          {detail.data.stale && (
-            <p className="error">
-              Dependencies changed. Outputs are hidden and this evidence cannot
-              authorize rollout.
-            </p>
+                  {[
+                    "all",
+                    "completed",
+                    "blocked_missing_fixture",
+                    "blocked",
+                    "failed",
+                    "uncertain",
+                    "canceled",
+                    "excluded",
+                    "missing_baseline",
+                    "queued",
+                    "waiting_baseline",
+                    "budget_exhausted",
+                  ].map((v) => (
+                    <option key={v} value={v}>
+                      {words(v)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              {detail.data.results
+                .filter((r: Row) => filter === "all" || r.status === filter)
+                .map((r: Row) => (
+                  <Comparison
+                    key={r.id}
+                    ws={ws}
+                    result={r}
+                    admin={admin}
+                    reload={() => reload.current()}
+                  />
+                ))}
+            </section>
           )}
-          <Field label="Comparison status">
-            <select value={filter} onChange={(e) => setFilter(e.target.value)}>
-              {[
-                "all",
-                "completed",
-                "blocked_missing_fixture",
-                "blocked",
-                "failed",
-                "uncertain",
-                "canceled",
-                "excluded",
-                "missing_baseline",
-                "queued",
-                "waiting_baseline",
-                "budget_exhausted",
-              ].map((v) => (
-                <option key={v} value={v}>
-                  {words(v)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {detail.data.results
-            .filter((r: Row) => filter === "all" || r.status === filter)
-            .map((r: Row) => (
-              <Comparison
+          <section className="panel">
+            <h2>Live rollouts</h2>
+            <p>
+              Only new eligible conversations are sampled. Existing assignments
+              keep their version. The kill switch revokes unsent candidate work;
+              requests already sent retain their original reconciliation rules.
+            </p>
+            {!l.data?.rollouts.length && (
+              <p>No live rollout has been enabled.</p>
+            )}
+            {l.data?.rollouts.map((r: Row) => (
+              <LiveRollout
                 key={r.id}
                 ws={ws}
-                result={r}
+                row={r}
                 admin={admin}
-                reload={() => reload.current()}
+                reload={l.reload}
               />
             ))}
-        </section>
+          </section>
+        </>
       )}
-      <section className="panel">
-        <h2>Live rollouts</h2>
-        <p>
-          Only new eligible conversations are sampled. Existing assignments keep
-          their version. The kill switch revokes unsent candidate work; requests
-          already sent retain their original reconciliation rules.
-        </p>
-        {!l.data?.rollouts.length && <p>No live rollout has been enabled.</p>}
-        {l.data?.rollouts.map((r: Row) => (
-          <LiveRollout
-            key={r.id}
-            ws={ws}
-            row={r}
-            admin={admin}
-            reload={l.reload}
-          />
-        ))}
-      </section>
     </div>
   );
 }

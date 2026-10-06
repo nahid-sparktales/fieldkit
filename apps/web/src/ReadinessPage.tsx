@@ -18,6 +18,44 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
       parameters: "{}",
     });
   const admin = role === "owner" || role === "admin";
+  const [compact, setCompact] = useState(
+    () => matchMedia("(max-width: 1050px)").matches,
+  );
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const detailTrigger = useRef<HTMLElement | null>(null);
+  const listScroll = useRef(0);
+  useEffect(() => {
+    const query = matchMedia("(max-width: 1050px)");
+    const change = () => setCompact(query.matches);
+    query.addEventListener("change", change);
+    return () => query.removeEventListener("change", change);
+  }, []);
+  useEffect(() => {
+    if (!selected || !compact) return;
+    const frame = requestAnimationFrame(() => {
+      detailHeading.current?.focus({ preventScroll: true });
+      detailHeading.current
+        ?.closest("section")
+        ?.scrollIntoView({ block: "start" });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selected, compact]);
+  const inspect = (id: string, trigger: HTMLElement) => {
+    detailTrigger.current = trigger;
+    listScroll.current = window.scrollY;
+    setSelected(id);
+    setAck(false);
+    a.setError("");
+    a.setSuccess("");
+  };
+  const backToChecks = () => {
+    setSelected("");
+    setAck(false);
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: listScroll.current });
+      detailTrigger.current?.focus({ preventScroll: true });
+    });
+  };
   const h = useLoad(
     () =>
       selected
@@ -70,7 +108,9 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
       setAck(false);
     }, "Checks queued. Results will appear here; this does not publish or enable anything.");
   return (
-    <div className="quality-page readiness-page">
+    <div
+      className={`quality-page readiness-page ${selected ? "has-selection" : ""}`}
+    >
       <header>
         <span className="eyebrow">OPERATIONAL EVIDENCE</span>
         <h1>Readiness</h1>
@@ -124,7 +164,7 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
       )}
       {l.data && (
         <>
-          <section className="panel">
+          <section className="panel readiness-overview">
             <h2>
               {l.data.blockers.length
                 ? `${l.data.blockers.length} required checks need attention`
@@ -149,10 +189,8 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
                     <li key={ch.id}>
                       <button
                         className="text-button"
-                        onClick={() => {
-                          setSelected(ch.id);
-                          setAck(false);
-                        }}
+                        aria-controls="readiness-diagnostic-details"
+                        onClick={(event) => inspect(ch.id, event.currentTarget)}
                       >
                         {ch.title}
                       </button>{" "}
@@ -220,12 +258,8 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
                   </p>
                   <button
                     aria-expanded={selected === ch.id}
-                    onClick={() => {
-                      setSelected(ch.id);
-                      setAck(false);
-                      a.setError("");
-                      a.setSuccess("");
-                    }}
+                    aria-controls="readiness-diagnostic-details"
+                    onClick={(event) => inspect(ch.id, event.currentTarget)}
                   >
                     Evidence and testing
                   </button>
@@ -234,11 +268,17 @@ export function ReadinessPage({ ws, role }: { ws: string; role: string }) {
             </div>
             <section
               className="panel readiness-details"
+              id="readiness-diagnostic-details"
               aria-label="Diagnostic details"
             >
               {chosen ? (
                 <>
-                  <h2>{chosen.title}</h2>
+                  <button className="readiness-back" onClick={backToChecks}>
+                    ← Back to checks
+                  </button>
+                  <h2 ref={detailHeading} tabIndex={-1}>
+                    {chosen.title}
+                  </h2>
                   <p>{chosen.operation}</p>
                   <p>
                     <strong>Environment:</strong> {chosen.environment}

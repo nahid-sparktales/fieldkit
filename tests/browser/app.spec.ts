@@ -4,6 +4,10 @@ import { verifyCustomers } from "./customers-journey.js";
 import { verifyGuidedWorkflow } from "./guided-workflow-journey.js";
 import { verifyInbox } from "./inbox-journey.js";
 import { verifyOperationalControls } from "./operations-journey.js";
+import { verifyAdminAudit } from "./admin-audit-journey.js";
+import { verifyBuilderAudit } from "./builder-audit-journey.js";
+import { verifyContentWorkspace } from "./content-audit-journey.js";
+import { verifyOperationsAudit } from "./operations-audit-journey.js";
 import { readFile } from "node:fs/promises";
 import {
   customizeHelpCenter,
@@ -15,7 +19,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   page,
   browser,
 }) => {
-  test.setTimeout(180000);
+  test.setTimeout(300000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.exposeFunction("recordPolicyViolation", (directive: string) =>
@@ -278,6 +282,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     fullPage: true,
   });
   await page.getByRole("button", { name: "FAQs", exact: true }).click();
+  await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
   await page
     .getByRole("textbox", { name: "FAQ question", exact: true })
     .fill("How do I reach support?");
@@ -317,6 +322,10 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(faq.getByRole("button", { name: "Unpublish FAQ" })).toHaveCount(
     0,
   );
+  await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Generate drafts", exact: true })
+    .click();
   await page
     .getByRole("button", { name: "Generate FAQs", exact: true })
     .click();
@@ -332,6 +341,13 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/faqs.png", fullPage: true });
+  await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Generate drafts", exact: true })
+    .click();
+  await page
+    .getByLabel("Generation scope", { exact: true })
+    .selectOption("library");
   await page.locator(".faq-generation > summary").click();
   await page
     .getByRole("button", { name: "Review all documents and create FAQs" })
@@ -339,6 +355,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(
     page.locator(".faq-review").getByText("completed", { exact: true }),
   ).toBeVisible({ timeout: 20000 });
+  await page.getByRole("button", { name: "← All FAQs", exact: true }).click();
   await expect(
     page.getByRole("heading", {
       name: "What should I know about returns.txt?",
@@ -346,6 +363,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     }),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/faq-agent.png", fullPage: true });
+  await page.getByRole("button", { name: "Create FAQ", exact: true }).click();
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(
     page.getByRole("button", { name: "Save draft", exact: true }),
@@ -458,6 +476,14 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await editor.getByRole("button", { name: "Reset zoom to 100%" }).click();
   await expect(editor.getByLabel("Zoom level")).toHaveText("100%");
   await editor.getByRole("button", { name: "Zoom out", exact: true }).click();
+  await expect(
+    editor.getByRole("button", {
+      name: "Connect Agent decision answer",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await expect(editor.getByText(/Overview: use Step settings/)).toBeVisible();
+  await editor.getByRole("button", { name: "Reset zoom to 100%" }).click();
   await editor
     .getByRole("button", { name: "Connect Agent decision answer", exact: true })
     .click();
@@ -469,7 +495,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await page.keyboard.press("Escape");
   await expect(editor).toHaveCount(0);
   await expect(expandEditor).toBeFocused();
-  await expect(page.getByLabel("Zoom level")).toHaveText("90%");
+  await expect(page.getByLabel("Zoom level")).toHaveText("100%");
   await expect(page.getByLabel("Step instructions")).toHaveValue(
     "Keep the answer to two clear sentences.",
   );
@@ -524,6 +550,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     .getByLabel("Route found", { exact: true })
     .selectOption(conditionId);
   // Both outcome buttons and inspector dropdowns operate on the actual graph.
+  await page.getByRole("button", { name: "Reset zoom to 100%" }).click();
   await page
     .getByRole("button", {
       name: "Connect Search knowledge empty",
@@ -628,12 +655,29 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(page.getByText("Workspace settings saved.")).toBeVisible();
   await customizeHelpCenter(page);
   await page.getByRole("button", { name: "Publish", exact: true }).click();
-  const portal = page.locator("section.panel").filter({
-    has: page.getByRole("heading", { name: "Support portal", exact: true }),
+  await page
+    .getByRole("button", { name: "Manage Support portal", exact: true })
+    .click();
+  const portal = page.getByRole("region", {
+    name: "Support portal settings",
+    exact: true,
   });
   await portal.getByLabel("Publish this channel").check();
   await portal.getByRole("button", { name: "Save channel" }).click();
-  await expect(portal.getByText("published", { exact: true })).toBeVisible();
+  await expect(
+    portal.getByText("Channel settings saved.", { exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "← All channels", exact: true })
+    .click();
+  await expect(
+    page
+      .locator(".content-channel-row")
+      .filter({
+        has: page.getByRole("heading", { name: "Support portal", exact: true }),
+      })
+      .getByText("published", { exact: true }),
+  ).toBeVisible();
   const customerContext = await browser.newContext(),
     customer = await customerContext.newPage();
   await verifyBrandedWidget(page, customer);
@@ -709,7 +753,6 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     fullPage: true,
   });
   await page.getByRole("button", { name: "Inbox", exact: true }).click();
-  await page.getByLabel("Group inbox by").selectOption("conversation");
   await page
     .getByRole("region", { name: "Conversation queue" })
     .getByRole("button", { name: /What is your return policy/ })
@@ -746,10 +789,12 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     customer.getByRole("button", { name: "Send feedback", exact: true }),
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Reopen", exact: true }).click();
+  await page.locator(".ticket-management > summary").click();
   await page.getByRole("button", { name: "Take over", exact: true }).click();
   await expect(
     page.getByText("Agent paused · your team is in control", { exact: true }),
   ).toBeVisible();
+  await page.locator(".ticket-management > summary").click();
   await page
     .getByLabel("Reply", { exact: true })
     .fill("I’m here to help with your return.");
@@ -771,9 +816,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await assistant
     .getByRole("button", { name: "Apply triage", exact: true })
     .click();
+  await page.locator(".ticket-management > summary").click();
   await expect(
     page.getByText("Priority: high · returns", { exact: true }),
   ).toBeVisible();
+  await page.locator(".ticket-management > summary").click();
   await assistant
     .getByRole("button", { name: "Research across all sources", exact: true })
     .click();
@@ -1072,6 +1119,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await expect(page.locator(".quality-page [role=alert]").first()).toHaveText(
     "",
   );
+  await page.getByRole("button", { name: "Run setup", exact: true }).click();
   await page.getByLabel("Compare two variants").check();
   await page
     .getByRole("button", { name: "Launch test run", exact: true })
@@ -1221,6 +1269,12 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
     customer,
     new URL(page.url()).searchParams.get("workspace")!,
   );
+  const auditWorkspace = new URL(page.url()).searchParams.get("workspace")!;
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await verifyContentWorkspace(page);
+  await verifyBuilderAudit(page);
+  await verifyOperationsAudit(page, auditWorkspace);
+  await verifyAdminAudit(page, auditWorkspace);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(errors).toEqual([]);
   await customerContext.close();

@@ -1,10 +1,19 @@
 import type { MouseEvent } from "react";
 import { inboxState, inboxStates, inboxTime } from "./inbox-state.js";
 import type { Row } from "./quality-ui.js";
+import { confirmDiscardChanges } from "./unsaved-changes.js";
 
+export function replaceCurrentRoute(path: string) {
+  history.replaceState({}, "", path);
+  // Selection updates the URL without remounting the current editor.
+  window.dispatchEvent(new Event("app-route-replaced"));
+}
 export function navigate(path: string) {
+  if (!confirmDiscardChanges()) return;
   history.pushState({}, "", path);
-  window.dispatchEvent(new PopStateEvent("popstate"));
+  window.dispatchEvent(
+    new PopStateEvent("popstate", { state: { approvedNavigation: true } }),
+  );
   window.scrollTo({ top: 0 });
 }
 export function appLink(event: MouseEvent<HTMLAnchorElement>) {
@@ -31,6 +40,12 @@ export function channelLabel(c: Row) {
     : c.external_id || c.channel_kind === "zendesk"
       ? "Ticket · Zendesk"
       : "Ticket";
+}
+export function assigneeLabel(c: Row, members: Row[] = []) {
+  return c.assigned_to
+    ? (members.find((member) => member.user_id === c.assigned_to)?.name ??
+        "Assigned teammate")
+    : "Unassigned";
 }
 export function CustomerStatus({ c }: { c: Row }) {
   const state =
@@ -84,12 +99,14 @@ export function ConversationCard({
   draft,
   onSelect,
   compact = false,
+  members = [],
 }: {
   c: Row;
   selected: string;
   draft?: string;
   onSelect: (c: Row) => void;
   compact?: boolean;
+  members?: Row[];
 }) {
   return (
     <button
@@ -131,6 +148,12 @@ export function ConversationCard({
         )}
       </p>
       <div className="conversation-labels">
+        <span
+          className="conversation-owner"
+          title={`Assigned to: ${assigneeLabel(c, members)}`}
+        >
+          {assigneeLabel(c, members)}
+        </span>
         <CustomerStatus c={c} />
         {c.sla && (
           <span

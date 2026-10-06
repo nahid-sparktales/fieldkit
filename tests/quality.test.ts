@@ -928,6 +928,42 @@ test("analytics uses explicit denominators and delivered reply times, with histo
   assert.equal(metrics.satisfaction[0].rated, 1);
   assert.equal(metrics.satisfaction[0].unrated, 3);
 });
+test("analytics compares adjacent periods and aggregates the full UTC cohort", async () => {
+  const w = await setup(),
+    current = await answer(w),
+    previous = await answer(w);
+  const start =
+    Date.parse(new Date().toISOString().slice(0, 10)) - 7 * 86400000;
+  const from = new Date(start).toISOString(),
+    to = new Date(start + 8 * 86400000).toISOString();
+  await app.db.pool.query(
+    "UPDATE conversations SET created_at=$2 WHERE id=$1",
+    [current.c.id, new Date(start + 86400000).toISOString()],
+  );
+  await app.db.pool.query(
+    "UPDATE conversations SET created_at=$2 WHERE id=$1",
+    [previous.c.id, new Date(start - 86400000).toISOString()],
+  );
+  const metrics = await app.quality.analytics(w.owner, { from, to });
+  assert.equal(metrics.totals!.conversations, 1);
+  assert.equal(metrics.comparison.totals!.conversations, 1);
+  assert.equal(metrics.comparison.to, from);
+  assert.equal(
+    Date.parse(from) - Date.parse(metrics.comparison.from),
+    Date.parse(to) - Date.parse(from),
+  );
+  assert.deepEqual(metrics.trend, [
+    {
+      day: new Date(start + 86400000).toISOString().slice(0, 10),
+      conversations: 1,
+    },
+  ]);
+  assert.deepEqual(
+    metrics.conversations.map((c) => c.id),
+    [current.c.id],
+  );
+  assert.equal(typeof metrics.conversations[0].ai_only, "boolean");
+});
 test("gap evidence retains the original question, source changes permit reanalysis, and nightly scheduling is opt-in", async () => {
   const w = await setup(),
     { c } = await answer(w),

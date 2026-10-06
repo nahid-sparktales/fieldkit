@@ -41,7 +41,12 @@ const CustomerProfile = React.lazy(() =>
 const CustomersPage = React.lazy(() =>
   import("./CustomersPage.js").then((m) => ({ default: m.CustomersPage })),
 );
-import { appLink } from "./customer-ui.js";
+import { appLink, assigneeLabel, replaceCurrentRoute } from "./customer-ui.js";
+import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
+import { useSettingsForm } from "./settings-form.js";
+import { ActivityPage } from "./ActivityPage.js";
+import { ActionsPage } from "./ActionsPage.js";
+import "./admin-workspace.css";
 import { SupportOptions } from "./SupportOptions.js";
 import { TicketEmailSettings } from "./TicketEmailSettings.js";
 import { request, api, useLoad } from "./request.js";
@@ -78,6 +83,7 @@ import "./refinements.css";
 import "./inbox.css";
 import "./customers.css";
 import "./inbox-layout.css";
+import "./content-workspace.css";
 import {
   inboxStates,
   inboxState,
@@ -111,6 +117,8 @@ function Logo() {
 function Icon({ name }: { name: string }) {
   const paths: Record<string, string> = {
     Setup: "M4 12l5 5L20 6",
+    Refresh:
+      "M20 7v5h-5 M4 17v-5h5 M6 7a7 7 0 0112-1l2 3 M4 15l2 3a7 7 0 0012-1",
     Inbox: "M3 4h18v16H3z M3 13h5l2 3h4l2-3h5",
     Workflow: "M3 3h6v6H3z M15 15h6v6h-6z M15 3h6v6h-6z M9 6h6 M6 9v9h9",
     Knowledge:
@@ -489,6 +497,10 @@ function App() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [inboxDrafts]);
+  const currentRoute = useRef(location.href);
+  useEffect(() => {
+    currentRoute.current = location.href;
+  }, [ws, view, routeRevision]);
   const sidebar = useRef<HTMLElement>(null),
     toggle = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -498,7 +510,12 @@ function App() {
       setMenu(false);
     };
     media.addEventListener("change", change);
-    const back = () => {
+    const back = (event: PopStateEvent) => {
+      if (!event.state?.approvedNavigation && !confirmDiscardChanges()) {
+        history.pushState({}, "", currentRoute.current);
+        return;
+      }
+      currentRoute.current = location.href;
       const params = new URLSearchParams(location.search);
       const target = params.get("workspace");
       if (target) setWs(target);
@@ -509,9 +526,14 @@ function App() {
       setRouteRevision((v) => v + 1);
     };
     window.addEventListener("popstate", back);
+    const rememberRoute = () => {
+      currentRoute.current = location.href;
+    };
+    window.addEventListener("app-route-replaced", rememberRoute);
     return () => {
       media.removeEventListener("change", change);
       window.removeEventListener("popstate", back);
+      window.removeEventListener("app-route-replaced", rememberRoute);
     };
   }, []);
   useEffect(() => {
@@ -598,6 +620,11 @@ function App() {
   const activeView =
     role === "agent" && !staffSections.includes(view) ? "Inbox" : view;
   const go = (v: string, tab?: string) => {
+    if (v === view && !tab) {
+      setMenu(false);
+      return;
+    }
+    if (!confirmDiscardChanges()) return;
     setView(v);
     setMenu(false);
     if (v !== view || tab)
@@ -647,6 +674,7 @@ function App() {
             aria-label="Workspace"
             value={ws}
             onChange={(e) => {
+              if (!confirmDiscardChanges()) return;
               setWs(e.target.value);
               setMenu(false);
               history.pushState(
@@ -710,6 +738,7 @@ function App() {
               title="Sign out"
               aria-label="Sign out"
               onClick={() => {
+                if (!confirmDiscardChanges()) return;
                 setMenu(false);
                 void auth.signOut().then(() => refresh());
               }}
@@ -804,7 +833,12 @@ function App() {
                 owner={role === "owner"}
               />
             ) : activeView === "Team" ? (
-              <TeamPage ws={ws} />
+              <TeamPage
+                ws={ws}
+                owner={role === "owner"}
+                userId={session.user.id}
+                workspaceName={workspace.name}
+              />
             ) : activeView === "Settings" ? (
               <SettingsPage
                 ws={ws}
@@ -1094,7 +1128,6 @@ function Inbox({
   const [summary, setSummary] = useState<Row>();
   const [showDetail, setShowDetail] = useState(Boolean(selected)),
     [wide, setWide] = useState(false),
-    [conversationSize, setConversationSize] = useState(70),
     [version, setVersion] = useState(0);
   const listRef = useRef<HTMLElement>(null);
   const members = useLoad(() => api(ws, "/members"), [ws]);
@@ -1102,7 +1135,7 @@ function Inbox({
   const back = () => {
     setShowDetail(false);
     setWide(false);
-    history.replaceState({}, "", `/?workspace=${ws}&view=inbox`);
+    replaceCurrentRoute(`/?workspace=${ws}&view=inbox`);
     requestAnimationFrame(() =>
       listRef.current
         ?.querySelector<HTMLElement>('[aria-current="true"]')
@@ -1111,32 +1144,13 @@ function Inbox({
   };
   return (
     <div
-      className={`inbox-workspace inbox-stacked ${selected ? "has-selection" : "no-selection"} ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
-      style={
-        {
-          "--viewer-scale": conversationSize / 100,
-        } as React.CSSProperties
-      }
+      className={`inbox-workspace inbox-split ${selected ? "has-selection" : "no-selection"} ${showDetail ? "show-detail" : "show-queue"} ${wide ? "wide-conversation" : ""}`}
     >
       <header className="inbox-heading">
         <div>
           <h1>Inbox</h1>
-          <p>Read and reply above. Find the next conversation below.</p>
         </div>
         <div className="inbox-view-controls">
-          {selected && !wide && (
-            <label className="inbox-size-control">
-              <span>Conversation size</span>
-              <input
-                type="range"
-                min="50"
-                max="80"
-                step="5"
-                value={conversationSize}
-                onChange={(e) => setConversationSize(Number(e.target.value))}
-              />
-            </label>
-          )}
           <button
             disabled={!selected}
             className="queue-width-toggle"
@@ -1146,11 +1160,33 @@ function Inbox({
             {wide ? "Show conversation list" : "Expand conversation"}
           </button>
           <button onClick={refresh} aria-label="Refresh inbox">
-            ↻ Refresh
+            <Icon name="Refresh" /> Refresh
           </button>
         </div>
       </header>
       <div className="inbox">
+        <section
+          className="conversation-list"
+          aria-label="Conversation queue"
+          ref={listRef}
+        >
+          <InboxQueue
+            ws={ws}
+            selected={selected}
+            members={members.data?.members ?? []}
+            drafts={drafts}
+            version={version}
+            onSelect={(c) => {
+              if (c.id !== selected && !confirmDiscardChanges()) return;
+              setSelected(c.id);
+              setSummary(c);
+              setShowDetail(true);
+              replaceCurrentRoute(
+                `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
+              );
+            }}
+          />
+        </section>
         {selected ? (
           <InboxConversation
             key={selected}
@@ -1184,41 +1220,11 @@ function Inbox({
           />
         ) : (
           <section className="conversation-detail">
-            <Empty title="Choose a customer or conversation">
-              Expand a customer to see their tickets and chats, or switch Group
-              by to Conversation.
+            <Empty title="Ready for the next conversation">
+              Choose a conversation from the list to read its history and reply.
             </Empty>
           </section>
         )}
-        <section
-          className="conversation-list"
-          aria-label="Conversation queue"
-          ref={listRef}
-        >
-          <InboxQueue
-            ws={ws}
-            selected={selected}
-            members={members.data?.members ?? []}
-            drafts={drafts}
-            version={version}
-            onSelect={(c) => {
-              setSelected(c.id);
-              setSummary(c);
-              setShowDetail(true);
-              requestAnimationFrame(() =>
-                listRef.current?.previousElementSibling?.scrollIntoView({
-                  block: "start",
-                  behavior: "instant",
-                }),
-              );
-              history.replaceState(
-                {},
-                "",
-                `/?workspace=${ws}&view=inbox&conversation=${c.id}`,
-              );
-            }}
-          />
-        </section>
       </div>
     </div>
   );
@@ -1396,63 +1402,17 @@ function InboxConversation({
           {conv.status === "resolved" ? "Reopen" : "✓ Resolve"}
         </button>
       </header>
-      <div className="conversation-controls">
-        <InboxReadControl
-          ws={ws}
-          id={id}
-          state={detail.data.read_state}
-          active={showDetail && tab === "conversation"}
-          onChange={reloadQueue}
-        />
+      <div className="ticket-status-line">
+        <span className="conversation-owner">
+          Assigned to: {assigneeLabel(conv, members)}
+        </span>
         <InboxStatus
           conversation={{
             ...conv,
             approval_expires_at: pending[0]?.expires_at ?? null,
           }}
         />
-        <label className="assignment-control">
-          <span>Assigned to</span>
-          <select
-            aria-label="Assign conversation"
-            disabled={a.busy || !members.length}
-            value={conv.assigned_to ?? ""}
-            onChange={(e) =>
-              void control(
-                { assignedTo: e.target.value || null },
-                "Assignment updated.",
-              )
-            }
-          >
-            <option value="">Unassigned</option>
-            {members.map((m) => (
-              <option key={m.user_id} value={m.user_id}>
-                {m.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        {conv.status !== "resolved" && (
-          <button
-            disabled={a.busy}
-            onClick={() =>
-              void control(
-                { mode: conv.mode === "agent" ? "human" : "agent" },
-                conv.mode === "agent"
-                  ? "You’re in control. Automatic replies and actions are paused."
-                  : "Agent resumed.",
-              )
-            }
-          >
-            {conv.mode === "agent" ? "Take over" : "Resume agent"}
-          </button>
-        )}
-      </div>
-      <div className="ticket-context">
-        <span className={`ticket-priority ${statusTone(conv.priority)}`}>
-          Priority: {conv.priority}
-          {conv.category ? ` · ${conv.category}` : ""}
-        </span>
-        <span>
+        <span className="agent-state">
           {conv.status === "resolved"
             ? "Conversation closed"
             : conv.mode === "human"
@@ -1464,18 +1424,73 @@ function InboxConversation({
                   : "Agent can reply automatically"}
         </span>
       </div>
-      {!!feedback.length && (
-        <button
-          className={`customer-feedback-summary ${feedback[0].resolved === false || feedback[0].rating === "bad" ? "negative" : ""}`}
-          onClick={() => setTab("feedback")}
-        >
-          <span>
-            Customer feedback: <strong>{feedbackLabel(feedback[0])}</strong>
-            {feedback[0].rating ? ` · ${feedback[0].rating} experience` : ""}
+      <details className="ticket-management">
+        <summary>Manage conversation</summary>
+        <div className="conversation-controls">
+          <InboxReadControl
+            ws={ws}
+            id={id}
+            state={detail.data.read_state}
+            active={showDetail && tab === "conversation"}
+            onChange={reloadQueue}
+          />
+          <label className="assignment-control">
+            <span>Assigned to</span>
+            <select
+              aria-label="Assign conversation"
+              disabled={a.busy || !members.length}
+              value={conv.assigned_to ?? ""}
+              onChange={(e) =>
+                void control(
+                  { assignedTo: e.target.value || null },
+                  "Assignment updated.",
+                )
+              }
+            >
+              <option value="">Unassigned</option>
+              {members.map((m) => (
+                <option key={m.user_id} value={m.user_id}>
+                  {m.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {conv.status !== "resolved" && (
+            <button
+              disabled={a.busy}
+              onClick={() =>
+                void control(
+                  { mode: conv.mode === "agent" ? "human" : "agent" },
+                  conv.mode === "agent"
+                    ? "You’re in control. Automatic replies and actions are paused."
+                    : "Agent resumed.",
+                )
+              }
+            >
+              {conv.mode === "agent" ? "Take over" : "Resume agent"}
+            </button>
+          )}
+        </div>
+        <div className="ticket-context">
+          <span className={`ticket-priority ${statusTone(conv.priority)}`}>
+            Priority: {conv.priority}
+            {conv.category ? ` · ${conv.category}` : ""}
           </span>
-          <span>View feedback →</span>
-        </button>
-      )}
+        </div>
+      </details>
+      {!!feedback.length &&
+        (feedback[0].resolved === false || feedback[0].rating === "bad") && (
+          <button
+            className={`customer-feedback-summary ${feedback[0].resolved === false || feedback[0].rating === "bad" ? "negative" : ""}`}
+            onClick={() => setTab("feedback")}
+          >
+            <span>
+              Customer feedback: <strong>{feedbackLabel(feedback[0])}</strong>
+              {feedback[0].rating ? ` · ${feedback[0].rating} experience` : ""}
+            </span>
+            <span>View feedback →</span>
+          </button>
+        )}
       <Alert>{a.error || membersError || detail.error}</Alert>
       {a.success && (
         <p className="inbox-feedback" role="status">
@@ -1516,7 +1531,11 @@ function InboxConversation({
             tabIndex={tab === value ? 0 : -1}
             onClick={() => setTab(value)}
           >
-            {label}
+            {value === "assistant"
+              ? "Assistant"
+              : value === "activity"
+                ? "Activity"
+                : label}
             {count > 0 && (
               <span className="tab-count" aria-hidden="true">
                 {count}
@@ -2470,424 +2489,434 @@ function KnowledgePage({
           Gaps
         </button>
       </nav>
-      {section === "gaps" ? (
-        <KnowledgeGapsPage ws={ws} admin={admin} owner={owner} />
-      ) : section === "faqs" ? (
+      <div hidden={section !== "gaps"}>
+        {section === "gaps" && (
+          <KnowledgeGapsPage ws={ws} admin={admin} owner={owner} />
+        )}
+      </div>
+      <div hidden={section !== "faqs"}>
         <FaqPage key={ws} ws={ws} admin={admin} />
-      ) : (
-        <>
-          <input
-            ref={upload}
-            hidden
-            type="file"
-            accept=".pdf,.docx,.md,.txt"
-            multiple
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              if (!files.length) return;
-              void a.run(async () => {
-                for (const file of files) {
-                  const data = new FormData();
-                  data.append("file", file);
-                  await api(ws, "/sources/upload", data);
-                }
-                l.reload();
-              }, "Files queued for ingestion.");
-            }}
-          />
-          <Alert>{l.error || a.error}</Alert>
-          {a.success && (
-            <p className="success" role="status">
-              {a.success}
-            </p>
-          )}
-          <div className="knowledge-banner">
-            <Icon name="Knowledge" />
+      </div>
+      <div hidden={section !== "sources"}>
+        <input
+          ref={upload}
+          hidden
+          type="file"
+          accept=".pdf,.docx,.md,.txt"
+          multiple
+          onChange={(e) => {
+            const files = Array.from(e.target.files ?? []);
+            e.target.value = "";
+            if (!files.length) return;
+            void a.run(async () => {
+              for (const file of files) {
+                const data = new FormData();
+                data.append("file", file);
+                await api(ws, "/sources/upload", data);
+              }
+              l.reload();
+            }, "Files queued for ingestion.");
+          }}
+        />
+        <Alert>{l.error || a.error}</Alert>
+        {l.error && (
+          <div className="content-load-recovery">
             <p>
-              <strong>Private until you say otherwise.</strong> Imported
-              documents start as staff-only knowledge. Approving customer
-              answers and publishing an article are separate choices.
+              {l.data
+                ? "Showing the last loaded knowledge. Its status may have changed."
+                : "Your knowledge could not be loaded. Try again to check your saved sources."}
             </p>
+            <button onClick={l.reload} disabled={l.loading}>
+              Try loading knowledge again
+            </button>
           </div>
-          {admin && adding && (
-            <section className="panel source-import" id="source-import">
-              <h2>Connect a knowledge source</h2>
-              <form
-                className="source-form"
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const form = e.currentTarget;
-                  const d = new FormData(form);
-                  void a.run(async () => {
-                    await api(ws, "/sources", {
-                      kind: kind === "site" ? "website" : kind,
-                      scope: kind === "site" ? "site" : "page",
-                      title: d.get("title"),
-                      locator: d.get("locator"),
-                    });
-                    form.reset();
-                    setAdding(false);
-                    l.reload();
-                  }, "Source added. Indexing will continue in the background.");
-                }}
+        )}
+        {a.success && (
+          <p className="success" role="status">
+            {a.success}
+          </p>
+        )}
+        <div className="knowledge-banner">
+          <Icon name="Knowledge" />
+          <p>
+            <strong>Private until you say otherwise.</strong> Imported documents
+            start as staff-only knowledge. Approving customer answers and
+            publishing an article are separate choices.
+          </p>
+        </div>
+        {admin && adding && (
+          <section className="panel source-import" id="source-import">
+            <h2>Connect a knowledge source</h2>
+            <form
+              className="source-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const form = e.currentTarget;
+                const d = new FormData(form);
+                void a.run(async () => {
+                  await api(ws, "/sources", {
+                    kind: kind === "site" ? "website" : kind,
+                    scope: kind === "site" ? "site" : "page",
+                    title: d.get("title"),
+                    locator: d.get("locator"),
+                  });
+                  form.reset();
+                  setAdding(false);
+                  l.reload();
+                }, "Source added. Indexing will continue in the background.");
+              }}
+            >
+              <Field label="Source">
+                <select value={kind} onChange={(e) => setKind(e.target.value)}>
+                  <option value="website">Website page</option>
+                  <option value="site">Documentation site</option>
+                  <option value="notion">Notion page</option>
+                  <option value="zendesk">Zendesk article</option>
+                </select>
+              </Field>
+              <Field label="Title">
+                <input
+                  name="title"
+                  autoFocus
+                  required
+                  placeholder="Getting started"
+                />
+              </Field>
+              <Field
+                label={
+                  kind === "site"
+                    ? "Documentation URL"
+                    : kind === "website"
+                      ? "Page URL"
+                      : kind === "notion"
+                        ? "Shared page ID"
+                        : "Article ID"
+                }
               >
-                <Field label="Source">
-                  <select
-                    value={kind}
-                    onChange={(e) => setKind(e.target.value)}
-                  >
-                    <option value="website">Website page</option>
-                    <option value="site">Documentation site</option>
-                    <option value="notion">Notion page</option>
-                    <option value="zendesk">Zendesk article</option>
-                  </select>
-                </Field>
-                <Field label="Title">
-                  <input
-                    name="title"
-                    autoFocus
-                    required
-                    placeholder="Getting started"
-                  />
-                </Field>
-                <Field
-                  label={
+                <input
+                  name="locator"
+                  type={kind === "site" || kind === "website" ? "url" : "text"}
+                  required
+                  placeholder={
                     kind === "site"
-                      ? "Documentation URL"
+                      ? "https://docs.locushost.co/"
                       : kind === "website"
-                        ? "Page URL"
+                        ? "https://example.com/help"
                         : kind === "notion"
-                          ? "Shared page ID"
-                          : "Article ID"
+                          ? "Page ID shared with your connection"
+                          : "123456789"
                   }
-                >
-                  <input
-                    name="locator"
-                    type={
-                      kind === "site" || kind === "website" ? "url" : "text"
-                    }
-                    required
-                    placeholder={
-                      kind === "site"
-                        ? "https://docs.locushost.co/"
-                        : kind === "website"
-                          ? "https://example.com/help"
-                          : kind === "notion"
-                            ? "Page ID shared with your connection"
-                            : "123456789"
-                    }
-                  />
-                </Field>
-                <button disabled={a.busy}>Add source →</button>
-              </form>
-              {kind === "site" && (
-                <p className="inline-note">
-                  Import Docusaurus, GitBook, or other public documentation.
-                  Scans pages on this domain and under this path using sitemaps
-                  and links. Up to 500 pages; refreshes hourly.
-                </p>
-              )}
-              <div className="inline-note">
-                Notion and Zendesk need a connection first.{" "}
-                <button
-                  className="link"
-                  disabled={a.busy}
-                  onClick={() =>
-                    void a.run(async () => {
-                      await googlePicker(ws, async (files) => {
-                        for (const f of files)
-                          await api(ws, "/sources", {
-                            kind: "google",
-                            title: f.name,
-                            locator: f.id,
-                          });
-                      });
-                      l.reload();
-                    })
-                  }
-                >
-                  Choose files from Google Drive ↗
-                </button>
-              </div>
-            </section>
-          )}
-          <section className="panel">
-            <div className="section-heading">
-              <h2>Your knowledge library</h2>
-              <button onClick={l.reload}>Refresh status</button>
-            </div>
-            <div className="library-filters">
-              <input
-                type="search"
-                aria-label="Search knowledge sources"
-                placeholder="Search your sources…"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <select
-                aria-label="Filter source audience"
-                value={audience}
-                onChange={(e) => setAudience(e.target.value)}
+                />
+              </Field>
+              <button disabled={a.busy}>Add source →</button>
+            </form>
+            {kind === "site" && (
+              <p className="inline-note">
+                Import Docusaurus, GitBook, or other public documentation. Scans
+                pages on this domain and under this path using sitemaps and
+                links. Up to 500 pages; refreshes hourly.
+              </p>
+            )}
+            <div className="inline-note">
+              Notion and Zendesk need a connection first.{" "}
+              <button
+                className="link"
+                disabled={a.busy}
+                onClick={() =>
+                  void a.run(async () => {
+                    await googlePicker(ws, async (files) => {
+                      for (const f of files)
+                        await api(ws, "/sources", {
+                          kind: "google",
+                          title: f.name,
+                          locator: f.id,
+                        });
+                    });
+                    l.reload();
+                  })
+                }
               >
-                <option value="all">All audiences</option>
-                <option value="staff">Staff only</option>
-                <option value="customer">Customer answers</option>
-              </select>
+                Choose files from Google Drive ↗
+              </button>
+            </div>
+          </section>
+        )}
+        <section className="panel">
+          <div className="section-heading">
+            <h2>Your knowledge library</h2>
+            <button onClick={l.reload}>Refresh status</button>
+          </div>
+          <div className="library-filters">
+            <input
+              type="search"
+              aria-label="Search knowledge sources"
+              placeholder="Search your sources…"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <select
+              aria-label="Filter source audience"
+              value={audience}
+              onChange={(e) => setAudience(e.target.value)}
+            >
+              <option value="all">All audiences</option>
+              <option value="staff">Staff only</option>
+              <option value="customer">Customer answers</option>
+            </select>
+            {l.data && (
               <span className="count-label">
                 {filtered.length} {filtered.length === 1 ? "source" : "sources"}
               </span>
-            </div>
-            {!l.data && !l.error ? (
+            )}
+          </div>
+          {!l.data ? (
+            l.error ? null : (
               <LoadingState label="Loading your knowledge…" />
-            ) : filtered.length ? (
-              <div className="table-wrap">
-                <table className="knowledge-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Source</th>
-                      <th scope="col">Index status</th>
-                      <th scope="col">Audience</th>
-                      <th scope="col">Article</th>
-                      <th scope="col">
-                        <span className="sr-only">Manage source</span>
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.map((s: Row) => {
-                      const docs = l.data.documents.filter(
-                        (d: Row) => d.source_id === s.id && d.active,
-                      );
-                      const site =
-                        s.kind === "website" && s.metadata.scope === "site";
-                      const progress = s.metadata.crawl;
-                      return (
-                        <tr key={s.id}>
-                          <td data-label="Source">
-                            <strong>{s.title}</strong>
-                            <small>
-                              {site ? "Documentation site" : s.kind} ·{" "}
-                              {s.last_synced
-                                ? new Date(s.last_synced).toLocaleString()
-                                : "Not indexed yet"}
-                            </small>
-                            {s.error && (
-                              <small className="error-text">{s.error}</small>
-                            )}
-                          </td>
-                          <td data-label="Index status">
-                            <Badge value={s.status} />
-                            {site && progress && (
-                              <small role="status">
-                                {progress.phase === "complete"
+            )
+          ) : filtered.length ? (
+            <div className="table-wrap">
+              <table className="knowledge-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Source</th>
+                    <th scope="col">Index status</th>
+                    <th scope="col">Audience</th>
+                    <th scope="col">Article</th>
+                    <th scope="col">
+                      <span className="sr-only">Manage source</span>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((s: Row) => {
+                    const docs = l.data.documents.filter(
+                      (d: Row) => d.source_id === s.id && d.active,
+                    );
+                    const site =
+                      s.kind === "website" && s.metadata.scope === "site";
+                    const progress = s.metadata.crawl;
+                    return (
+                      <tr key={s.id}>
+                        <td data-label="Source">
+                          <strong>{s.title}</strong>
+                          <small>
+                            {site ? "Documentation site" : s.kind} ·{" "}
+                            {s.last_synced
+                              ? new Date(s.last_synced).toLocaleString()
+                              : "Not indexed yet"}
+                          </small>
+                          {s.error && (
+                            <small className="error-text">{s.error}</small>
+                          )}
+                        </td>
+                        <td data-label="Index status">
+                          <Badge value={s.status} />
+                          {site && progress && (
+                            <small role="status">
+                              {s.status === "failed"
+                                ? `Stopped during ${progress.phase === "discovering" ? "discovery" : "indexing"}`
+                                : progress.phase === "complete"
                                   ? `${progress.indexed} pages indexed`
                                   : progress.phase === "discovering"
                                     ? "Discovering pages…"
                                     : progress.phase === "indexing"
                                       ? `Indexing ${progress.indexed} of ${progress.scanned - progress.skipped.length} pages`
                                       : `Scanned ${progress.scanned} of ${progress.discovered} discovered pages`}
-                              </small>
-                            )}
-                            {site && progress?.skipped.length > 0 && (
-                              <details>
-                                <summary>
-                                  {progress.skipped.length} pages skipped
-                                </summary>
-                                {progress.skipped.map((item: Row) => (
-                                  <small key={item.url}>
-                                    {item.url}: {item.reason}
-                                  </small>
-                                ))}
-                              </details>
-                            )}
-                          </td>
-                          <td data-label="Audience">
-                            {admin ? (
-                              <select
-                                aria-label={`Audience for ${s.title}`}
-                                disabled={a.busy}
-                                value={s.visibility}
-                                onChange={(e) =>
+                            </small>
+                          )}
+                          {site && progress?.skipped.length > 0 && (
+                            <details>
+                              <summary>
+                                {progress.skipped.length} pages skipped
+                              </summary>
+                              {progress.skipped.map((item: Row) => (
+                                <small key={item.url}>
+                                  {item.url}: {item.reason}
+                                </small>
+                              ))}
+                            </details>
+                          )}
+                        </td>
+                        <td data-label="Audience">
+                          {admin ? (
+                            <select
+                              aria-label={`Audience for ${s.title}`}
+                              disabled={a.busy}
+                              value={s.visibility}
+                              onChange={(e) =>
+                                void a.run(async () => {
+                                  await api(
+                                    ws,
+                                    `/sources/${s.id}/visibility`,
+                                    { visibility: e.target.value },
+                                    "PUT",
+                                  );
+                                  l.reload();
+                                })
+                              }
+                            >
+                              <option value="staff">Staff only</option>
+                              <option value="customer">Customer answers</option>
+                            </select>
+                          ) : (
+                            s.visibility
+                          )}
+                        </td>
+                        <td data-label="Articles">
+                          {docs.length ? (
+                            <details open={!site}>
+                              <summary>
+                                {site
+                                  ? `${docs.length} indexed pages`
+                                  : "Article"}
+                              </summary>
+                              {docs.map((doc: Row) => (
+                                <div key={doc.id}>
+                                  {site && (
+                                    <small>
+                                      <a
+                                        href={doc.locator}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                      >
+                                        {doc.title} ↗
+                                      </a>
+                                    </small>
+                                  )}
+                                  <button
+                                    className="link"
+                                    onClick={() =>
+                                      void a.run(async () =>
+                                        setPreview(
+                                          await api(ws, `/documents/${doc.id}`),
+                                        ),
+                                      )
+                                    }
+                                  >
+                                    Preview v{doc.version}
+                                  </button>
+                                  {admin && (
+                                    <button
+                                      className="link"
+                                      disabled={
+                                        s.visibility !== "customer" || a.busy
+                                      }
+                                      onClick={() =>
+                                        void a.run(async () => {
+                                          await api(
+                                            ws,
+                                            `/documents/${doc.id}/publish`,
+                                            { published: !doc.published },
+                                          );
+                                          l.reload();
+                                        })
+                                      }
+                                    >
+                                      {doc.published
+                                        ? "Unpublish article"
+                                        : "Publish article"}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </details>
+                          ) : (
+                            <span className="muted">—</span>
+                          )}
+                        </td>
+                        <td data-label="Manage">
+                          {admin && (
+                            <div className="row-actions">
+                              <button
+                                title="Reindex"
+                                aria-label={`Reindex ${s.title}`}
+                                disabled={
+                                  a.busy ||
+                                  ["queued", "processing"].includes(s.status)
+                                }
+                                onClick={() =>
                                   void a.run(async () => {
                                     await api(
                                       ws,
-                                      `/sources/${s.id}/visibility`,
-                                      { visibility: e.target.value },
-                                      "PUT",
+                                      `/sources/${s.id}/refresh`,
+                                      {},
                                     );
                                     l.reload();
                                   })
                                 }
                               >
-                                <option value="staff">Staff only</option>
-                                <option value="customer">
-                                  Customer answers
-                                </option>
-                              </select>
-                            ) : (
-                              s.visibility
-                            )}
-                          </td>
-                          <td data-label="Articles">
-                            {docs.length ? (
-                              <details open={!site}>
-                                <summary>
-                                  {site
-                                    ? `${docs.length} indexed pages`
-                                    : "Article"}
-                                </summary>
-                                {docs.map((doc: Row) => (
-                                  <div key={doc.id}>
-                                    {site && (
-                                      <small>
-                                        <a
-                                          href={doc.locator}
-                                          target="_blank"
-                                          rel="noreferrer"
-                                        >
-                                          {doc.title} ↗
-                                        </a>
-                                      </small>
-                                    )}
-                                    <button
-                                      className="link"
-                                      onClick={() =>
-                                        void a.run(async () =>
-                                          setPreview(
-                                            await api(
-                                              ws,
-                                              `/documents/${doc.id}`,
-                                            ),
-                                          ),
-                                        )
-                                      }
-                                    >
-                                      Preview v{doc.version}
-                                    </button>
-                                    {admin && (
-                                      <button
-                                        className="link"
-                                        disabled={
-                                          s.visibility !== "customer" || a.busy
-                                        }
-                                        onClick={() =>
-                                          void a.run(async () => {
-                                            await api(
-                                              ws,
-                                              `/documents/${doc.id}/publish`,
-                                              { published: !doc.published },
-                                            );
-                                            l.reload();
-                                          })
-                                        }
-                                      >
-                                        {doc.published
-                                          ? "Unpublish article"
-                                          : "Publish article"}
-                                      </button>
-                                    )}
-                                  </div>
-                                ))}
-                              </details>
-                            ) : (
-                              <span className="muted">—</span>
-                            )}
-                          </td>
-                          <td data-label="Manage">
-                            {admin && (
-                              <div className="row-actions">
-                                <button
-                                  title="Reindex"
-                                  aria-label={`Reindex ${s.title}`}
-                                  disabled={
-                                    a.busy ||
-                                    ["queued", "processing"].includes(s.status)
-                                  }
-                                  onClick={() =>
+                                Refresh
+                              </button>
+                              <button
+                                title="Delete source"
+                                aria-label={`Delete ${s.title}`}
+                                disabled={a.busy}
+                                onClick={() => {
+                                  if (
+                                    confirm(
+                                      "Remove this source and all its indexed content?",
+                                    )
+                                  )
                                     void a.run(async () => {
                                       await api(
                                         ws,
-                                        `/sources/${s.id}/refresh`,
+                                        `/sources/${s.id}`,
                                         {},
+                                        "DELETE",
                                       );
                                       l.reload();
-                                    })
-                                  }
-                                >
-                                  Refresh
-                                </button>
-                                <button
-                                  title="Delete source"
-                                  aria-label={`Delete ${s.title}`}
-                                  disabled={a.busy}
-                                  onClick={() => {
-                                    if (
-                                      confirm(
-                                        "Remove this source and all its indexed content?",
-                                      )
-                                    )
-                                      void a.run(async () => {
-                                        await api(
-                                          ws,
-                                          `/sources/${s.id}`,
-                                          {},
-                                          "DELETE",
-                                        );
-                                        l.reload();
-                                      });
-                                  }}
-                                >
-                                  Delete
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <Empty
-                title={
-                  sources.length
-                    ? "No matching sources"
-                    : "Start with what your business knows"
-                }
-              >
-                <p>
-                  {sources.length
-                    ? "Try another search or audience."
-                    : "Upload a PDF, DOCX, Markdown, or text file, or connect your documentation site."}
-                </p>
-                {sources.length ? (
-                  <button
-                    onClick={() => {
-                      setQuery("");
-                      setAudience("all");
-                    }}
-                  >
-                    Clear filters
+                                    });
+                                }}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <Empty
+              title={
+                sources.length
+                  ? "No matching sources"
+                  : "Start with what your business knows"
+              }
+            >
+              <p>
+                {sources.length
+                  ? "Try another search or audience."
+                  : "Upload a PDF, DOCX, Markdown, or text file, or connect your documentation site."}
+              </p>
+              {sources.length ? (
+                <button
+                  onClick={() => {
+                    setQuery("");
+                    setAudience("all");
+                  }}
+                >
+                  Clear filters
+                </button>
+              ) : (
+                admin && (
+                  <button onClick={() => setAdding(true)}>
+                    Connect your first source →
                   </button>
-                ) : (
-                  admin && (
-                    <button onClick={() => setAdding(true)}>
-                      Connect your first source →
-                    </button>
-                  )
-                )}
-              </Empty>
-            )}
-          </section>
-          {preview && (
-            <PreviewDialog title={preview.title} close={() => setPreview(null)}>
-              <div className="article-body">{preview.body}</div>
-            </PreviewDialog>
+                )
+              )}
+            </Empty>
           )}
-        </>
-      )}
+        </section>
+        {preview && (
+          <PreviewDialog title={preview.title} close={() => setPreview(null)}>
+            <div className="article-body">{preview.body}</div>
+          </PreviewDialog>
+        )}
+      </div>
     </>
   );
 }
@@ -2905,7 +2934,18 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
     [question, setQuestion] = useState(""),
     [answer, setAnswer] = useState(""),
     [sourceId, setSourceId] = useState(""),
-    [writing, setWriting] = useState("");
+    [writing, setWriting] = useState(""),
+    [mode, setMode] = useState<"list" | "write" | "generate">("list"),
+    [generationScope, setGenerationScope] = useState("selected");
+  const dirty =
+    question !== (editing?.title ?? "") ||
+    answer !== (editing?.metadata.answer ?? "") ||
+    !!writing;
+  useUnsavedChanges(dirty);
+  const editorHeading = useRef<HTMLHeadingElement>(null);
+  useEffect(() => {
+    if (mode !== "list") editorHeading.current?.focus();
+  }, [mode]);
   const editor = useRef<HTMLTextAreaElement>(null);
   const processing = l.data?.faqs.some((f: Row) =>
     ["queued", "processing"].includes(f.status),
@@ -2922,6 +2962,12 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
     setAnswer("");
     setWriting("");
   };
+  const discard = () => {
+    if (dirty && !confirmDiscardChanges("Discard this unsaved FAQ draft?"))
+      return;
+    reset();
+    setMode("list");
+  };
   return (
     <>
       <div className="knowledge-banner">
@@ -2937,14 +2983,72 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
           {a.success || ai.success}
         </p>
       )}
-      {admin && <FaqReview ws={ws} onChange={l.reload} />}
+      {l.error && (
+        <div className="content-load-recovery">
+          <p>
+            {l.data
+              ? "Showing the last loaded FAQs."
+              : "Your FAQs are unavailable. Try loading them again."}
+          </p>
+          <button onClick={l.reload}>Try again</button>
+        </div>
+      )}
       {admin && (
-        <div className="faq-layout">
-          <section className="panel">
+        <div className="content-toolbar">
+          {mode === "list" ? (
+            <button className="primary" onClick={() => setMode("write")}>
+              {dirty || editing ? "Resume FAQ draft" : "Create FAQ"}
+            </button>
+          ) : (
+            <>
+              <button onClick={() => setMode("list")}>
+                ← All FAQs{dirty ? " · draft kept" : ""}
+              </button>
+              <nav
+                className="content-mode-switch"
+                aria-label="Create FAQ method"
+              >
+                <button
+                  aria-pressed={mode === "write"}
+                  onClick={() => setMode("write")}
+                >
+                  Write manually
+                </button>
+                <button
+                  aria-pressed={mode === "generate"}
+                  onClick={() => setMode("generate")}
+                >
+                  Generate drafts
+                </button>
+              </nav>
+            </>
+          )}
+        </div>
+      )}
+      {admin && (
+        <div className="content-faq-editor" hidden={mode === "list"}>
+          <section className="panel" hidden={mode !== "write"}>
             <div className="section-heading">
-              <h2>{editing ? "Edit FAQ" : "Write an FAQ"}</h2>
+              <h2
+                ref={mode === "write" ? editorHeading : undefined}
+                tabIndex={-1}
+              >
+                {editing ? "Edit FAQ" : "Write an FAQ"}
+              </h2>
               {editing && (
-                <button disabled={busy} onClick={reset}>
+                <button
+                  disabled={busy}
+                  onClick={() => {
+                    if (
+                      dirty &&
+                      !confirmDiscardChanges(
+                        "Discard this FAQ draft and start another?",
+                      )
+                    )
+                      return;
+                    reset();
+                  }}
+                >
                   New FAQ
                 </button>
               )}
@@ -2965,6 +3069,7 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                     editing ? "PUT" : "POST",
                   );
                   reset();
+                  setMode("list");
                   l.reload();
                 }, "FAQ saved as a private draft.");
               }}
@@ -3029,11 +3134,16 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                       ? "Improve with AI"
                       : "Draft answer with AI"}
                 </button>
-                {editing && (
-                  <button type="button" disabled={busy} onClick={reset}>
-                    Cancel editing
-                  </button>
-                )}
+                <button type="button" disabled={busy} onClick={discard}>
+                  Discard draft
+                </button>
+                <span className="muted" role="status">
+                  {dirty
+                    ? "Unsaved changes"
+                    : editing
+                      ? "Saved draft"
+                      : "New draft"}
+                </span>
               </div>
               <small className="muted">
                 Saving an edited FAQ returns it to a private draft and removes
@@ -3041,31 +3151,45 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
               </small>
             </form>
           </section>
-          <section className="panel">
-            <h2>Let AI draft your FAQs</h2>
+          <section className="panel" hidden={mode !== "generate"}>
+            <h2
+              ref={mode === "generate" ? editorHeading : undefined}
+              tabIndex={-1}
+            >
+              Generate FAQ drafts
+            </h2>
             <p className="muted">
               Turn your customer-approved knowledge into questions and answers.
               AI suggestions are saved as private drafts for you to review.
             </p>
+            <Field label="Generation scope">
+              <select
+                value={generationScope}
+                onChange={(e) => setGenerationScope(e.target.value)}
+              >
+                <option value="selected">
+                  A focused set from selected knowledge
+                </option>
+                <option value="library">Review the whole library</option>
+              </select>
+            </Field>
+            <div hidden={generationScope !== "library"}>
+              <FaqReview ws={ws} onChange={l.reload} />
+            </div>
             <form
+              hidden={generationScope !== "selected"}
               className="faq-form"
               onSubmit={(e) => {
                 e.preventDefault();
                 const form = new FormData(e.currentTarget);
                 void ai.run(async () => {
-                  const result = await api(ws, "/faqs/generate", {
+                  await api(ws, "/faqs/generate", {
                     count: Number(form.get("count")),
                     instructions: String(form.get("focus") || ""),
                     ...(sourceId ? { sourceId } : {}),
                   });
                   l.reload();
-                  if (result.faqs[0]) {
-                    const f = result.faqs[0];
-                    setEditing(f);
-                    setQuestion(f.title);
-                    setAnswer(f.metadata.answer);
-                    setWriting("");
-                  }
+                  if (!dirty) setMode("list");
                 }, "AI drafts saved. Review them before approving customer answers.");
               }}
             >
@@ -3122,12 +3246,19 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
           </section>
         </div>
       )}
-      <section className="panel">
+      <section
+        className="panel content-faq-inventory"
+        hidden={admin && mode !== "list"}
+      >
         <div className="section-heading">
           <h2>Your FAQs</h2>
           <button onClick={l.reload}>Refresh FAQ status</button>
         </div>
-        {l.data?.faqs.length ? (
+        {!l.data ? (
+          l.error ? null : (
+            <LoadingState label="Loading FAQs…" />
+          )
+        ) : l.data.faqs.length ? (
           <div className="faq-list">
             {l.data.faqs.map((faq: Row) => {
               const doc = l.data.documents.find(
@@ -3172,12 +3303,23 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                       <button
                         disabled={busy}
                         onClick={() => {
+                          if (
+                            editing?.id !== faq.id &&
+                            dirty &&
+                            !confirmDiscardChanges(
+                              "Discard this FAQ draft and open another FAQ?",
+                            )
+                          )
+                            return;
+                          if (editing?.id === faq.id) {
+                            setMode("write");
+                            return;
+                          }
+                          setMode("write");
                           setEditing(faq);
                           setQuestion(faq.title);
                           setAnswer(faq.metadata.answer);
                           setWriting("");
-                          editor.current?.focus();
-                          editor.current?.scrollIntoView({ block: "center" });
                         }}
                       >
                         Edit FAQ
@@ -3190,15 +3332,23 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                             busy ||
                             ["queued", "processing"].includes(faq.status)
                           }
-                          onClick={() =>
+                          onClick={() => {
+                            if (
+                              editing?.id === faq.id &&
+                              dirty &&
+                              !confirmDiscardChanges(
+                                "Discard your unsaved edits and approve the saved FAQ?",
+                              )
+                            )
+                              return;
                             void a.run(async () => {
                               await api(ws, `/faqs/${faq.id}/approve`, {
                                 revision: faq.revision,
                               });
                               l.reload();
                               if (editing?.id === faq.id) reset();
-                            }, "FAQ approved and queued for indexing.")
-                          }
+                            }, "FAQ approved and queued for indexing.");
+                          }}
                         >
                           Approve for answers
                         </button>
@@ -3223,7 +3373,15 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                       {faq.visibility === "customer" && (
                         <button
                           disabled={busy}
-                          onClick={() =>
+                          onClick={() => {
+                            if (
+                              editing?.id === faq.id &&
+                              dirty &&
+                              !confirmDiscardChanges(
+                                "Discard your unsaved edits and make the saved FAQ private?",
+                              )
+                            )
+                              return;
                             void a.run(async () => {
                               await api(
                                 ws,
@@ -3237,8 +3395,8 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
                               );
                               if (editing?.id === faq.id) reset();
                               l.reload();
-                            }, "FAQ is private and has been withdrawn from customer answers.")
-                          }
+                            }, "FAQ is private and has been withdrawn from customer answers.");
+                          }}
                         >
                           Make private
                         </button>
@@ -3268,7 +3426,7 @@ function FaqPage({ ws, admin }: { ws: string; admin: boolean }) {
           </div>
         ) : (
           <Empty title="Start with your customers’ common questions">
-            Write your first FAQ, or let AI draft a set from your approved
+            Create your first FAQ manually or generate drafts from approved
             knowledge.
           </Empty>
         )}
@@ -3280,7 +3438,21 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
   const l = useLoad(() => api(ws, "/connections"), [ws]),
     a = useAction(),
     [selected, setSelected] = useState("openai"),
-    [query, setQuery] = useState("");
+    [query, setQuery] = useState(""),
+    [detail, setDetail] = useState(false);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const providerTrigger = useRef<HTMLButtonElement | null>(null);
+  const showProvider = (provider: string, trigger: HTMLButtonElement) => {
+    providerTrigger.current = trigger;
+    setSelected(provider);
+    setDetail(true);
+    requestAnimationFrame(() => {
+      if (matchMedia("(max-width: 760px)").matches) {
+        detailHeading.current?.focus();
+        detailHeading.current?.scrollIntoView({ block: "start" });
+      }
+    });
+  };
   useEffect(() => {
     a.setError("");
     a.setSuccess("");
@@ -3328,6 +3500,28 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
   const filtered = providers.filter((p) =>
     `${p.name} ${p.description}`.toLowerCase().includes(query.toLowerCase()),
   );
+  if (!l.data)
+    return (
+      <>
+        <Heading eyebrow="WORKS WITH YOUR BUSINESS" title="Connections">
+          Connect the tools and models your support team uses.
+        </Heading>
+        {l.error ? (
+          <section className="panel">
+            <Alert>{l.error}</Alert>
+            <p>
+              Connection status is unavailable. Your saved connections have not
+              been removed.
+            </p>
+            <button onClick={l.reload} disabled={l.loading}>
+              Try loading connections again
+            </button>
+          </section>
+        ) : (
+          <LoadingState label="Loading connection status…" />
+        )}
+      </>
+    );
   return (
     <>
       <Heading eyebrow="WORKS WITH YOUR BUSINESS" title="Connections">
@@ -3336,8 +3530,19 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
       </Heading>
       <ReadinessLink ws={ws} />
       <Alert>{l.error || a.error}</Alert>
+      {l.error && (
+        <div className="content-load-recovery">
+          <p>
+            Showing last-known connection status. Refresh before changing a
+            connection.
+          </p>
+          <button onClick={l.reload}>Try again</button>
+        </div>
+      )}
       {a.success && <p className="success">{a.success}</p>}
-      <div className="connections-layout">
+      <div
+        className={`connections-layout content-connections ${detail ? "detail-open" : ""}`}
+      >
         <section className="provider-picker">
           <label className="field">
             <span>Find a connection</span>
@@ -3364,7 +3569,7 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
                   key={provider.id}
                   aria-pressed={selected === provider.id}
                   disabled={a.busy}
-                  onClick={() => setSelected(provider.id)}
+                  onClick={(e) => showProvider(provider.id, e.currentTarget)}
                 >
                   <ConnectorLogo provider={provider.id} />
                   <h3>{provider.name}</h3>
@@ -3379,268 +3584,292 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
           </div>
         </section>
         <section className="panel connection-settings">
-          <h2>
+          <button
+            className="content-mobile-back"
+            onClick={() => {
+              setDetail(false);
+              requestAnimationFrame(() => {
+                providerTrigger.current?.focus();
+                providerTrigger.current?.scrollIntoView({ block: "nearest" });
+              });
+            }}
+          >
+            ← All connections
+          </button>
+          <h2 ref={detailHeading} tabIndex={-1}>
             Configure{" "}
             {modelProvider?.name ??
               (selected === "google" ? "Google Drive" : selected)}
           </h2>
-          {[
-            ...Object.keys(MODEL_PROVIDERS),
-            "stripe_test",
-            "stripe_live",
-            "notion",
-          ].includes(selected) && (
-            <form
-              key={selected}
-              onSubmit={(e) => {
-                e.preventDefault();
-                const form = e.currentTarget;
-                const d = new FormData(form);
-                void a.run(async () => {
-                  await api(ws, "/connections/key", {
-                    provider: selected,
-                    apiKey: d.get("key"),
-                    ...(modelProvider
-                      ? {
-                          ...(d.get("model") ? { model: d.get("model") } : {}),
-                          ...(d.get("baseUrl")
-                            ? { baseUrl: d.get("baseUrl") }
-                            : {}),
-                          ...(d.get("jsonMode")
-                            ? { jsonMode: d.get("jsonMode") }
-                            : {}),
-                        }
-                      : {}),
-                  });
-                  l.reload();
-                  form.reset();
-                }, "Connection verified and saved.");
-              }}
-            >
-              <Field
-                label={
-                  selected.startsWith("stripe_")
-                    ? "Restricted Stripe App key"
-                    : selected === "notion"
-                      ? "Internal connection token"
-                      : "API key"
-                }
-                hint={
-                  selected.startsWith("stripe_")
-                    ? "Install your Stripe App and provide its rk_test_ or rk_live_ key. This does not execute a payment."
-                    : selected === "notion"
-                      ? "Share the selected pages with this connection in Notion."
-                      : undefined
-                }
-              >
-                <input
-                  name="key"
-                  type="password"
-                  autoComplete="off"
-                  required={!["vllm", "openai_compatible"].includes(selected)}
-                />
-              </Field>
-              {modelProvider && (
-                <>
-                  <Field
-                    label="Model ID to validate (optional)"
-                    hint="Use the exact provider model ID. After connecting, choose the active response and embedding providers in Settings."
-                  >
-                    <input
-                      name="model"
-                      maxLength={200}
-                      defaultValue={
-                        selectedConnection?.metadata.model ??
-                        (selected === "openai" ? "gpt-5.4-mini" : "")
-                      }
-                      list="provider-model-list"
-                      placeholder="Model ID from your provider"
-                    />
-                    <datalist id="provider-model-list">
-                      {selectedConnection?.metadata.models?.map((m: string) => (
-                        <option key={m} value={m} />
-                      ))}
-                    </datalist>
-                  </Field>
-                  {["vllm", "openai_compatible"].includes(selected) && (
-                    <>
-                      <Field
-                        label="Model API base URL"
-                        hint="Include /v1 where required. Private HTTP servers must be explicitly listed in FIELDKIT_MODEL_ENDPOINTS on the server; API keys are optional for trusted local deployments."
-                      >
-                        <input
-                          name="baseUrl"
-                          type="url"
-                          required
-                          defaultValue={
-                            selectedConnection?.metadata.baseUrl ?? ""
-                          }
-                          placeholder="https://models.example.com/v1"
-                        />
-                      </Field>
-                      <Field
-                        label="Structured output format"
-                        hint="Choose the format your server supports. Every response is still validated against Navigated Support’s schema."
-                      >
-                        <select
-                          name="jsonMode"
-                          defaultValue={
-                            selectedConnection?.metadata.jsonMode ?? "schema"
-                          }
-                        >
-                          <option value="schema">JSON schema</option>
-                          <option value="json">JSON object</option>
-                        </select>
-                      </Field>
-                    </>
-                  )}
-                  <p>
-                    Responses and embeddings can use different providers.
-                    Configure both in Settings. Connection checks read
-                    account/model metadata; test a question to verify
-                    generation.
-                  </p>
-                </>
-              )}
-              <button className="primary" disabled={a.busy}>
-                Verify & connect
-              </button>
-            </form>
-          )}
-          {["zendesk", "google", "notion"].includes(selected) && (
-            <form
-              onSubmit={(e) => {
-                e.preventDefault();
-                const d = new FormData(e.currentTarget);
-                void a.run(async () => {
-                  const result = await api(
-                    ws,
-                    `/connections/${selected}/oauth`,
-                    selected === "zendesk"
-                      ? { subdomain: d.get("subdomain") }
-                      : {},
-                  );
-                  location.assign(result.url);
-                });
-              }}
-            >
-              {selected === "zendesk" && (
-                <Field label="Zendesk subdomain">
-                  <div className="input-prefix">
-                    <input
-                      name="subdomain"
-                      required
-                      pattern="[a-z0-9-]+"
-                      placeholder="your-company"
-                    />
-                    <span>.zendesk.com</span>
-                  </div>
-                </Field>
-              )}
-              {selected === "google" && l.data?.googleSetup && (
-                <div className="google-setup">
-                  <h3>Google Drive setup</h3>
-                  <ul>
-                    {Object.entries(l.data.googleSetup.checks).map(
-                      ([label, ready]) => (
-                        <li key={label}>
-                          <span
-                            className={`badge ${ready ? "good" : "warning"}`}
-                          >
-                            {ready ? "Configured" : "Missing"}
-                          </span>{" "}
-                          {label}
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                  <p>
-                    Connect your account, then choose individual files in
-                    Knowledge. Only selected files are available to Navigated
-                    Support.
-                  </p>
-                  <details>
-                    <summary>Server setup details</summary>
-                    <p>
-                      Enable Google Drive API and Google Picker API in the same
-                      Cloud project. Set the OAuth web client and restricted
-                      Picker key in your server environment, then restart the
-                      app and worker.
-                    </p>
-                    <p>
-                      Authorized origin:{" "}
-                      <code>{l.data.googleSetup.origin}</code>
-                    </p>
-                    <p>
-                      Redirect URI:{" "}
-                      <code>{l.data.googleSetup.callbackUrl}</code>
-                    </p>
-                    <p>
-                      <code>GOOGLE_CLIENT_ID</code>,{" "}
-                      <code>GOOGLE_CLIENT_SECRET</code>,{" "}
-                      <code>GOOGLE_PICKER_KEY</code>, <code>GOOGLE_APP_ID</code>{" "}
-                      (numeric project number).
-                    </p>
-                  </details>
-                </div>
-              )}
-              <p className="muted">
-                {l.data?.oauth[selected]
-                  ? "Authorize only the account and content you want to connect."
-                  : "Your server administrator must configure this provider’s OAuth app before connecting."}
-              </p>
-              <button disabled={!l.data?.oauth[selected] || a.busy}>
-                Connect with {selected === "google" ? "Google" : selected} ↗
-              </button>
-            </form>
-          )}
-          {selected === "zendesk" && (
-            <form
-              className="webhook-form"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const d = new FormData(e.currentTarget);
-                void a.run(async () => {
-                  await api(
-                    ws,
-                    "/connections/zendesk/webhook-secret",
-                    { secret: d.get("secret") },
-                    "PUT",
-                  );
-                }, "Webhook signing secret saved.");
-              }}
-            >
-              <h3>Receive ticket updates</h3>
-              <p className="muted">
-                Configure a signed Zendesk webhook with your ticket trigger.
-                Send a JSON body containing <code>ticket_id</code> to:
-              </p>
-              <code className="copyable">{l.data?.webhookUrl}</code>
-              <Field label="Webhook signing secret">
-                <input name="secret" type="password" required />
-              </Field>
-              <button disabled={a.busy}>Save signing secret</button>
-            </form>
-          )}
-          {selectedConnection?.status === "connected" && (
-            <button
-              disabled={a.busy}
-              className="danger-link"
-              onClick={() => {
-                if (
-                  confirm(
-                    "Disconnect this provider? Its imported knowledge will stop being used.",
-                  )
-                )
+          <p className="muted">
+            {
+              providers.find((provider) => provider.id === selected)
+                ?.description
+            }
+          </p>
+          <fieldset className="content-fieldset" disabled={!!l.error}>
+            {[
+              ...Object.keys(MODEL_PROVIDERS),
+              "stripe_test",
+              "stripe_live",
+              "notion",
+            ].includes(selected) && (
+              <form
+                key={selected}
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const form = e.currentTarget;
+                  const d = new FormData(form);
                   void a.run(async () => {
-                    await api(ws, `/connections/${selected}`, {}, "DELETE");
+                    await api(ws, "/connections/key", {
+                      provider: selected,
+                      apiKey: d.get("key"),
+                      ...(modelProvider
+                        ? {
+                            ...(d.get("model")
+                              ? { model: d.get("model") }
+                              : {}),
+                            ...(d.get("baseUrl")
+                              ? { baseUrl: d.get("baseUrl") }
+                              : {}),
+                            ...(d.get("jsonMode")
+                              ? { jsonMode: d.get("jsonMode") }
+                              : {}),
+                          }
+                        : {}),
+                    });
                     l.reload();
+                    form.reset();
+                  }, "Connection verified and saved.");
+                }}
+              >
+                <Field
+                  label={
+                    selected.startsWith("stripe_")
+                      ? "Restricted Stripe App key"
+                      : selected === "notion"
+                        ? "Internal connection token"
+                        : "API key"
+                  }
+                  hint={
+                    selected.startsWith("stripe_")
+                      ? "Install your Stripe App and provide its rk_test_ or rk_live_ key. This does not execute a payment."
+                      : selected === "notion"
+                        ? "Share the selected pages with this connection in Notion."
+                        : undefined
+                  }
+                >
+                  <input
+                    name="key"
+                    type="password"
+                    autoComplete="off"
+                    required={!["vllm", "openai_compatible"].includes(selected)}
+                  />
+                </Field>
+                {modelProvider && (
+                  <>
+                    <Field
+                      label="Model ID to validate (optional)"
+                      hint="Use the exact provider model ID. After connecting, choose the active response and embedding providers in Settings."
+                    >
+                      <input
+                        name="model"
+                        maxLength={200}
+                        defaultValue={
+                          selectedConnection?.metadata.model ??
+                          (selected === "openai" ? "gpt-5.4-mini" : "")
+                        }
+                        list="provider-model-list"
+                        placeholder="Model ID from your provider"
+                      />
+                      <datalist id="provider-model-list">
+                        {selectedConnection?.metadata.models?.map(
+                          (m: string) => (
+                            <option key={m} value={m} />
+                          ),
+                        )}
+                      </datalist>
+                    </Field>
+                    {["vllm", "openai_compatible"].includes(selected) && (
+                      <>
+                        <Field
+                          label="Model API base URL"
+                          hint="Include /v1 where required. Private HTTP servers must be explicitly listed in FIELDKIT_MODEL_ENDPOINTS on the server; API keys are optional for trusted local deployments."
+                        >
+                          <input
+                            name="baseUrl"
+                            type="url"
+                            required
+                            defaultValue={
+                              selectedConnection?.metadata.baseUrl ?? ""
+                            }
+                            placeholder="https://models.example.com/v1"
+                          />
+                        </Field>
+                        <Field
+                          label="Structured output format"
+                          hint="Choose the format your server supports. Every response is still validated against Navigated Support’s schema."
+                        >
+                          <select
+                            name="jsonMode"
+                            defaultValue={
+                              selectedConnection?.metadata.jsonMode ?? "schema"
+                            }
+                          >
+                            <option value="schema">JSON schema</option>
+                            <option value="json">JSON object</option>
+                          </select>
+                        </Field>
+                      </>
+                    )}
+                    <p>
+                      Responses and embeddings can use different providers.
+                      Configure both in Settings. Connection checks read
+                      account/model metadata; test a question to verify
+                      generation.
+                    </p>
+                  </>
+                )}
+                <button className="primary" disabled={a.busy}>
+                  Verify & connect
+                </button>
+              </form>
+            )}
+            {["zendesk", "google", "notion"].includes(selected) && (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const d = new FormData(e.currentTarget);
+                  void a.run(async () => {
+                    const result = await api(
+                      ws,
+                      `/connections/${selected}/oauth`,
+                      selected === "zendesk"
+                        ? { subdomain: d.get("subdomain") }
+                        : {},
+                    );
+                    location.assign(result.url);
                   });
-              }}
-            >
-              Disconnect {modelProvider?.name ?? selected}
-            </button>
-          )}
+                }}
+              >
+                {selected === "zendesk" && (
+                  <Field label="Zendesk subdomain">
+                    <div className="input-prefix">
+                      <input
+                        name="subdomain"
+                        required
+                        pattern="[a-z0-9-]+"
+                        placeholder="your-company"
+                      />
+                      <span>.zendesk.com</span>
+                    </div>
+                  </Field>
+                )}
+                {selected === "google" && l.data?.googleSetup && (
+                  <div className="google-setup">
+                    <h3>Google Drive setup</h3>
+                    <ul>
+                      {Object.entries(l.data.googleSetup.checks).map(
+                        ([label, ready]) => (
+                          <li key={label}>
+                            <span
+                              className={`badge ${ready ? "good" : "warning"}`}
+                            >
+                              {ready ? "Configured" : "Missing"}
+                            </span>{" "}
+                            {label}
+                          </li>
+                        ),
+                      )}
+                    </ul>
+                    <p>
+                      Connect your account, then choose individual files in
+                      Knowledge. Only selected files are available to Navigated
+                      Support.
+                    </p>
+                    <details>
+                      <summary>Server setup details</summary>
+                      <p>
+                        Enable Google Drive API and Google Picker API in the
+                        same Cloud project. Set the OAuth web client and
+                        restricted Picker key in your server environment, then
+                        restart the app and worker.
+                      </p>
+                      <p>
+                        Authorized origin:{" "}
+                        <code>{l.data.googleSetup.origin}</code>
+                      </p>
+                      <p>
+                        Redirect URI:{" "}
+                        <code>{l.data.googleSetup.callbackUrl}</code>
+                      </p>
+                      <p>
+                        <code>GOOGLE_CLIENT_ID</code>,{" "}
+                        <code>GOOGLE_CLIENT_SECRET</code>,{" "}
+                        <code>GOOGLE_PICKER_KEY</code>,{" "}
+                        <code>GOOGLE_APP_ID</code> (numeric project number).
+                      </p>
+                    </details>
+                  </div>
+                )}
+                <p className="muted">
+                  {l.data?.oauth[selected]
+                    ? "Authorize only the account and content you want to connect."
+                    : "Your server administrator must configure this provider’s OAuth app before connecting."}
+                </p>
+                <button disabled={!l.data?.oauth[selected] || a.busy}>
+                  Connect with {selected === "google" ? "Google" : selected} ↗
+                </button>
+              </form>
+            )}
+            {selected === "zendesk" && (
+              <form
+                className="webhook-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const d = new FormData(e.currentTarget);
+                  void a.run(async () => {
+                    await api(
+                      ws,
+                      "/connections/zendesk/webhook-secret",
+                      { secret: d.get("secret") },
+                      "PUT",
+                    );
+                  }, "Webhook signing secret saved.");
+                }}
+              >
+                <h3>Receive ticket updates</h3>
+                <p className="muted">
+                  Configure a signed Zendesk webhook with your ticket trigger.
+                  Send a JSON body containing <code>ticket_id</code> to:
+                </p>
+                <code className="copyable">{l.data?.webhookUrl}</code>
+                <Field label="Webhook signing secret">
+                  <input name="secret" type="password" required />
+                </Field>
+                <button disabled={a.busy}>Save signing secret</button>
+              </form>
+            )}
+            {selectedConnection?.status === "connected" && (
+              <button
+                disabled={a.busy}
+                className="danger-link"
+                onClick={() => {
+                  if (
+                    confirm(
+                      "Disconnect this provider? Its imported knowledge will stop being used.",
+                    )
+                  )
+                    void a.run(async () => {
+                      await api(ws, `/connections/${selected}`, {}, "DELETE");
+                      l.reload();
+                    });
+                }}
+              >
+                Disconnect {modelProvider?.name ?? selected}
+              </button>
+            )}
+          </fieldset>
         </section>
       </div>
       {owner && (
@@ -3685,233 +3914,6 @@ function ConnectionsPage({ ws, owner }: { ws: string; owner: boolean }) {
     </>
   );
 }
-const actionDefaults = {
-  name: "refund_payment",
-  description:
-    "Refund a verified captured payment when the customer requests a refund.",
-  kind: "stripe_refund",
-  enabled: false,
-  config: { idempotent: false, mappingKey: "customer_id" },
-  policy: {
-    mode: "approval",
-    maxAmountMinor: 0,
-    currency: "usd",
-    dailyLimit: 10,
-  },
-};
-function ActionsPage({ ws, owner }: { ws: string; owner: boolean }) {
-  const l = useLoad(() => api(ws, "/actions"), [ws]),
-    a = useAction(),
-    [edit, setEdit] = useState<Row | null>(null),
-    [configText, setConfigText] = useState("{}");
-  function select(row: Row) {
-    setEdit({ ...row });
-    setConfigText(JSON.stringify(row.config, null, 2));
-  }
-  return (
-    <>
-      <Heading
-        eyebrow="USEFUL ACTIONS. EXPLICIT PERMISSION."
-        title="Actions"
-        action={
-          owner && (
-            <button
-              className="primary"
-              onClick={() => select({ ...actionDefaults })}
-            >
-              ＋ Create action
-            </button>
-          )
-        }
-      >
-        Every account change starts with human approval. Enable automatic
-        actions only within rules you choose.
-      </Heading>
-      <Alert>{l.error || a.error}</Alert>
-      <div className="action-list">
-        {l.data?.actions.length ? (
-          l.data.actions.map((action: Row) => (
-            <section className="panel action-card" key={action.id}>
-              <div className="section-heading">
-                <div>
-                  <span className="eyebrow">
-                    {action.kind.replaceAll("_", " ")}
-                  </span>
-                  <h2>{action.name}</h2>
-                </div>
-                <Badge value={action.enabled ? "enabled" : "disabled"} />
-              </div>
-              <p>{action.description}</p>
-              <div className="policy-strip">
-                <span>
-                  {action.policy.mode === "approval"
-                    ? "Human approval required"
-                    : "Automatic within policy"}
-                </span>
-                <span>{action.policy.dailyLimit} automatic actions / day</span>
-              </div>
-              {owner && (
-                <button onClick={() => select(action)}>
-                  Configure action →
-                </button>
-              )}
-            </section>
-          ))
-        ) : (
-          <section className="panel">
-            <Empty title="Useful tools, added deliberately">
-              Add Stripe refunds, period-end cancellation, or a schema-validated
-              connection to your own API.
-            </Empty>
-          </section>
-        )}
-      </div>
-      {edit && (
-        <section className="panel">
-          <div className="section-heading">
-            <h2>{edit.id ? "Edit action" : "Create an action"}</h2>
-            <button onClick={() => setEdit(null)}>Close</button>
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              const d = new FormData(e.currentTarget);
-              void a.run(async () => {
-                const config = edit.kind.startsWith("custom")
-                  ? JSON.parse(configText)
-                  : {
-                      idempotent: false,
-                      mappingKey: "customer_id",
-                      stripeMode: d.get("stripeMode"),
-                    };
-                await api(
-                  ws,
-                  `/actions${edit.id ? "/" + edit.id : ""}`,
-                  {
-                    name: d.get("name"),
-                    description: d.get("description"),
-                    kind: edit.kind,
-                    enabled: d.get("enabled") === "on",
-                    config,
-                    policy: {
-                      mode: d.get("mode"),
-                      maxAmountMinor: Number(d.get("maxAmountMinor")),
-                      currency: d.get("currency"),
-                      dailyLimit: Number(d.get("dailyLimit")),
-                    },
-                  },
-                  edit.id ? "PUT" : "POST",
-                );
-                setEdit(null);
-                l.reload();
-              });
-            }}
-          >
-            <div className="form-grid">
-              <Field label="Action name">
-                <input
-                  name="name"
-                  defaultValue={edit.name}
-                  pattern="[a-z][a-z0-9_]{2,49}"
-                  required
-                />
-              </Field>
-              <Field label="Tool">
-                <select
-                  value={edit.kind}
-                  onChange={(e) => setEdit({ ...edit, kind: e.target.value })}
-                >
-                  <option value="stripe_refund">
-                    Stripe: refund a payment
-                  </option>
-                  <option value="stripe_cancel">
-                    Stripe: cancel at period end
-                  </option>
-                  <option value="custom_read">Custom API: read data</option>
-                  <option value="custom_write">Custom API: change data</option>
-                </select>
-              </Field>
-            </div>
-            <Field label="What should the agent use this for?">
-              <textarea
-                name="description"
-                defaultValue={edit.description}
-                minLength={8}
-                required
-              />
-            </Field>
-            {edit.kind.startsWith("stripe") && (
-              <Field label="Stripe environment">
-                <select
-                  name="stripeMode"
-                  defaultValue={edit.config.stripeMode ?? "test"}
-                >
-                  <option value="test">Test mode</option>
-                  <option value="live">Live mode — real account changes</option>
-                </select>
-              </Field>
-            )}
-            {edit.kind.startsWith("custom") && (
-              <Field
-                label="Custom API configuration"
-                hint="Provide endpoint, inputSchema, outputSchema, mappingKey, optional credentialId, and (for automatic writes) idempotent and lookupEndpoint. Set diagnosticTest=true only for a dedicated test endpoint to allow explicit Readiness probes. See the integration guide."
-              >
-                <textarea
-                  className="code-editor"
-                  value={configText}
-                  onChange={(e) => setConfigText(e.target.value)}
-                  rows={12}
-                />
-              </Field>
-            )}
-            <div className="form-grid">
-              <Field label="Approval policy">
-                <select name="mode" defaultValue={edit.policy.mode}>
-                  <option value="approval">Always require approval</option>
-                  <option value="automatic">Automatic within limits</option>
-                </select>
-              </Field>
-              <Field label="Automatic refund limit (minor units)">
-                <input
-                  name="maxAmountMinor"
-                  type="number"
-                  min="0"
-                  defaultValue={edit.policy.maxAmountMinor}
-                />
-              </Field>
-              <Field label="Currency">
-                <input
-                  name="currency"
-                  pattern="[a-z]{3}"
-                  defaultValue={edit.policy.currency}
-                />
-              </Field>
-              <Field label="Daily automatic action limit">
-                <input
-                  name="dailyLimit"
-                  type="number"
-                  min="1"
-                  defaultValue={edit.policy.dailyLimit}
-                />
-              </Field>
-            </div>
-            <label className="checkbox">
-              <input
-                name="enabled"
-                type="checkbox"
-                defaultChecked={edit.enabled}
-              />
-              Enable this action
-            </label>
-            <button className="primary" disabled={a.busy}>
-              Save action
-            </button>
-          </form>
-        </section>
-      )}
-    </>
-  );
-}
 function PublishPage({
   ws,
   slug,
@@ -3924,21 +3926,41 @@ function PublishPage({
   owner: boolean;
 }) {
   const l = useLoad(() => api(ws, ""), [ws]),
+    connections = useLoad(() => api(ws, "/connections"), [ws]),
     a = useAction(),
     [secret, setSecret] = useState(""),
     [tab, setTab] = useState(() =>
       new URLSearchParams(location.search).get("tab") === "appearance"
         ? "appearance"
         : "channels",
+    ),
+    [managed, setManaged] = useState("");
+  const managementHeading = useRef<HTMLHeadingElement>(null);
+  const managementTrigger = useRef<HTMLButtonElement | null>(null);
+  const channelName = (kind: string) =>
+    kind === "portal"
+      ? "Support portal"
+      : kind === "widget"
+        ? "Embedded chatbot"
+        : "Zendesk agent";
+  const manage = (id: string, trigger: HTMLButtonElement) => {
+    managementTrigger.current = trigger;
+    setManaged(id);
+    requestAnimationFrame(() => {
+      managementHeading.current?.focus();
+      managementHeading.current?.scrollIntoView({ block: "start" });
+    });
+  };
+  const identityConfigured =
+    !!secret ||
+    connections.data?.connections.some(
+      (connection: Row) => connection.provider === "widget_identity",
     );
   return (
-    <>
+    <div className="content-publish">
       <Heading eyebrow="MEET YOUR CUSTOMERS" title="Publish">
-        Publish the full portal, embed a bot on your website, or work inside
-        Zendesk.
+        Manage your live channels and the experience customers see.
       </Heading>
-      <ReadinessLink ws={ws} />
-      <AttachmentSettingsPanel ws={ws} owner={owner} />
       <nav className="settings-tabs" aria-label="Publish sections">
         <button
           aria-current={tab === "channels" ? "page" : undefined}
@@ -3952,164 +3974,206 @@ function PublishPage({
         >
           Appearance
         </button>
+        {owner && (
+          <button
+            aria-current={tab === "developer" ? "page" : undefined}
+            onClick={() => setTab("developer")}
+          >
+            Developer integration
+          </button>
+        )}
       </nav>
-      {tab === "appearance" ? (
+      <div hidden={tab !== "appearance"}>
         <AppearanceEditor ws={ws} name={name} slug={slug} />
-      ) : (
-        <>
-          <Alert>{l.error || a.error}</Alert>
-          {l.data && (
-            <SupportOptions
-              ws={ws}
-              owner={owner}
-              channels={l.data.channels}
-              saved={l.reload}
-            />
-          )}
-          <TicketEmailSettings ws={ws} />
-          {l.data?.channels.map((channel: Row) => (
-            <section className="panel" key={channel.id}>
+      </div>
+      <div hidden={tab !== "channels"}>
+        <Alert>{l.error}</Alert>
+        {l.error && (
+          <div className="content-load-recovery">
+            <p>
+              {l.data
+                ? "Showing last-loaded channels. Their status may have changed."
+                : "Channel status is unavailable."}
+            </p>
+            <button onClick={l.reload}>Try again</button>
+          </div>
+        )}
+        {!l.data && !l.error && (
+          <LoadingState label="Loading channel status…" />
+        )}
+        {l.data && (
+          <>
+            <div hidden={!!managed}>
               <div className="section-heading">
-                <div>
-                  <span className="eyebrow">
-                    {channel.kind === "portal"
-                      ? "HELP CENTER + CUSTOMER ACCOUNTS"
-                      : channel.kind === "widget"
-                        ? "A CONVERSATION ON YOUR WEBSITE"
-                        : "YOUR EXISTING HELPDESK"}
-                  </span>
-                  <h2>
-                    {channel.kind === "portal"
-                      ? "Support portal"
-                      : channel.kind === "widget"
-                        ? "Embedded chatbot"
-                        : "Zendesk agent"}
-                  </h2>
-                </div>
-                <Badge
-                  value={channel.published ? "published" : "unpublished"}
-                />
+                <h2>Your channels</h2>
+                <ReadinessLink ws={ws} />
               </div>
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const d = new FormData(e.currentTarget);
-                  void a.run(async () => {
-                    await api(
-                      ws,
-                      `/channels/${channel.id}`,
-                      {
-                        published:
-                          channel.kind === "widget"
-                            ? channel.published
-                            : d.get("published") === "on",
-                        settings: {
-                          origins: String(d.get("origins") ?? "")
-                            .split("\n")
-                            .map((s) => s.trim())
-                            .filter(Boolean),
-                          handoff: d.get("handoff") ?? "native",
-                        },
-                      },
-                      "PUT",
-                    );
-                    l.reload();
-                  });
+              <div className="content-channel-list">
+                {l.data.channels.map((channel: Row) => (
+                  <section
+                    className="panel content-channel-row"
+                    key={channel.id}
+                  >
+                    <div>
+                      <h3>{channelName(channel.kind)}</h3>
+                      <p className="muted">
+                        {channel.kind === "portal"
+                          ? "Your help center and customer accounts."
+                          : channel.kind === "widget"
+                            ? "The pop-up assistant on your website and help center."
+                            : "Support inside your existing helpdesk."}
+                      </p>
+                    </div>
+                    <Badge
+                      value={
+                        l.error
+                          ? "status unavailable"
+                          : channel.published
+                            ? "published"
+                            : "unpublished"
+                      }
+                    />
+                    <button
+                      aria-label={`Manage ${channelName(channel.kind)}`}
+                      onClick={(e) => manage(channel.id, e.currentTarget)}
+                    >
+                      Manage
+                    </button>
+                  </section>
+                ))}
+              </div>
+              <section className="panel content-channel-preferences">
+                <h2>Customer contact settings</h2>
+                <p className="muted">
+                  Choose support options, email replies and attachment
+                  permissions.
+                </p>
+                <div className="button-row">
+                  <button onClick={(e) => manage("support", e.currentTarget)}>
+                    Support options
+                  </button>
+                  <button onClick={(e) => manage("email", e.currentTarget)}>
+                    Email support
+                  </button>
+                  <button
+                    onClick={(e) => manage("attachments", e.currentTarget)}
+                  >
+                    Customer attachments
+                  </button>
+                </div>
+              </section>
+            </div>
+            <div hidden={!managed} className="content-channel-detail">
+              <button
+                onClick={() => {
+                  setManaged("");
+                  requestAnimationFrame(() =>
+                    managementTrigger.current?.focus(),
+                  );
                 }}
               >
-                {channel.kind === "widget" && (
-                  <Field
-                    label="Allowed website origins"
-                    hint="One exact origin per line, for example https://www.yourcompany.com"
-                  >
-                    <textarea
-                      name="origins"
-                      defaultValue={(channel.settings.origins ?? []).join("\n")}
-                    />
-                  </Field>
-                )}
-                {channel.kind !== "zendesk" && (
-                  <Field label="When a person needs to help">
-                    <select
-                      name="handoff"
-                      defaultValue={channel.settings.handoff ?? "native"}
-                    >
-                      <option value="native">
-                        Hand off to Navigated Support inbox
-                      </option>
-                      <option value="zendesk">Create a Zendesk ticket</option>
-                    </select>
-                  </Field>
-                )}
-                {channel.kind !== "widget" && (
-                  <label className="checkbox">
-                    <input
-                      name="published"
-                      type="checkbox"
-                      defaultChecked={channel.published}
-                    />
-                    Publish this channel
-                  </label>
-                )}
-                {channel.kind === "widget" && (
-                  <p className="muted">
-                    Turn the chatbot on or off in Support options above. It
-                    appears as a pop-up in your help center and can also be
-                    embedded on your website.
-                  </p>
-                )}
-                <button className="primary" disabled={a.busy}>
-                  Save channel
-                </button>
-              </form>
-              <a
-                className="portal-link"
-                href={`/?workspace=${ws}&view=workflow&channel=${channel.kind}`}
-              >
-                Edit{" "}
-                {channel.kind === "portal"
-                  ? "ticket / email"
-                  : channel.kind === "widget"
-                    ? "live chat"
-                    : "Zendesk"}{" "}
-                workflow →
-              </a>
-              {channel.kind === "portal" && (
-                <a
-                  className="portal-link"
-                  href={`/support/${slug}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  {location.origin}/support/{slug} ↗
-                </a>
-              )}
-              {channel.kind === "widget" && (
-                <>
-                  <p className="muted">
-                    Add this snippet to your website after publishing:
-                  </p>
-                  <code className="copyable">{`<script src="${location.origin}/widget.js" data-workspace="${slug}" defer></script>`}</code>
-                </>
-              )}
-            </section>
-          ))}
-          {owner && <ServiceCredentials ws={ws} />}
+                ← All channels
+              </button>
+              <h2 ref={managementHeading} tabIndex={-1}>
+                {managed === "support"
+                  ? "Support options"
+                  : managed === "email"
+                    ? "Email support"
+                    : managed === "attachments"
+                      ? "Customer attachments"
+                      : channelName(
+                          l.data.channels.find(
+                            (channel: Row) => channel.id === managed,
+                          )?.kind ?? "",
+                        )}
+              </h2>
+              <div hidden={managed !== "support"}>
+                <SupportOptions
+                  ws={ws}
+                  owner={owner}
+                  channels={l.data.channels}
+                  saved={l.reload}
+                />
+              </div>
+              <div hidden={managed !== "email"}>
+                <TicketEmailSettings ws={ws} />
+              </div>
+              <div hidden={managed !== "attachments"}>
+                <AttachmentSettingsPanel ws={ws} owner={owner} />
+              </div>
+              {l.data.channels.map((channel: Row) => (
+                <div key={channel.id} hidden={managed !== channel.id}>
+                  <PublishChannelSettings
+                    ws={ws}
+                    slug={slug}
+                    channel={channel}
+                    reload={l.reload}
+                    supportOptions={() => setManaged("support")}
+                  />
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      {owner && (
+        <div hidden={tab !== "developer"}>
+          <ServiceCredentials ws={ws} />
           <section className="panel">
             <h2>Identify customers from your website</h2>
-            <p className="muted">
-              Sign short-lived customer identities on your own server. The
-              signing secret must never be included in browser code.
+            <p>
+              Sign short-lived customer identities on your server. Keep the
+              signing key out of browser code.
             </p>
-            <button
-              onClick={() =>
-                void a.run(async () =>
-                  setSecret((await api(ws, "/identity-key", {})).secret),
-                )
-              }
-            >
-              Generate / rotate identity signing key
-            </button>
+            <Alert>{connections.error || a.error}</Alert>
+            {connections.error ? (
+              <button onClick={connections.reload}>
+                Try loading signing-key status again
+              </button>
+            ) : !connections.data ? (
+              <LoadingState label="Loading signing-key status…" />
+            ) : (
+              <>
+                <p className="muted">
+                  {identityConfigured
+                    ? "A signing key is configured. Rotating it replaces the current key. Update your website server to use the new key; identities signed with the previous key will stop working."
+                    : "Create a signing key, then add it to your website server to identify signed-in customers."}
+                </p>
+                <button
+                  disabled={a.busy}
+                  onClick={() => {
+                    if (a.busy) return;
+                    if (
+                      identityConfigured &&
+                      !confirm(
+                        "Rotate the identity signing key? The current key will stop working. You must update your website server with the new key before customers can use signed identities again.",
+                      )
+                    )
+                      return;
+                    void a.run(
+                      async () => {
+                        setSecret((await api(ws, "/identity-key", {})).secret);
+                        connections.reload();
+                      },
+                      identityConfigured
+                        ? "Signing key rotated. Update your website server with the new key."
+                        : "Signing key created. Add it to your website server.",
+                    );
+                  }}
+                >
+                  {a.busy
+                    ? "Working…"
+                    : identityConfigured
+                      ? "Rotate identity signing key"
+                      : "Create identity signing key"}
+                </button>
+              </>
+            )}
+            {a.success && (
+              <p role="status" className="success">
+                {a.success}
+              </p>
+            )}
             {secret && (
               <Field label="Copy this key now; it is shown only once">
                 <input
@@ -4121,9 +4185,178 @@ function PublishPage({
               </Field>
             )}
           </section>
+        </div>
+      )}
+    </div>
+  );
+}
+function PublishChannelSettings({
+  ws,
+  slug,
+  channel,
+  reload,
+  supportOptions,
+}: {
+  ws: string;
+  slug: string;
+  channel: Row;
+  reload: () => void;
+  supportOptions: () => void;
+}) {
+  const a = useAction();
+  const saved = {
+    origins: (channel.settings.origins ?? []).join("\n"),
+    handoff: channel.settings.handoff ?? "native",
+    published: channel.published,
+  };
+  const [draft, setDraft] = useState(saved);
+  useEffect(
+    () => setDraft(saved),
+    [saved.origins, saved.handoff, saved.published],
+  );
+  const dirty =
+    draft.origins !== saved.origins ||
+    draft.handoff !== saved.handoff ||
+    draft.published !== saved.published;
+  useUnsavedChanges(dirty);
+  return (
+    <section
+      className="panel"
+      aria-label={`${channel.kind === "portal" ? "Support portal" : channel.kind === "widget" ? "Chat widget" : "Zendesk"} settings`}
+    >
+      <Alert>{a.error}</Alert>
+      {a.success && (
+        <p className="success" role="status">
+          {a.success}
+        </p>
+      )}
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          void a.run(async () => {
+            await api(
+              ws,
+              `/channels/${channel.id}`,
+              {
+                published:
+                  channel.kind === "widget"
+                    ? channel.published
+                    : draft.published,
+                settings: {
+                  origins: draft.origins
+                    .split("\n")
+                    .map((value: string) => value.trim())
+                    .filter(Boolean),
+                  handoff: draft.handoff,
+                },
+              },
+              "PUT",
+            );
+            reload();
+          }, "Channel settings saved.");
+        }}
+      >
+        {channel.kind === "widget" && (
+          <Field
+            label="Allowed website origins"
+            hint="One exact origin per line, for example https://www.yourcompany.com"
+          >
+            <textarea
+              name="origins"
+              value={draft.origins}
+              onChange={(e) => setDraft({ ...draft, origins: e.target.value })}
+            />
+          </Field>
+        )}
+        {channel.kind !== "zendesk" && (
+          <Field label="When a person needs to help">
+            <select
+              name="handoff"
+              value={draft.handoff}
+              onChange={(e) => setDraft({ ...draft, handoff: e.target.value })}
+            >
+              <option value="native">
+                Hand off to Navigated Support inbox
+              </option>
+              <option value="zendesk">Create a Zendesk ticket</option>
+            </select>
+          </Field>
+        )}
+        {channel.kind !== "widget" && (
+          <label className="checkbox">
+            <input
+              name="published"
+              type="checkbox"
+              checked={draft.published}
+              onChange={(e) =>
+                setDraft({ ...draft, published: e.target.checked })
+              }
+            />
+            Publish this channel
+          </label>
+        )}
+        {channel.kind === "widget" && (
+          <p className="muted">
+            Turn the chatbot on or off in{" "}
+            <button type="button" className="link" onClick={supportOptions}>
+              Support options
+            </button>
+            . It appears in your help center and can also be embedded on your
+            website.
+          </p>
+        )}
+        <div className="content-save-bar">
+          <span role="status">
+            {dirty ? "Unsaved changes" : "All changes saved"}
+          </span>
+          <div className="button-row">
+            <button className="primary" disabled={a.busy || !dirty}>
+              {a.busy ? "Saving…" : "Save channel"}
+            </button>
+            <button
+              type="button"
+              disabled={a.busy || !dirty}
+              onClick={() => {
+                if (confirmDiscardChanges("Discard unsaved channel changes?"))
+                  setDraft(saved);
+              }}
+            >
+              Discard changes
+            </button>
+          </div>
+        </div>
+      </form>
+      <a
+        className="portal-link"
+        href={`/?workspace=${ws}&view=workflow&channel=${channel.kind}`}
+      >
+        Edit{" "}
+        {channel.kind === "portal"
+          ? "ticket / email"
+          : channel.kind === "widget"
+            ? "live chat"
+            : "Zendesk"}{" "}
+        workflow →
+      </a>
+      {channel.kind === "portal" && (
+        <a
+          className="portal-link"
+          href={`/support/${slug}`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          Open support portal ↗
+        </a>
+      )}
+      {channel.kind === "widget" && (
+        <>
+          <p className="muted">
+            Add this snippet to your website after publishing:
+          </p>
+          <code className="copyable">{`<script src="${location.origin}/widget.js" data-workspace="${slug}" defer></script>`}</code>
         </>
       )}
-    </>
+    </section>
   );
 }
 function ServiceCredentials({ ws }: { ws: string }) {
@@ -4214,7 +4447,17 @@ function ServiceCredentials({ ws }: { ws: string }) {
     </section>
   );
 }
-function TeamPage({ ws }: { ws: string }) {
+function TeamPage({
+  ws,
+  owner,
+  userId,
+  workspaceName,
+}: {
+  ws: string;
+  owner: boolean;
+  userId: string;
+  workspaceName: string;
+}) {
   const l = useLoad(() => api(ws, "/members"), [ws]),
     a = useAction();
   return (
@@ -4263,6 +4506,41 @@ function TeamPage({ ws }: { ws: string }) {
                 <small>{m.email}</small>
               </div>
               <Badge value={m.role} />
+              <div className="team-member-actions">
+                {owner && m.role !== "owner" && m.user_id !== userId ? (
+                  <button
+                    disabled={a.busy}
+                    aria-label={`Remove access for ${m.name}`}
+                    onClick={() => {
+                      if (
+                        !confirm(
+                          `Remove ${m.name} (${m.email}) from ${workspaceName}? They will lose access to this workspace. Their past activity will remain in the audit history.`,
+                        )
+                      )
+                        return;
+                      void a.run(async () => {
+                        await api(
+                          ws,
+                          `/members/${encodeURIComponent(m.user_id)}`,
+                          undefined,
+                          "DELETE",
+                        );
+                        l.reload();
+                      }, `Access removed for ${m.name}.`);
+                    }}
+                  >
+                    Remove access
+                  </button>
+                ) : (
+                  <small>
+                    {m.role === "owner"
+                      ? "Owner access is protected"
+                      : m.user_id === userId
+                        ? "Your account"
+                        : "Only the owner can remove access"}
+                  </small>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -4278,7 +4556,8 @@ function TeamPage({ ws }: { ws: string }) {
 }
 function AgentSettingsPage({ ws }: { ws: string }) {
   const l = useLoad(() => api(ws, ""), [ws]),
-    a = useAction();
+    a = useAction(),
+    draft = useSettingsForm(ws);
   const settings = l.data?.workspace.settings;
   return (
     <>
@@ -4292,6 +4571,8 @@ function AgentSettingsPage({ ws }: { ws: string }) {
       {settings && (
         <section className="panel">
           <form
+            ref={draft.ref}
+            onChange={draft.onChange}
             onSubmit={(e) => {
               e.preventDefault();
               const d = new FormData(e.currentTarget);
@@ -4313,6 +4594,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
                   },
                   "PUT",
                 );
+                draft.saved();
                 l.reload();
               }, "Workspace settings saved.");
             }}
@@ -4323,6 +4605,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
             >
               <textarea
                 name="instructions"
+                disabled={a.busy}
                 defaultValue={settings.instructions}
                 rows={5}
               />
@@ -4332,6 +4615,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
                 <select
                   aria-label="Response provider"
                   name="responseProvider"
+                  disabled={a.busy}
                   defaultValue={settings.responseProvider ?? "openai"}
                 >
                   {Object.entries(MODEL_PROVIDERS).map(([id, p]) => (
@@ -4344,6 +4628,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
               <Field label="Response model">
                 <input
                   name="model"
+                  disabled={a.busy}
                   defaultValue={settings.model}
                   required
                   maxLength={200}
@@ -4353,6 +4638,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
                 <select
                   aria-label="Embedding provider"
                   name="embeddingProvider"
+                  disabled={a.busy}
                   defaultValue={settings.embeddingProvider ?? "openai"}
                 >
                   {EmbeddingProvider.options.map((id) => (
@@ -4368,6 +4654,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
               >
                 <input
                   name="embeddingModel"
+                  disabled={a.busy}
                   defaultValue={
                     settings.embeddingModel ?? "text-embedding-3-small"
                   }
@@ -4381,6 +4668,7 @@ function AgentSettingsPage({ ws }: { ws: string }) {
               >
                 <input
                   name="embeddingDimensions"
+                  disabled={a.busy}
                   type="number"
                   min={32}
                   max={4096}
@@ -4391,13 +4679,18 @@ function AgentSettingsPage({ ws }: { ws: string }) {
               <Field label="Monthly token budget">
                 <input
                   name="budget"
+                  disabled={a.busy}
                   type="number"
                   min="1000"
                   defaultValue={settings.monthlyTokenBudget}
                 />
               </Field>
               <Field label="Reply behavior">
-                <select name="replies" defaultValue={settings.replies}>
+                <select
+                  name="replies"
+                  disabled={a.busy}
+                  defaultValue={settings.replies}
+                >
                   <option value="review">Draft for staff review</option>
                   <option value="automatic">
                     Reply automatically from approved knowledge
@@ -4407,126 +4700,32 @@ function AgentSettingsPage({ ws }: { ws: string }) {
               <Field label="Resolved conversation retention (days)">
                 <input
                   name="retention"
+                  disabled={a.busy}
                   type="number"
                   min="7"
                   defaultValue={settings.retentionDays}
                 />
               </Field>
             </div>
-            <button className="primary" disabled={a.busy}>
-              Save settings
-            </button>
+            <div className="settings-save-actions">
+              <button className="primary" disabled={a.busy || !draft.dirty}>
+                {a.busy ? "Saving…" : "Save settings"}
+              </button>
+              {draft.dirty && (
+                <>
+                  <button
+                    type="button"
+                    disabled={a.busy}
+                    onClick={draft.discard}
+                  >
+                    Discard changes
+                  </button>
+                  <span role="status">Unsaved changes</span>
+                </>
+              )}
+            </div>
           </form>
         </section>
-      )}
-    </>
-  );
-}
-function ActivityPage({ ws, admin }: { ws: string; admin: boolean }) {
-  const l = useLoad(
-      async () => ({
-        ...(await api(ws, "/operations")),
-        ...(admin ? await api(ws, "/operations/jobs") : {}),
-        ...(admin ? await api(ws, "/audit") : {}),
-      }),
-      [ws],
-    ),
-    a = useAction();
-  return (
-    <>
-      <Heading
-        eyebrow="A CLEAR RECORD"
-        title="Activity"
-        action={<button onClick={l.reload}>Refresh</button>}
-      >
-        Confirmed actions, uncertain outcomes, background work, and the
-        decisions behind them.
-      </Heading>
-      <ReadinessLink ws={ws} />
-      <Alert>{l.error || a.error}</Alert>
-      <section className="panel">
-        <h2>Account operations</h2>
-        {l.data?.operations.length ? (
-          l.data.operations.map((o: Row) => (
-            <article className="activity-item" key={o.id}>
-              <div>
-                <Badge value={o.status} />
-                <code>{o.id}</code>
-              </div>
-              <p>{o.error ?? o.resource}</p>
-              {o.receipt && <pre>{JSON.stringify(o.receipt, null, 2)}</pre>}
-              {admin && ["unknown", "sent"].includes(o.status) && (
-                <button
-                  onClick={() =>
-                    void a.run(async () => {
-                      await api(ws, `/operations/${o.id}/reconcile`, {});
-                      l.reload();
-                    })
-                  }
-                >
-                  Look up provider outcome
-                </button>
-              )}
-            </article>
-          ))
-        ) : (
-          <Empty title="Every action will leave a record">
-            Receipts appear here when an agent executes an approved account
-            action.
-          </Empty>
-        )}
-      </section>
-      {admin && (
-        <>
-          <section className="panel">
-            <h2>Background work requiring attention</h2>
-            {l.data?.jobs?.map((j: Row) => (
-              <article className="activity-item" key={j.id}>
-                <strong>{j.name}</strong> <Badge value={j.state} />
-                <p>{j.output?.message ?? JSON.stringify(j.output ?? {})}</p>
-                {j.state === "failed" && (
-                  <button
-                    onClick={() =>
-                      void a.run(async () => {
-                        await api(ws, `/jobs/${j.id}/retry`, {});
-                        l.reload();
-                      })
-                    }
-                  >
-                    Retry job
-                  </button>
-                )}
-              </article>
-            ))}
-            {l.data?.deliveries?.map((d: Row) => (
-              <article key={d.id}>
-                <Badge value={d.status} />
-                <p>{d.error ?? "Support update is queued"}</p>
-              </article>
-            ))}
-            {!l.data?.jobs?.length && !l.data?.deliveries?.length && (
-              <p className="muted">No background work needs attention.</p>
-            )}
-          </section>
-          <section className="panel">
-            <h2>Audit history</h2>
-            <div className="timeline">
-              {l.data?.events?.map((event: Row) => (
-                <div key={event.id}>
-                  <span className="timeline-dot" />
-                  <div>
-                    <strong>{event.kind.replaceAll(".", " · ")}</strong>
-                    <small>{new Date(event.created_at).toLocaleString()}</small>
-                    <details>
-                      <summary>Details</summary>
-                      <pre>{JSON.stringify(event.data, null, 2)}</pre>
-                    </details>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
-        </>
       )}
     </>
   );

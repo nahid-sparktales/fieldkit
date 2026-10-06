@@ -1745,11 +1745,11 @@ export async function createApp(
           requireAdmin(p);
           json(res, {
             jobs: await app.db.rows(
-              "SELECT id,name,state,retry_count,created_on,output FROM jobs.job WHERE data->>'workspaceId'=$1 AND state IN ('failed','retry','active') ORDER BY created_on DESC LIMIT 100",
+              "SELECT j.id,j.name,j.state,j.retry_count,j.created_on,j.output,j.data->>'sourceId' source_id,s.title source_title FROM jobs.job j LEFT JOIN sources s ON s.id=j.data->>'sourceId' AND s.workspace_id=$1 WHERE j.data->>'workspaceId'=$1 AND j.state IN ('failed','retry','active') ORDER BY j.created_on DESC LIMIT 100",
               [ws],
             ),
             deliveries: await app.db.rows(
-              "SELECT id,conversation_id,status,attempts,error FROM deliveries WHERE workspace_id=$1 AND status<>'delivered' ORDER BY created_at DESC LIMIT 100",
+              "SELECT id,conversation_id,status,attempts,error,created_at FROM deliveries WHERE workspace_id=$1 AND status<>'delivered' ORDER BY created_at DESC LIMIT 100",
               [ws],
             ),
           });

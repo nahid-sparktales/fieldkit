@@ -21,6 +21,7 @@ import {
 import "./workflow.css";
 import { WorkflowFocus } from "./WorkflowFocus.js";
 import { useAction } from "./useAction.js";
+import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
 import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
 
 import { GuidedWorkflow, GuidedInsertion } from "./GuidedWorkflow.js";
@@ -57,6 +58,14 @@ const descriptions: Record<NodeType, string> = {
   handoff:
     "Stop automatic processing and pass the conversation to your team through the channel’s configured handoff destination.",
 };
+function initialEditorMode(): "graph" | "guided" {
+  try {
+    const saved = localStorage.getItem("fieldkit.workflow.editor");
+    if (saved === "guided" || saved === "graph") return saved;
+  } catch {}
+  return matchMedia("(max-width: 760px)").matches ? "guided" : "graph";
+}
+
 function Field({
   label,
   children,
@@ -135,25 +144,14 @@ function WorkflowEditor({
     [saved, setSaved] = useState("");
   const [selected, setSelected] = useState("start"),
     [expanded, setExpanded] = useState(false),
-    [showInspector, setShowInspector] = useState(() => {
-      try {
-        return (
-          !matchMedia("(max-width: 760px)").matches ||
-          localStorage.getItem("fieldkit.workflow.editor") !== "guided"
-        );
-      } catch {
-        return true;
-      }
-    });
-  const [editorMode, setEditorMode] = useState<"graph" | "guided">(() => {
-    try {
-      return localStorage.getItem("fieldkit.workflow.editor") === "guided"
-        ? "guided"
-        : "graph";
-    } catch {
-      return "graph";
-    }
-  });
+    [showInspector, setShowInspector] = useState(
+      () =>
+        !matchMedia("(max-width: 760px)").matches ||
+        initialEditorMode() !== "guided",
+    );
+  const [editorMode, setEditorMode] = useState<"graph" | "guided">(
+    initialEditorMode,
+  );
   const canvas = useRef<HTMLDivElement>(null),
     expandToggle = useRef<HTMLButtonElement>(null),
     inspectorToggle = useRef<HTMLButtonElement>(null);
@@ -167,7 +165,7 @@ function WorkflowEditor({
     run: act,
   } = useAction("Workflow request failed");
   const [link, setLink] = useState<{ from: string; port: string } | null>(null),
-    [zoom, setZoom] = useState(0.8),
+    [zoom, setZoom] = useState(1),
     [past, setPast] = useState<Workflow[]>([]),
     [future, setFuture] = useState<Workflow[]>([]);
   const [test, setTest] = useState<Row | null>(null),
@@ -250,6 +248,10 @@ function WorkflowEditor({
       live = false;
     };
   }, [ws]);
+  const workflowDirty =
+    !!definition &&
+    (Boolean(editingSubflow) || JSON.stringify(definition) !== saved);
+  useUnsavedChanges(workflowDirty);
   if (!loaded || !definition)
     return (
       <section className="panel">
@@ -263,7 +265,7 @@ function WorkflowEditor({
     );
   const def = definition,
     resources = loaded.resources,
-    dirty = Boolean(editingSubflow) || JSON.stringify(def) !== saved,
+    dirty = workflowDirty,
     node = def.nodes.find((n) => n.id === selected),
     problems = workflowProblems(def, { subflow: Boolean(editingSubflow) });
   const replace = (next: Workflow, remember = true) => {
@@ -295,7 +297,7 @@ function WorkflowEditor({
     setLink(null);
   };
   const width = Math.max(1080, ...def.nodes.map((n) => n.x + 300)),
-    height = Math.max(850, ...def.nodes.map((n) => n.y + 230));
+    height = Math.max(850, ...def.nodes.map((n) => n.y * 1.5 + 300));
   const changeZoom = (value: number) => {
     const viewport = canvas.current;
     if (!viewport) return;
@@ -320,10 +322,10 @@ function WorkflowEditor({
     )
       return;
     const left = Math.min(...def.nodes.map((n) => n.x)) - 20;
-    const top = Math.min(...def.nodes.map((n) => n.y)) - 24;
+    const top = Math.min(...def.nodes.map((n) => n.y * 1.5)) - 24;
     const right = Math.max(...def.nodes.map((n) => n.x + 280));
     const bottom = Math.max(
-      ...def.nodes.map((n) => n.y + 100 + PORTS[n.type].length * 25),
+      ...def.nodes.map((n) => n.y * 1.5 + 100 + PORTS[n.type].length * 44),
     );
     const next = Math.max(
       0.05,
@@ -513,11 +515,7 @@ function WorkflowEditor({
           value={profile}
           disabled={busy || Boolean(editingSubflow)}
           onChange={(e) => {
-            if (
-              !dirty ||
-              confirm("Discard unsaved changes and switch channel workflows?")
-            )
-              onProfile(e.target.value);
+            if (confirmDiscardChanges()) onProfile(e.target.value);
           }}
         >
           <option value="default">Workspace default</option>
@@ -858,9 +856,11 @@ function WorkflowEditor({
               <span className="wf-canvas-hint">
                 {editorMode === "guided"
                   ? "Choose a step to change its settings and next steps."
-                  : link
-                    ? `Connect ${link.port}: select a step’s input`
-                    : "Drag a step to move it. Connect an outcome to an input."}
+                  : zoom < 1
+                    ? "Overview: use Step settings to edit connections, or zoom to 100% to connect on the graph."
+                    : link
+                      ? `Connect ${link.port}: select a step’s input`
+                      : "Drag a step to move it. Connect an outcome to an input, or use Step settings."}
               </span>
               {link && (
                 <button onClick={() => setLink(null)}>Cancel connection</button>
@@ -918,9 +918,11 @@ function WorkflowEditor({
                         if (!from || !to) return null;
                         const x = from.x + 240,
                           y =
-                            from.y + 77 + PORTS[from.type].indexOf(e.port) * 25,
+                            from.y * 1.5 +
+                            86 +
+                            PORTS[from.type].indexOf(e.port) * 44,
                           tx = to.x + 120,
-                          ty = to.y - 7;
+                          ty = to.y * 1.5;
                         return (
                           <path
                             key={`${e.from}:${e.port}:${e.to}`}
@@ -939,13 +941,13 @@ function WorkflowEditor({
                       <article
                         key={n.id}
                         className={`wf-node ${n.type} ${selected === n.id ? "selected" : ""} ${pathNodes.has(n.id) ? "visited" : ""}`}
-                        style={{ left: n.x, top: n.y }}
+                        style={{ left: n.x, top: n.y * 1.5 }}
                       >
                         {n.type !== "start" && (
                           <button
                             className="wf-input"
                             aria-label={`Connect to ${n.title}`}
-                            disabled={!canEdit}
+                            disabled={!canEdit || zoom < 1}
                             onPointerUp={() => {
                               if (link) connect(link.from, link.port, n.id);
                             }}
@@ -960,6 +962,7 @@ function WorkflowEditor({
                         <button
                           className="wf-node-title"
                           aria-label={`Select ${n.title}`}
+                          disabled={zoom < 0.7}
                           onClick={() => setSelected(n.id)}
                           onPointerDown={(e) => {
                             setSelected(n.id);
@@ -992,7 +995,9 @@ function WorkflowEditor({
                                 Math.min(
                                   3000,
                                   Math.round(
-                                    (d.y + (e.clientY - d.clientY) / zoom) / 10,
+                                    (d.y +
+                                      (e.clientY - d.clientY) / (zoom * 1.5)) /
+                                      10,
                                   ) * 10,
                                 ),
                               );
@@ -1068,7 +1073,7 @@ function WorkflowEditor({
                           {PORTS[n.type].map((port) => (
                             <button
                               key={port}
-                              disabled={!canEdit}
+                              disabled={!canEdit || zoom < 1}
                               className={
                                 link?.from === n.id && link.port === port
                                   ? "connecting"

@@ -8,6 +8,9 @@ export async function verifyInbox(page: Page, customer: Page) {
     name: /What is your return policy/,
   });
   const reply = page.getByLabel("Reply", { exact: true });
+  const management = page.locator(".ticket-management");
+  const manageToggle = management.locator("summary");
+  const filters = queue.getByRole("button", { name: /^Filters/ });
   await expect(page.locator(".support-assistant")).not.toBeVisible();
   await expect(
     page.getByRole("button", { name: "Send reply", exact: true }),
@@ -104,10 +107,14 @@ export async function verifyInbox(page: Page, customer: Page) {
   await expect(original).toHaveCount(0);
   await page.getByLabel("Inbox status", { exact: true }).selectOption("human");
   await expect(original).toBeVisible();
+  await manageToggle.click();
   await page.getByLabel("Assign conversation").selectOption({ index: 1 });
   await expect(
     page.getByText("Assignment updated.", { exact: true }),
   ).toBeVisible();
+  await manageToggle.click();
+  await filters.click();
+  await expect(filters).toHaveAttribute("aria-expanded", "true");
   await page.getByLabel("Filter by assignee").selectOption("unassigned");
   await expect(
     page.getByRole("heading", { name: "No matching conversations" }),
@@ -115,6 +122,8 @@ export async function verifyInbox(page: Page, customer: Page) {
   await page
     .getByRole("button", { name: "Clear filters", exact: true })
     .click();
+  await filters.click();
+  await expect(page.getByLabel("Filter by assignee")).not.toBeVisible();
   // Tabs have one keyboard stop and arrow-key navigation.
   await page.getByRole("tab", { name: "Conversation", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -167,7 +176,8 @@ export async function verifyInbox(page: Page, customer: Page) {
   const transcriptBox = (await page
     .locator("#ticket-panel-conversation")
     .boundingBox())!;
-  expect(composerBox.height).toBeLessThan(120);
+  expect(composerBox.height).toBeGreaterThanOrEqual(160);
+  expect(composerBox.height).toBeLessThan(260);
   expect(transcriptBox.height).toBeGreaterThan(composerBox.height * 1.5);
   await reply.focus();
   expect(
@@ -176,30 +186,31 @@ export async function verifyInbox(page: Page, customer: Page) {
         composerBox.height,
     ),
   ).toBeLessThan(1);
-  const size = page.getByRole("slider", {
-    name: "Conversation size",
-    exact: true,
-  });
-  await size.fill("50");
-  const compactHeight = (await thread.boundingBox())!.height;
-  await size.focus();
-  await size.press("End");
-  await expect(size).toHaveValue("80");
-  expect((await thread.boundingBox())!.height).toBeGreaterThan(compactHeight);
-  await size.fill("70");
+  await expect(
+    page.getByRole("slider", { name: "Conversation size", exact: true }),
+  ).toHaveCount(0);
   const originalBox = (await thread.boundingBox())!;
   const queueBox = (await queue.boundingBox())!;
-  expect(queueBox.height).toBeGreaterThanOrEqual(520);
-  // The queue grows with its rows; it must not turn back into a tiny nested scroller.
+  const viewportHeight = page.viewportSize()!.height;
+  expect(queueBox.x + queueBox.width).toBeLessThanOrEqual(originalBox.x + 1);
+  expect(Math.abs(queueBox.y - originalBox.y)).toBeLessThan(3);
+  expect(Math.abs(queueBox.height - originalBox.height)).toBeLessThan(3);
+  expect(queueBox.y).toBeGreaterThanOrEqual(0);
+  expect(queueBox.y + queueBox.height).toBeLessThanOrEqual(viewportHeight + 1);
+  expect(originalBox.y + originalBox.height).toBeLessThanOrEqual(
+    viewportHeight + 1,
+  );
+  // Long queues scroll inside their pane, keeping the reply area in view.
   expect(
     await queue
       .locator(".conversation-items")
-      .evaluate((el) => el.scrollHeight <= el.clientHeight + 1),
+      .evaluate((el) =>
+        ["auto", "scroll"].includes(getComputedStyle(el).overflowY),
+      ),
   ).toBe(true);
-  expect(queueBox.y).toBeGreaterThanOrEqual(
-    originalBox.y + originalBox.height - 1,
-  );
-  expect(Math.abs(queueBox.width - originalBox.width)).toBeLessThan(3);
+  await expect(reply).toBeInViewport();
+  await expect(management).not.toHaveAttribute("open");
+  await manageToggle.click();
   await expect(
     page.getByRole("button", { name: "Mark as unread", exact: true }),
   ).toBeVisible();
@@ -209,12 +220,17 @@ export async function verifyInbox(page: Page, customer: Page) {
   await expect(
     page.getByRole("button", { name: "Mark as read", exact: true }),
   ).toBeVisible();
+  await manageToggle.click();
   const sections = queue.getByRole("group", { name: "Inbox sections" });
   await sections.getByRole("button", { name: /^Unread/ }).click();
   await expect(original).toBeVisible();
+  await manageToggle.click();
   await page.getByRole("button", { name: "Mark as read", exact: true }).click();
+  await manageToggle.click();
   await expect(original).toHaveCount(0);
-  await sections.getByRole("button", { name: /^Read / }).click();
+  await filters.click();
+  await page.getByLabel("Filter by read status").selectOption("read");
+  await filters.click();
   await expect(original).toBeVisible();
   await sections.getByRole("button", { name: /^Open/ }).click();
   await reply.fill("Draft while expanded");
@@ -222,9 +238,9 @@ export async function verifyInbox(page: Page, customer: Page) {
     .getByRole("button", { name: "Expand conversation", exact: true })
     .click();
   await expect(queue).toBeHidden();
-  expect((await thread.boundingBox())!.height).toBeGreaterThan(
-    originalBox.height + 200,
-  );
+  const expandedBox = (await thread.boundingBox())!;
+  expect(expandedBox.width).toBeGreaterThan(originalBox.width + 200);
+  expect(Math.abs(expandedBox.height - originalBox.height)).toBeLessThan(3);
   await expect(reply).toHaveValue("Draft while expanded");
   await page.screenshot({
     path: "test-results/inbox-expanded.png",
@@ -249,6 +265,11 @@ export async function verifyInbox(page: Page, customer: Page) {
   await expect(
     page.getByRole("region", { name: "Selected conversation" }),
   ).not.toBeVisible();
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
   await page.screenshot({
     path: "test-results/inbox-mobile-queue.png",
     fullPage: true,
@@ -256,6 +277,10 @@ export async function verifyInbox(page: Page, customer: Page) {
   });
   await shipping.click();
   await expect(reply).toHaveValue("Shipping draft kept separately");
+  await expect(reply).toBeInViewport();
+  await expect(
+    page.getByRole("button", { name: "Send reply", exact: true }),
+  ).toBeInViewport();
   await expect(
     page
       .getByRole("heading", { name: "Shipping estimate", exact: true })

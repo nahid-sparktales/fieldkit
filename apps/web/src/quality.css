@@ -289,3 +289,87 @@
 .quality-single {
   grid-template-columns: 1fr;
 }
+
+/* Test Lab keeps authoring, run setup, and evidence in focused views. */
+.test-lab-page [hidden] {
+  display: none !important;
+}
+.test-lab-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--line);
+}
+.test-lab-tabs button {
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  min-height: 44px;
+  padding: 10px 18px;
+}
+.test-lab-tabs button[aria-current="page"] {
+  border-bottom-color: var(--accent);
+  color: var(--accent);
+  background: #e8f3ed;
+}
+.test-lab-workspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.test-lab-workspace > .panel {
+  min-width: 0;
+}
+.test-lab-savebar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 0;
+  margin: -16px 0 12px;
+  background: white;
+  border-bottom: 1px solid var(--line);
+}
+.test-lab-savebar h2 {
+  margin: 0 0 4px;
+}
+.test-lab-savebar p {
+  margin: 0;
+  font-size: 13px;
+}
+.test-lab-savebar .button-row {
+  margin: 0;
+}
+.test-lab-page .quality-editor > fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.test-lab-run-version {
+  padding: 12px 16px;
+  background: #edf5ef;
+  border-left: 3px solid var(--accent);
+}
+@media (max-width: 900px) {
+  .test-lab-workspace {
+    grid-template-columns: 1fr;
+  }
+  .test-lab-suites .quality-list-item {
+    margin-top: 8px;
+  }
+  .test-lab-savebar {
+    gap: 8px;
+  }
+  .test-lab-savebar .button-row {
+    margin-left: auto;
+  }
+  .test-lab-tabs button {
+    flex: 1;
+    padding: 10px 8px;
+  }
+}

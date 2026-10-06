@@ -13,7 +13,11 @@ export function SlaPage({ ws, role }: { ws: string; role: string }) {
     a = useAction();
   useSlaEvents(ws, l.reload);
   const [filter, setFilter] = useState("actionable"),
-    [tab, setTab] = useState("queue");
+    [tab, setTab] = useState("queue"),
+    [loadedAt, setLoadedAt] = useState("");
+  useEffect(() => {
+    if (l.data) setLoadedAt(new Date().toLocaleTimeString());
+  }, [l.data]);
   const rows = (l.data?.obligations ?? []).filter(
     (o: Row) =>
       filter === "all" || (o.state !== "paused" && o.urgency !== "on_track"),
@@ -29,7 +33,23 @@ export function SlaPage({ ws, role }: { ws: string; role: string }) {
         </p>
       </header>
       <Notice action={a} error={l.error} />
-      <div className="quality-actions">
+      {l.error && (
+        <div className="load-recovery">
+          <p>
+            {l.data
+              ? `Showing results loaded at ${loadedAt}. The latest update failed.`
+              : "Response deadlines could not be loaded. Try again to see their current status."}
+          </p>
+          <button disabled={l.loading} onClick={l.reload}>
+            Try again
+          </button>
+        </div>
+      )}
+      <div
+        className="quality-actions sla-sections"
+        role="group"
+        aria-label="Needs attention sections"
+      >
         <button aria-pressed={tab === "queue"} onClick={() => setTab("queue")}>
           Deadlines
         </button>
@@ -38,7 +58,9 @@ export function SlaPage({ ws, role }: { ws: string; role: string }) {
           onClick={() => setTab("notifications")}
         >
           My notifications ·{" "}
-          {(l.data?.notifications ?? []).filter((n: Row) => !n.read_at).length}
+          {l.data
+            ? l.data.notifications.filter((n: Row) => !n.read_at).length
+            : "—"}
         </button>
         <button
           aria-pressed={tab === "policy"}
@@ -46,9 +68,13 @@ export function SlaPage({ ws, role }: { ws: string; role: string }) {
         >
           SLA policy
         </button>
-        <button onClick={l.reload}>Refresh</button>
+        <button className="sla-refresh" disabled={l.loading} onClick={l.reload}>
+          Refresh
+        </button>
       </div>
-      {!l.data && <LoadingState label="Loading response deadlines…" />}
+      {l.loading && !l.data && (
+        <LoadingState label="Loading response deadlines…" />
+      )}
       {tab === "queue" && l.data && (
         <section className="panel">
           <div className="sla-title">

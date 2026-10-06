@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
 import { LoadingState } from "./ui.js";
 import { api, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
@@ -8,6 +9,20 @@ import {
   EvaluationInput,
 } from "../../../packages/platform/src/quality-contracts.js";
 import { MODEL_PROVIDERS } from "../../../packages/platform/src/model-providers.js";
+function jsonObject(text: string): Row {
+  const value = JSON.parse(text);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Enter a JSON object with property names and values.");
+  return value;
+}
+function jsonError(text: string) {
+  try {
+    jsonObject(text);
+    return "";
+  } catch {
+    return "Enter a valid JSON object before saving.";
+  }
+}
 const blank = () => ({
   id: crypto.randomUUID(),
   name: "New case",
@@ -32,7 +47,28 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
     [judge, setJudge] = useState(true),
     [judgeModel, setJudgeModel] = useState(""),
     [judgeProvider, setJudgeProvider] = useState("");
-  const [fixtureText, setFixtureText] = useState("{}");
+  const [savedSuite, setSavedSuite] = useState<Row | null>(null),
+    [jsonDrafts, setJsonDrafts] = useState<Record<string, string>>({}),
+    [section, setSection] = useState<"cases" | "run" | "results">("cases");
+  const dirty =
+    !!suite &&
+    (!suite.id ||
+      JSON.stringify(suite) !== JSON.stringify(savedSuite) ||
+      Object.keys(jsonDrafts).length > 0);
+  const invalidJson = Object.values(jsonDrafts).some(
+    (text) => !!jsonError(text),
+  );
+  useUnsavedChanges(dirty);
+  useEffect(() => {
+    setSuite(null);
+    setSavedSuite(null);
+    setJsonDrafts({});
+    setCaseIndex(0);
+    setJobId("");
+    setSection("cases");
+  }, [ws]);
+  const editJson = (key: string, text: string) =>
+    setJsonDrafts((old) => ({ ...old, [key]: text }));
   const importShadow = new URLSearchParams(location.search).get("importShadow");
   const importConversation = new URLSearchParams(location.search).get(
       "importConversation",
@@ -50,12 +86,24 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           }
         : s,
     );
-  const select = (s: Row, i = 0) => {
+  const select = (s: Row) => {
     setSuite(structuredClone(s));
-    setCaseIndex(i);
-    setFixtureText(JSON.stringify(s.cases[i]?.fixtures ?? {}, null, 2));
+    setSavedSuite(s.id ? structuredClone(s) : null);
+    setCaseIndex(0);
+    setJsonDrafts({});
     a.setError("");
     a.setSuccess("");
+  };
+  const chooseSuite = (s: Row) => {
+    if (a.busy) return;
+    if (s.id && s.id === suite?.id) return;
+    if (
+      dirty &&
+      !confirmDiscardChanges("Discard unsaved changes to this test suite?")
+    )
+      return;
+    select(s);
+    setSection("cases");
   };
   useEffect(() => {
     const id = new URLSearchParams(location.search).get("suiteId");
@@ -64,24 +112,69 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
       if (found) select(found);
     }
   }, [suites.data, suite?.id]);
-  const syncFixtures = (): Row | null => {
-    if (!suite) return null;
-    const value = {
-      ...suite,
-      cases: suite.cases.map((v: Row, i: number) =>
-        i === caseIndex ? { ...v, fixtures: JSON.parse(fixtureText) } : v,
-      ),
-    };
-    setSuite(value);
-    return value;
-  };
-  const chooseCase = (i: number) =>
+  const suiteWithJson = (): Row => ({
+    ...suite!,
+    cases: suite!.cases.map((v: Row) => ({
+      ...v,
+      fixtures:
+        jsonDrafts[`fixtures:${v.id}`] === undefined
+          ? v.fixtures
+          : jsonObject(jsonDrafts[`fixtures:${v.id}`]),
+      turns: v.turns.map((t: Row, i: number) => {
+        const text = jsonDrafts[`parameters:${v.id}:${i}`];
+        if (text === undefined) return t;
+        const parameters = jsonObject(text);
+        return {
+          ...t,
+          expected: {
+            ...t.expected,
+            parameters: Object.keys(parameters).length ? parameters : undefined,
+          },
+        };
+      }),
+    })),
+  });
+  const saveSuite = () =>
     void a.run(async () => {
-      const s = syncFixtures();
-      if (s) select(s, i);
-    });
+      const s = suiteWithJson();
+      const value = SuiteInput.parse({
+        name: s.name,
+        revision: s.revision,
+        cases: s.cases,
+      });
+      const saved = await api(
+        ws,
+        `/evaluation/suites${s.id ? "/" + s.id : ""}`,
+        value,
+        s.id ? "PUT" : "POST",
+      );
+      const selectedCase = s.cases[caseIndex]?.id;
+      select(saved);
+      setCaseIndex(
+        Math.max(
+          0,
+          saved.cases.findIndex((v: Row) => v.id === selectedCase),
+        ),
+      );
+      suites.reload();
+    }, "Suite saved.");
+  const removeTurn = (i: number) => {
+    const prefix = `parameters:${c.id}:`;
+    setJsonDrafts((old) =>
+      Object.fromEntries(
+        Object.entries(old).flatMap(([key, value]) => {
+          if (!key.startsWith(prefix)) return [[key, value]];
+          const index = Number(key.slice(prefix.length));
+          return index === i
+            ? []
+            : [[`${prefix}${index > i ? index - 1 : index}`, value]];
+        }),
+      ),
+    );
+    updateCase({ turns: c.turns.filter((_: Row, j: number) => j !== i) });
+  };
   return (
-    <div className="quality-page">
+    <div className="quality-page test-lab-page">
       <header>
         <span className="eyebrow">REPEATABLE CUSTOMER SCENARIOS</span>
         <h1>Test Lab</h1>
@@ -94,6 +187,25 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           Model calls use your connected account.
         </p>
       </header>
+      <nav className="test-lab-tabs" aria-label="Test Lab sections">
+        {(
+          [
+            ["cases", "Cases"],
+            ["run", "Run setup"],
+            ["results", "Results"],
+          ] as const
+        )
+          .filter(([value]) => admin || value !== "run")
+          .map(([value, label]) => (
+            <button
+              key={value}
+              aria-current={section === value ? "page" : undefined}
+              onClick={() => setSection(value)}
+            >
+              {label}
+            </button>
+          ))}
+      </nav>
       <Notice action={a} error={suites.error || runs.error} />
       {(importConversation || importGap || importShadow) && admin && (
         <section className="panel">
@@ -103,8 +215,16 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           </p>
           <button
             disabled={a.busy}
-            onClick={() =>
+            onClick={() => {
+              if (a.busy) return;
               void a.run(async () => {
+                if (
+                  dirty &&
+                  !confirmDiscardChanges(
+                    "Discard unsaved changes before importing a case?",
+                  )
+                )
+                  return;
                 const draft = await api(
                   ws,
                   importShadow
@@ -118,15 +238,15 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                   revision: 0,
                   cases: [draft],
                 });
-              })
-            }
+              });
+            }}
           >
             Import draft case
           </button>
         </section>
       )}
-      <div className="quality-grid">
-        <section className="panel">
+      <div className="test-lab-workspace" hidden={section === "results"}>
+        <section className="panel test-lab-suites">
           <h2>Test suites</h2>
           <p className="muted">
             Group related customer scenarios so you can test them together.
@@ -137,8 +257,13 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           {admin && (
             <button
               className="primary"
+              disabled={a.busy}
               onClick={() =>
-                select({ name: "New suite", revision: 0, cases: [blank()] })
+                chooseSuite({
+                  name: "New suite",
+                  revision: 0,
+                  cases: [blank()],
+                })
               }
             >
               New suite
@@ -149,7 +274,8 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
               className="quality-list-item"
               key={s.id}
               aria-pressed={suite?.id === s.id}
-              onClick={() => select(s)}
+              disabled={a.busy}
+              onClick={() => chooseSuite(s)}
             >
               {s.name}
               <small>
@@ -195,8 +321,51 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
         )}
         {suite && (
           <section className="panel quality-editor">
-            <h2>Edit suite</h2>
-            <fieldset disabled={!admin || a.busy}>
+            <div className="test-lab-savebar">
+              <div>
+                <h2>{section === "run" ? "Run setup" : "Edit suite"}</h2>
+                <p role="status">
+                  {dirty
+                    ? "Unsaved changes"
+                    : `Saved · revision ${suite.revision}`}
+                </p>
+                {invalidJson && (
+                  <p className="error">Fix the JSON fields before saving.</p>
+                )}
+              </div>
+              {admin && (
+                <div className="button-row">
+                  {dirty && (
+                    <button
+                      disabled={a.busy}
+                      onClick={() => {
+                        if (
+                          !confirmDiscardChanges(
+                            "Discard unsaved changes to this test suite?",
+                          )
+                        )
+                          return;
+                        if (savedSuite) select(savedSuite);
+                        else {
+                          setSuite(null);
+                          setJsonDrafts({});
+                        }
+                      }}
+                    >
+                      Discard changes
+                    </button>
+                  )}
+                  <button
+                    className="primary"
+                    disabled={a.busy || !dirty}
+                    onClick={saveSuite}
+                  >
+                    {a.busy ? "Saving…" : "Save suite"}
+                  </button>
+                </div>
+              )}
+            </div>
+            <fieldset hidden={section !== "cases"} disabled={!admin || a.busy}>
               <Field label="Suite name">
                 <input
                   value={suite.name}
@@ -206,7 +375,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
               <Field label="Case">
                 <select
                   value={caseIndex}
-                  onChange={(e) => chooseCase(Number(e.target.value))}
+                  onChange={(e) => setCaseIndex(Number(e.target.value))}
                 >
                   {suite.cases.map((v: Row, i: number) => (
                     <option key={v.id} value={i}>
@@ -215,6 +384,12 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                   ))}
                 </select>
               </Field>
+              {!c && (
+                <p className="quality-empty">
+                  No cases in this suite. Add a case to write a customer
+                  scenario.
+                </p>
+              )}
               {c?.unavailable ? (
                 <p>
                   This case is unavailable because its source conversation was
@@ -350,30 +525,23 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                               </select>
                             </Field>
                             <JsonEditor
+                              key={`${c.id}:${i}`}
                               label="Exact action parameters"
-                              value={t.expected.parameters ?? {}}
-                              save={(v) =>
-                                expected({
-                                  parameters:
-                                    v === null
-                                      ? null
-                                      : Object.keys(v).length
-                                        ? v
-                                        : undefined,
-                                })
+                              value={
+                                jsonDrafts[`parameters:${c.id}:${i}`] ??
+                                JSON.stringify(
+                                  t.expected.parameters ?? {},
+                                  null,
+                                  2,
+                                )
+                              }
+                              onChange={(text) =>
+                                editJson(`parameters:${c.id}:${i}`, text)
                               }
                             />
                           </details>
                           {c.turns.length > 1 && (
-                            <button
-                              onClick={() =>
-                                updateCase({
-                                  turns: c.turns.filter(
-                                    (_: Row, j: number) => j !== i,
-                                  ),
-                                })
-                              }
-                            >
+                            <button onClick={() => removeTurn(i)}>
                               Remove turn {i + 1}
                             </button>
                           )}
@@ -401,8 +569,13 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                         <textarea
                           rows={12}
                           spellCheck={false}
-                          value={fixtureText}
-                          onChange={(e) => setFixtureText(e.target.value)}
+                          value={
+                            jsonDrafts[`fixtures:${c.id}`] ??
+                            JSON.stringify(c.fixtures ?? {}, null, 2)
+                          }
+                          onChange={(e) =>
+                            editJson(`fixtures:${c.id}`, e.target.value)
+                          }
                         />
                       </Field>
                       <Inspect
@@ -444,63 +617,53 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
               )}
               <div className="button-row">
                 <button
-                  onClick={() =>
-                    void a.run(async () => {
-                      const s = syncFixtures();
-                      if (s)
-                        select(
-                          { ...s, cases: [...s.cases, blank()] },
-                          s.cases.length,
-                        );
-                    })
-                  }
+                  onClick={() => {
+                    setSuite({ ...suite, cases: [...suite.cases, blank()] });
+                    setCaseIndex(suite.cases.length);
+                  }}
                 >
                   Add case
                 </button>
                 <button
-                  onClick={() =>
-                    select({
+                  disabled={!c}
+                  onClick={() => {
+                    setSuite({
                       ...suite,
                       cases: suite.cases.filter(
                         (_: Row, i: number) => i !== caseIndex,
                       ),
-                    })
-                  }
+                    });
+                    setJsonDrafts((old) =>
+                      Object.fromEntries(
+                        Object.entries(old).filter(
+                          ([key]) =>
+                            key !== `fixtures:${c.id}` &&
+                            !key.startsWith(`parameters:${c.id}:`),
+                        ),
+                      ),
+                    );
+                    setCaseIndex(Math.max(0, caseIndex - 1));
+                  }}
                 >
                   Remove case
                 </button>
-                <button
-                  className="primary"
-                  onClick={() =>
-                    void a.run(async () => {
-                      const s = syncFixtures()!;
-                      const value = SuiteInput.parse({
-                        name: s.name,
-                        revision: s.revision,
-                        cases: s.cases,
-                      });
-                      const saved = await api(
-                        ws,
-                        `/evaluation/suites${s.id ? "/" + s.id : ""}`,
-                        value,
-                        s.id ? "PUT" : "POST",
-                      );
-                      select(saved);
-                      suites.reload();
-                    }, "Suite saved.")
-                  }
-                >
-                  {a.busy ? "Saving…" : "Save suite"}
-                </button>
               </div>
             </fieldset>
-            {admin && suite.id && (
-              <fieldset disabled={a.busy}>
+            {admin && (
+              <fieldset hidden={section !== "run"} disabled={a.busy}>
                 <h3>Run saved cases</h3>
                 <p>
-                  Each run snapshots the saved cases, expanded workflow
-                  components, policies, models, and knowledge versions. Save
-                  your edits before launching.
+                  Each run snapshots saved cases, workflow components, policies,
+                  models, and knowledge versions.
+                </p>
+                <p className="test-lab-run-version" role="status">
+                  {!suite.id
+                    ? "Save this suite before running it."
+                    : dirty
+                      ? `Unsaved changes · save before running revision ${suite.revision}.`
+                      : !suite.cases.length
+                        ? "Add a case before running this suite."
+                        : `Ready to run ${suite.name} · saved revision ${suite.revision}`}
                 </p>
                 <Field label="Run token cap">
                   <input
@@ -610,8 +773,18 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                 </p>
                 <button
                   className="primary"
+                  disabled={
+                    !suite.id || dirty || !suite.cases.length || invalidJson
+                  }
                   onClick={() =>
                     void a.run(async () => {
+                      if (
+                        !suite.id ||
+                        dirty ||
+                        !suite.cases.length ||
+                        invalidJson
+                      )
+                        return;
                       const run = EvaluationInput.parse({
                         suiteId: suite.id,
                         tokenCap: Number(cap),
@@ -634,6 +807,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
                       });
                       const saved = await api(ws, "/evaluation/runs", run);
                       setJobId(saved.id);
+                      setSection("results");
                       runs.reload();
                     }, "Test run queued.")
                   }
@@ -645,7 +819,7 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           </section>
         )}
       </div>
-      <section className="panel">
+      <section className="panel" hidden={section !== "results"}>
         <h2>Run history and comparisons</h2>
         {!runs.data && !runs.error && (
           <LoadingState label="Loading run history…" />
@@ -670,7 +844,9 @@ export function TestLabPage({ ws, admin }: { ws: string; admin: boolean }) {
           </button>
         ))}
       </section>
-      {jobId && <JobDetails key={jobId} ws={ws} id={jobId} admin={admin} />}
+      <div hidden={section !== "results"}>
+        {jobId && <JobDetails key={jobId} ws={ws} id={jobId} admin={admin} />}
+      </div>
     </div>
   );
 }
@@ -712,30 +888,25 @@ function ModelChoice({
 function JsonEditor({
   label,
   value,
-  save,
+  onChange,
 }: {
   label: string;
-  value: Row;
-  save: (v: Row | null) => void;
+  value: string;
+  onChange: (value: string) => void;
 }) {
-  const [text, setText] = useState(JSON.stringify(value, null, 2)),
-    [error, setError] = useState("");
+  const errorId = useId();
+  const error = jsonError(value);
   return (
     <Field label={label}>
       <textarea
-        value={text}
-        onChange={(e) => {
-          setText(e.target.value);
-          try {
-            save(JSON.parse(e.target.value));
-            setError("");
-          } catch {
-            setError("Enter valid JSON before saving.");
-            save(null);
-          }
-        }}
+        value={value}
+        aria-invalid={!!error}
+        aria-describedby={error ? errorId : undefined}
+        onChange={(e) => onChange(e.target.value)}
       />
-      <span role="alert">{error}</span>
+      <span id={errorId} role="alert">
+        {error}
+      </span>
     </Field>
   );
 }

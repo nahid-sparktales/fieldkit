@@ -5,6 +5,8 @@ import {
 } from "../../../packages/platform/src/support-options.js";
 import { api } from "./request.js";
 import { useAction } from "./useAction.js";
+import { useUnsavedChanges, confirmDiscardChanges } from "./unsaved-changes.js";
+import "./content-workspace.css";
 import { Notice, type Row } from "./quality-ui.js";
 
 const choices: {
@@ -53,6 +55,7 @@ export function SupportOptions({
   const current = supportMode(channels as Parameters<typeof supportMode>[0]);
   const [mode, setMode] = useState<SupportMode>(current);
   const a = useAction();
+  useUnsavedChanges(mode !== current);
   useEffect(() => setMode(current), [current]);
   const portalPublished = channels.some(
     (c) => c.kind === "portal" && c.published,
@@ -106,14 +109,29 @@ export function SupportOptions({
         </p>
         {!portalPublished && (
           <p className="muted">
-            Publish the support portal below when you’re ready to make your help
-            center available.
+            Publish the support portal from All channels when you’re ready to
+            make your help center available.
           </p>
         )}
+        <p className="muted" role="status">
+          {mode !== current ? "Unsaved changes" : "All changes saved"}
+        </p>
         {owner ? (
-          <button className="primary" disabled={a.busy || mode === current}>
-            {a.busy ? "Saving…" : "Save support options"}
-          </button>
+          <div className="button-row">
+            <button className="primary" disabled={a.busy || mode === current}>
+              {a.busy ? "Saving…" : "Save support options"}
+            </button>
+            <button
+              type="button"
+              disabled={a.busy || mode === current}
+              onClick={() => {
+                if (confirmDiscardChanges("Discard unsaved support options?"))
+                  setMode(current);
+              }}
+            >
+              Discard changes
+            </button>
+          </div>
         ) : (
           <p className="muted">
             Only the workspace owner can change these options.

@@ -110,3 +110,25 @@
     flex-wrap: wrap;
   }
 }
+.readiness-back {
+  display: none;
+}
+.readiness-details {
+  scroll-margin-top: 16px;
+}
+.readiness-details h2:focus {
+  outline: 2px solid #216d51;
+  outline-offset: 4px;
+}
+@media (max-width: 1050px) {
+  .readiness-back {
+    display: inline-flex;
+    margin-bottom: 20px;
+    min-height: 44px;
+  }
+  .readiness-page.has-selection .readiness-checks,
+  .readiness-page.has-selection .readiness-overview,
+  .readiness-page:not(.has-selection) .readiness-details {
+    display: none;
+  }
+}

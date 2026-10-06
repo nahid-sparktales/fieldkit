@@ -59,6 +59,9 @@ export async function customizeHelpCenter(page: Page) {
   await expect(page.getByRole("alert")).toHaveText(
     "The new passwords do not match.",
   );
+  await page
+    .getByRole("button", { name: "Clear password fields", exact: true })
+    .click();
   await page.getByRole("button", { name: "Workspace", exact: true }).click();
   await page
     .getByLabel("Workspace name", { exact: true })
@@ -205,15 +208,24 @@ export async function verifyBrandedPortal(page: Page) {
 }
 
 export async function verifyBrandedWidget(staff: Page, widgetPage: Page) {
-  const channel = staff.locator("section.panel").filter({
+  const channel = staff.locator(".content-channel-row").filter({
     has: staff.getByRole("heading", {
       name: "Embedded chatbot",
       exact: true,
     }),
   });
+  await staff
+    .getByRole("button", { name: "Support options", exact: true })
+    .click();
   await staff.getByRole("radio", { name: /Tickets & chatbot/ }).check();
   await staff
     .getByRole("button", { name: "Save support options", exact: true })
+    .click();
+  await expect(
+    staff.getByText("Support options saved.", { exact: true }),
+  ).toBeVisible();
+  await staff
+    .getByRole("button", { name: "← All channels", exact: true })
     .click();
   await expect(channel.getByText("published", { exact: true })).toBeVisible();
   await staff.getByRole("button", { name: "Appearance", exact: true }).click();

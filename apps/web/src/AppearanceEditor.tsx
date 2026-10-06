@@ -6,6 +6,7 @@ import {
 } from "../../../packages/platform/src/branding-contracts.js";
 import { api, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
+import { useUnsavedChanges } from "./unsaved-changes.js";
 import { LoadingState, SettingsField as Field } from "./ui.js";
 import {
   PortalHeader,
@@ -62,6 +63,7 @@ function AppearanceForm({
   const dirty =
     logo !== undefined ||
     JSON.stringify(config) !== JSON.stringify(saved.config);
+  useUnsavedChanges(dirty);
   const change = <K extends keyof AppearanceConfig>(
     key: K,
     value: AppearanceConfig[K],

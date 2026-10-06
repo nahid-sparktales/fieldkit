@@ -121,3 +121,28 @@
     max-width: 100%;
   }
 }
+.sla-page .quality-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sla-sections button[aria-pressed="true"] {
+  background: #e6f2ec;
+  color: #184e3b;
+  border-color: #80ad98;
+  box-shadow: inset 0 -3px 0 #216d51;
+}
+.sla-sections .sla-refresh {
+  margin-left: auto;
+}
+.load-recovery {
+  padding: 0 0 12px;
+}
+.load-recovery p {
+  margin-top: 0;
+}
+@media (max-width: 600px) {
+  .sla-sections button {
+    min-height: 44px;
+  }
+}

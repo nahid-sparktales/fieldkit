@@ -329,6 +329,9 @@ export async function verifyCustomerSupport(staff: Page, customer: Page) {
     animations: "disabled",
   });
   await staff.getByRole("button", { name: "Publish", exact: true }).click();
+  await staff
+    .getByRole("button", { name: "Support options", exact: true })
+    .click();
   for (const option of [
     { label: "Tickets only", tickets: true, chat: false },
     { label: "Chatbot only", tickets: false, chat: true },

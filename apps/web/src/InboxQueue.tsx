@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { api, useLoad } from "./request.js";
 import { inboxStates } from "./inbox-state.js";
 import { ConversationCard, Pagination } from "./customer-ui.js";
@@ -27,14 +27,16 @@ export function InboxQueue({
     }
   };
   const [type, setType] = useState(() => saved("type", "all")),
-    [group, setGroup] = useState(() => saved("group", "customer")),
+    [group, setGroup] = useState(() => saved("group", "conversation")),
     [query, setQuery] = useState(""),
     [search, setSearch] = useState(""),
     [status, setStatus] = useState("all"),
     [section, setSection] = useState("open"),
     [assignment, setAssignment] = useState("all"),
     [page, setPage] = useState(1),
-    [expanded, setExpanded] = useState("");
+    [expanded, setExpanded] = useState(""),
+    [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersId = useId();
   useEffect(() => {
     try {
       sessionStorage.setItem(`fieldkit-inbox:${ws}:type`, type);
@@ -76,33 +78,93 @@ export function InboxQueue({
     setPage(1);
     setExpanded("");
   };
+  const changeSection = (value: string) => {
+    change(setSection, value);
+    setStatus("all");
+  };
+  const clearFilters = () => {
+    setQuery("");
+    setSearch("");
+    setType("all");
+    setStatus("all");
+    setSection("open");
+    setAssignment("all");
+    setPage(1);
+    setExpanded("");
+  };
+  const filterCount = [
+    type !== "all",
+    status !== "all",
+    assignment !== "all",
+    section === "read",
+  ].filter(Boolean).length;
+  const hasFilters = filterCount > 0 || Boolean(query.trim());
   const rows: Row[] = l.data?.conversations ?? [];
   return (
     <>
+      <div className="inbox-queue-search">
+        <input
+          type="search"
+          aria-label="Search conversations"
+          placeholder="Search customer, email, or subject…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
       <div className="inbox-sections" role="group" aria-label="Inbox sections">
         {[
           ["open", "Open"],
           ["unread", "Unread"],
-          ["read", "Read"],
           ["closed", "Closed"],
-          ["all", "All conversations"],
+          ["all", "All"],
         ].map(([key, label]) => (
           <button
             key={key}
-            aria-pressed={section === key}
-            onClick={() => {
-              change(setSection, key);
-              setStatus("all");
-            }}
+            aria-label={
+              key === "all"
+                ? `All conversations ${l.data?.section_counts?.[key] ?? ""}`
+                : undefined
+            }
+            aria-pressed={
+              section === key || (key === "open" && section === "read")
+            }
+            onClick={() => changeSection(key)}
           >
             {label} <span>{l.data?.section_counts?.[key] ?? "–"}</span>
           </button>
         ))}
-        <span className="read-explainer">
-          Read status is just for you · Closed means resolved
-        </span>
       </div>
-      <div className="inbox-filters">
+      <div className="inbox-queue-toolbar">
+        <select
+          aria-label="Inbox status"
+          value={status}
+          onChange={(e) => {
+            change(setStatus, e.target.value);
+            if (e.target.value === "resolved") setSection("closed");
+            else if (section === "closed" && e.target.value !== "all")
+              setSection("open");
+          }}
+        >
+          <option value="all">All statuses</option>
+          {Object.entries(inboxStates).map(([value, s]) => (
+            <option key={value} value={value}>
+              {s.label} · {l.data?.counts[value] ?? 0}
+            </option>
+          ))}
+        </select>
+        <button
+          className="inbox-filter-toggle"
+          aria-expanded={filtersOpen}
+          aria-controls={filtersId}
+          onClick={() => setFiltersOpen(!filtersOpen)}
+        >
+          Filters
+          {filterCount > 0 && (
+            <span className="inbox-filter-count">{filterCount}</span>
+          )}
+        </button>
+      </div>
+      <div className="inbox-filter-panel" id={filtersId} hidden={!filtersOpen}>
         <div
           className="inbox-types"
           role="group"
@@ -122,13 +184,6 @@ export function InboxQueue({
             </button>
           ))}
         </div>
-        <input
-          type="search"
-          aria-label="Search conversations"
-          placeholder="Search customer, email, or subject…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
         <div className="inbox-filter-pair">
           <label>
             <span>Group by</span>
@@ -158,37 +213,38 @@ export function InboxQueue({
             </select>
           </label>
         </div>
-        <select
-          aria-label="Inbox status"
-          value={status}
-          onChange={(e) => {
-            change(setStatus, e.target.value);
-            if (e.target.value === "resolved") setSection("closed");
-            else if (section === "closed" && e.target.value !== "all")
-              setSection("open");
-          }}
-        >
-          <option value="all">
-            All statuses ·{" "}
-            {Object.values(l.data?.counts ?? {}).reduce<number>(
-              (sum, n) => sum + Number(n),
-              0,
-            )}
-          </option>
-          {Object.entries(inboxStates).map(([value, s]) => (
-            <option key={value} value={value}>
-              {s.label} · {l.data?.counts[value] ?? 0}
-            </option>
-          ))}
-        </select>
-        <div className="queue-caption">
-          <span>
-            {l.loading
-              ? "Loading…"
-              : `${l.data?.total ?? 0} ${group === "customer" ? "customer" : "conversation"}${l.data?.total === 1 ? "" : "s"}`}
-          </span>
+        <label className="inbox-read-filter">
+          <span>Read status</span>
+          <select
+            aria-label="Filter by read status"
+            value={section === "read" || section === "unread" ? section : "all"}
+            onChange={(e) =>
+              changeSection(e.target.value === "all" ? "open" : e.target.value)
+            }
+          >
+            <option value="all">Any read status</option>
+            <option value="unread">Unread</option>
+            <option value="read">Read</option>
+          </select>
+        </label>
+        <p className="inbox-filter-help">
+          Read status is just for you. Closed conversations are resolved.
+        </p>
+      </div>
+      <div className="queue-caption inbox-queue-caption">
+        <span>
+          {l.loading
+            ? "Loading…"
+            : `${l.data?.total ?? 0} ${group === "customer" ? "customer" : "conversation"}${l.data?.total === 1 ? "" : "s"}`}
+          {section === "read" && " · Read"}
+        </span>
+        {hasFilters ? (
+          <button className="inbox-clear-filters" onClick={clearFilters}>
+            Clear filters
+          </button>
+        ) : (
           <span>Latest activity</span>
-        </div>
+        )}
       </div>
       {l.error && (
         <div className="alert" role="alert">
@@ -202,6 +258,7 @@ export function InboxQueue({
             <ConversationCard
               key={c.id}
               c={c}
+              members={members}
               selected={selected}
               onSelect={onSelect}
               draft={drafts[c.id]?.body}
@@ -270,6 +327,7 @@ export function InboxQueue({
                   params={params}
                   selected={selected}
                   drafts={drafts}
+                  members={members}
                   onSelect={onSelect}
                   version={`${version}:${c.updated_at}:${c.group_count}:${c.group_unread}`}
                 />
@@ -281,19 +339,9 @@ export function InboxQueue({
           <div className="empty">
             <h3>No matching conversations</h3>
             <p>Try another type, search, status, or assignee.</p>
-            <button
-              onClick={() => {
-                setQuery("");
-                setSearch("");
-                setType("all");
-                setStatus("all");
-                setSection("open");
-                setAssignment("all");
-                setPage(1);
-              }}
-            >
-              Clear filters
-            </button>
+            {!hasFilters && (
+              <button onClick={clearFilters}>Show open conversations</button>
+            )}
           </div>
         )}
       </div>
@@ -314,6 +362,7 @@ function CustomerThreads({
   drafts,
   onSelect,
   version,
+  members,
 }: {
   ws: string;
   id: string;
@@ -322,6 +371,7 @@ function CustomerThreads({
   drafts: Record<string, { body: string }>;
   onSelect: (c: Row) => void;
   version: string;
+  members: Row[];
 }) {
   const [page, setPage] = useState(1);
   const query = new URLSearchParams(params);
@@ -346,6 +396,7 @@ function CustomerThreads({
           key={c.id}
           compact
           c={c}
+          members={members}
           selected={selected}
           onSelect={onSelect}
           draft={drafts[c.id]?.body}

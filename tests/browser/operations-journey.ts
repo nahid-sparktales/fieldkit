@@ -48,6 +48,9 @@ export async function verifyOperationalControls(
   });
   await staff.setViewportSize({ width: 1440, height: 1000 });
   await staff.goto(`/?workspace=${ws}&view=publish`);
+  await staff
+    .getByRole("button", { name: "Customer attachments", exact: true })
+    .click();
   await staff.getByLabel("Allow attachments", { exact: true }).check();
   await expect(staff.getByText("Attachment settings updated.")).toBeVisible();
   const base = await (await staff.request.get(`/v2/workspaces/${ws}`)).json();

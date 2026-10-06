@@ -3,9 +3,11 @@ import { api, useLoad } from "./request.js";
 import { useAction } from "./useAction.js";
 import { Field, Notice, type Row } from "./quality-ui.js";
 import { LoadingState } from "./ui.js";
+import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
 import { CustomerNote } from "../../../packages/platform/src/customer-contracts.js";
 import {
   appLink,
+  replaceCurrentRoute,
   customerUrl,
   conversationUrl,
   channelLabel,
@@ -32,6 +34,22 @@ export function CustomersPage({ ws, admin }: { ws: string; admin: boolean }) {
   const [selected, setSelected] = useState(
     new URLSearchParams(location.search).get("customer") ?? "",
   );
+  const directory = useRef<HTMLElement>(null),
+    detailHeading = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef("");
+  useEffect(() => {
+    if (selected && matchMedia("(max-width: 900px)").matches) {
+      detailHeading.current?.focus();
+    } else if (!selected && returnFocus.current) {
+      const row = Array.from(
+        directory.current?.querySelectorAll<HTMLButtonElement>(
+          "[data-customer]",
+        ) ?? [],
+      ).find((el) => el.dataset.customer === returnFocus.current);
+      (row ?? directory.current)?.focus();
+      returnFocus.current = "";
+    }
+  }, [selected]);
   useEffect(() => {
     const timer = setTimeout(() => {
       setSearch(query.trim());
@@ -59,7 +77,12 @@ export function CustomersPage({ ws, admin }: { ws: string; admin: boolean }) {
         </button>
       </header>
       <div className="customers-layout">
-        <section className="customer-directory" aria-label="Customer directory">
+        <section
+          className="customer-directory"
+          aria-label="Customer directory"
+          ref={directory}
+          tabIndex={-1}
+        >
           <div className="customer-directory-filters">
             <input
               type="search"
@@ -95,11 +118,13 @@ export function CustomersPage({ ws, admin }: { ws: string; admin: boolean }) {
           {l.data?.customers.map((c: Row) => (
             <button
               key={c.id}
+              data-customer={c.id}
               className={`customer-directory-card ${selected === c.id ? "selected" : ""}`}
               aria-current={selected === c.id ? "true" : undefined}
               onClick={() => {
+                if (c.id === selected || !confirmDiscardChanges()) return;
                 setSelected(c.id);
-                history.replaceState({}, "", customerUrl(ws, c.id));
+                replaceCurrentRoute(customerUrl(ws, c.id));
               }}
             >
               <span className="avatar" aria-hidden="true">
@@ -137,14 +162,13 @@ export function CustomersPage({ ws, admin }: { ws: string; admin: boolean }) {
           {selected ? (
             <>
               <button
+                ref={detailHeading}
                 className="customer-back"
                 onClick={() => {
+                  if (!confirmDiscardChanges()) return;
+                  returnFocus.current = selected;
                   setSelected("");
-                  history.replaceState(
-                    {},
-                    "",
-                    `/?workspace=${ws}&view=customers`,
-                  );
+                  replaceCurrentRoute(`/?workspace=${ws}&view=customers`);
                 }}
               >
                 ← All customers
@@ -425,6 +449,7 @@ function CustomerNotes({
   const [page, setPage] = useState(1),
     [body, setBody] = useState("");
   const key = useRef(crypto.randomUUID());
+  useUnsavedChanges(Boolean(body.trim()));
   const l = useLoad(
     () => api(ws, `/customers/${id}/notes?page=${page}`),
     [ws, id, page],
@@ -541,6 +566,17 @@ function AccountLinks({
       })),
     );
   const a = useAction();
+  const dirty =
+    editing &&
+    (userId !== (c.user_id ?? "") ||
+      JSON.stringify(entries) !==
+        JSON.stringify(
+          Object.entries(c.mappings ?? {}).map(([provider, value]) => ({
+            provider,
+            value: String(value),
+          })),
+        ));
+  useUnsavedChanges(dirty);
   return (
     <>
       <div className="customer-section-heading">
@@ -648,6 +684,7 @@ function AccountLinks({
                   required
                   pattern="[a-z][a-z0-9_]{1,40}"
                   value={entry.provider}
+                  disabled={a.busy}
                   placeholder="stripe_test"
                   onChange={(e) =>
                     setEntries((rows) =>
@@ -663,6 +700,7 @@ function AccountLinks({
                   required
                   maxLength={200}
                   value={entry.value}
+                  disabled={a.busy}
                   placeholder="cus_…"
                   onChange={(e) =>
                     setEntries((rows) =>
@@ -676,6 +714,7 @@ function AccountLinks({
               <button
                 type="button"
                 aria-label={`Remove account link ${index + 1}`}
+                disabled={a.busy}
                 onClick={() =>
                   setEntries((rows) => rows.filter((_, i) => i !== index))
                 }
@@ -686,6 +725,7 @@ function AccountLinks({
           ))}
           <button
             type="button"
+            disabled={a.busy}
             onClick={() =>
               setEntries((rows) => [...rows, { provider: "", value: "" }])
             }
@@ -695,6 +735,7 @@ function AccountLinks({
           <Field label="Verified portal user ID (optional)">
             <input
               value={userId}
+              disabled={a.busy}
               onChange={(e) => setUserId(e.target.value)}
               placeholder="Existing verified portal user ID"
             />
@@ -711,7 +752,15 @@ function AccountLinks({
               type="button"
               disabled={a.busy}
               onClick={() => {
+                if (
+                  dirty &&
+                  !confirmDiscardChanges(
+                    "Discard changes to this customer's linked accounts?",
+                  )
+                )
+                  return;
                 setEditing(false);
+                setUserId(c.user_id ?? "");
                 setEntries(
                   Object.entries(c.mappings ?? {}).map(([provider, value]) => ({
                     provider,
