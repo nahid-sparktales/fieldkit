@@ -1,4 +1,9 @@
+import { IDENTITY_SCHEMA } from "./identity-schema.js";
 import { CUSTOMER_SUPPORT_SCHEMA } from "./customer-support-schema.js";
+import { PERMISSIONS_SCHEMA } from "./permissions-schema.js";
+import { EMAIL_INTAKE_SCHEMA } from "./email-intake-schema.js";
+import { HUMAN_ROUTING_SCHEMA } from "./human-routing-schema.js";
+import { PRODUCTIVITY_SCHEMA } from "./productivity-schema.js";
 import { CUSTOMER_SCHEMA } from "./customer-schema.js";
 import { INBOX_READ_SCHEMA } from "./inbox-read.js";
 import { READINESS_SCHEMA } from "./readiness-schema.js";
@@ -13,7 +18,7 @@ import { randomUUID } from "node:crypto";
 import { type Config, HttpError, log } from "./config.js";
 
 export const uid = randomUUID;
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 23;
 export type Queryable = Pick<Pool, "query"> | PoolClient;
 export class Database {
   selectWorkflow?: (q: PoolClient, conv: any) => Promise<any>;
@@ -113,12 +118,17 @@ export class Database {
     await this.pool.query(ATTACHMENT_SCHEMA);
     await this.pool.query(SLA_SCHEMA);
     await this.pool.query(SHADOW_SCHEMA);
+    await this.pool.query(PERMISSIONS_SCHEMA);
+    await this.pool.query(EMAIL_INTAKE_SCHEMA);
+    await this.pool.query(PRODUCTIVITY_SCHEMA);
+    await this.pool.query(HUMAN_ROUTING_SCHEMA);
+    await this.pool.query(IDENTITY_SCHEMA);
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS events_workspace_cursor ON events(workspace_id,id);
       CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(workspace_id,conversation_id,created_at,id);
     `);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18),(19),(20),(21),(22),(23) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();
@@ -132,6 +142,8 @@ export class Database {
       "quality",
       "feedback-sync",
       "ticket-email",
+      "email-intake",
+      "human-routing",
       "diagnostic",
       "attachment",
       "sla",

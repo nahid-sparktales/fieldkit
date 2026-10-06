@@ -3,6 +3,7 @@ import { api, useLoad } from "./request.js";
 import { inboxStates } from "./inbox-state.js";
 import { ConversationCard, Pagination } from "./customer-ui.js";
 import type { Row } from "./quality-ui.js";
+import { SavedViewQueue } from "./SavedViewQueue.js";
 
 export function InboxQueue({
   ws,
@@ -37,6 +38,8 @@ export function InboxQueue({
     [expanded, setExpanded] = useState(""),
     [filtersOpen, setFiltersOpen] = useState(false);
   const filtersId = useId();
+  const [savedView, setSavedView] = useState("");
+  const savedViews = useLoad(() => api(ws, "/saved-views"), [ws]);
   useEffect(() => {
     try {
       sessionStorage.setItem(`fieldkit-inbox:${ws}:type`, type);
@@ -100,8 +103,41 @@ export function InboxQueue({
   ].filter(Boolean).length;
   const hasFilters = filterCount > 0 || Boolean(query.trim());
   const rows: Row[] = l.data?.conversations ?? [];
+  const viewSelector = (
+    <label className="saved-view-select">
+      Inbox view
+      <select
+        aria-label="Inbox view"
+        value={savedView}
+        onChange={(e) => setSavedView(e.target.value)}
+      >
+        <option value="">All conversations · custom filters</option>
+        {savedViews.data?.views.map((v: Row) => (
+          <option key={v.id} value={v.id}>
+            {v.name}
+            {v.scope === "personal" ? " · Personal" : ""}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+  if (savedView)
+    return (
+      <>
+        {viewSelector}
+        <SavedViewQueue
+          key={savedView}
+          ws={ws}
+          viewId={savedView}
+          selected={selected}
+          onSelect={onSelect}
+          version={version}
+        />
+      </>
+    );
   return (
     <>
+      {viewSelector}
       <div className="inbox-queue-search">
         <input
           type="search"

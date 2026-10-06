@@ -497,7 +497,7 @@ test("inbound valid text survives bad individual files and retries do not duplic
     app.ticketEmail.receive(w.ws.id, authorization, data),
   ]);
   assert.equal(
-    results.every((x) => x.status === "received"),
+    results.every((x) => ["received", "queued"].includes(x.status)),
     true,
   );
   assert.equal(

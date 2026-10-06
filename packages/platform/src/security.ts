@@ -168,6 +168,34 @@ export const safeFetch: Fetcher = async (raw, init = {}) => {
   const url = externalURL(raw);
   return boundedFetch(url, init, true);
 };
+// Private IdPs require an exact operator allowlist. Workspace input cannot grant
+// network access. Every endpoint must remain on the configured issuer origin.
+export const oidcFetch = async (
+  issuer: string,
+  raw: string,
+  init: Parameters<Fetcher>[1],
+  allowed: string,
+) => {
+  const base = new URL(issuer),
+    url = new URL(raw);
+  if (
+    !["https:", "http:"].includes(url.protocol) ||
+    url.username ||
+    url.password ||
+    url.hash ||
+    url.origin !== base.origin
+  )
+    throw new HttpError(
+      400,
+      "OIDC endpoints must use the issuer origin without credentials or fragments",
+    );
+  const trusted = allowed
+    .split(",")
+    .map((v) => v.trim().replace(/\/+$/, ""))
+    .includes(issuer.replace(/\/+$/, ""));
+  if (!trusted) externalURL(url.href);
+  return boundedFetch(url, { ...init, limit: 1024 * 1024 }, !trusted);
+};
 // Only operator-configured model bases may reach private HTTP services. Ingestion
 // and business actions continue to use safeFetch and cannot opt into this path.
 export function modelBaseURL(raw: string, trustedBases: string): string {

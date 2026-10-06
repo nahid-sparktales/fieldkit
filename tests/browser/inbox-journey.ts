@@ -9,7 +9,7 @@ export async function verifyInbox(page: Page, customer: Page) {
   });
   const reply = page.getByLabel("Reply", { exact: true });
   const management = page.locator(".ticket-management");
-  const manageToggle = management.locator("summary");
+  const manageToggle = management.locator(":scope > summary");
   const filters = queue.getByRole("button", { name: /^Filters/ });
   await expect(page.locator(".support-assistant")).not.toBeVisible();
   await expect(

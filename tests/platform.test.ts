@@ -156,6 +156,8 @@ test("fresh install is empty; real Better Auth verifies email, authenticates, an
     cookie,
   );
   assert.equal(jobs.response.status, 200, JSON.stringify(jobs.json));
+  const stepUp = await call("/v2/identity/step-up", { password }, cookie);
+  assert.equal(stepUp.response.status, 200, JSON.stringify(stepUp.json));
   const invite = await call(
     `/v2/workspaces/${created.json.id}/invitations`,
     { email: "teammate@example.test", role: "agent" },

@@ -360,7 +360,7 @@ test("uncertain SMTP attempts require explicit recovery; revoked contacts skip d
   );
   await assert.rejects(
     service.retry({ ...w.owner, role: "agent" }, mail!.id),
-    /administrator/,
+    /email:retry/,
   );
   await service.retry(w.owner, mail!.id);
   await app.db.pool.query("UPDATE contacts SET verified=false WHERE id=$1", [

@@ -51,11 +51,13 @@ export const ChannelInput = z
       .strict(),
   })
   .strict();
+import { MacroProposal } from "./productivity-contracts.js";
 export const MessageInput = z
   .object({
     body: z.string().trim().max(12000),
     requestKey: z.string().min(8).max(120),
     attachments: z.array(z.string().max(200)).max(10).default([]),
+    macro: MacroProposal.optional(),
   })
   .strict()
   .refine(

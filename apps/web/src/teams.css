@@ -1,0 +1,135 @@
+.teams-page [hidden] {
+  display: none !important;
+}
+.routing-status,
+.routing-capacity,
+.routing-queue > a {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 16px 0;
+  border-bottom: 1px solid var(--line, #dce2df);
+}
+.routing-status {
+  align-items: flex-start;
+}
+.routing-team-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.routing-team-choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  min-height: 60px;
+}
+.routing-team-choice[aria-pressed="true"] {
+  border-color: var(--accent, #236a52);
+  background: var(--soft, #edf5f0);
+}
+.routing-team-choice small,
+.routing-capacity small,
+.routing-queue small,
+.agent-availability small {
+  display: block;
+  color: var(--muted, #586b65);
+  margin-top: 5px;
+}
+.routing-team-editor fieldset,
+.routing-inspector fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.routing-team-editor fieldset fieldset {
+  border-top: 1px solid var(--line, #dce2df);
+  padding-top: 16px;
+  margin-top: 10px;
+}
+.routing-team-editor legend {
+  font-weight: 700;
+  padding-bottom: 8px;
+}
+.routing-team-editor label:has(input[type="checkbox"]),
+.routing-inspector label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.routing-team-editor input[type="checkbox"],
+.routing-inspector input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.routing-capacity input {
+  display: block;
+  width: 90px;
+  min-height: 44px;
+}
+.routing-capacity .error,
+.routing-capacity .success {
+  font-size: 12px;
+}
+.routing-queue > a {
+  text-decoration: none;
+  color: inherit;
+  align-items: flex-start;
+}
+.routing-queue > a:hover strong {
+  text-decoration: underline;
+}
+.routing-inspector {
+  display: grid;
+  gap: 12px;
+}
+.routing-inspector details p {
+  border-top: 1px solid var(--line, #dce2df);
+  padding-top: 10px;
+  overflow-wrap: anywhere;
+}
+.agent-availability {
+  font-size: 12px;
+  min-width: 150px;
+}
+.agent-availability label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-availability select {
+  min-height: 36px;
+  max-width: 130px;
+}
+@media (max-width: 760px) {
+  .routing-team-layout {
+    grid-template-columns: 1fr;
+  }
+  .routing-status,
+  .routing-capacity,
+  .routing-queue > a {
+    flex-wrap: wrap;
+  }
+  .routing-queue > a > div {
+    width: 100%;
+  }
+  .agent-availability label {
+    display: block;
+  }
+  .agent-availability small {
+    display: none;
+  }
+  .teams-page button,
+  .teams-page input:not([type="checkbox"]),
+  .teams-page select {
+    min-height: 44px;
+  }
+}

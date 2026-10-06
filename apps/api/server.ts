@@ -1,3 +1,12 @@
+import { authorizeWorkspaceRoute } from "./route-permissions.js";
+import { Identity } from "../../packages/platform/src/identity.js";
+import { StaffRoles } from "../../packages/platform/src/staff-roles.js";
+import { staffSessionPolicy } from "../../packages/platform/src/identity-auth.js";
+import {
+  conversationVisibility,
+  hasCapability,
+  resolveStaffPrincipal,
+} from "../../packages/platform/src/permissions.js";
 import { EventStreams } from "./event-stream.js";
 import { shadowRoutes } from "./shadow-routes.js";
 import {
@@ -91,6 +100,8 @@ export async function createApp(
   if (options.migrate) await app.migrate();
   else await app.start();
   if (options.workers) await app.workers();
+  const identity = new Identity(app.db, app.auth);
+  const roles = new StaffRoles(app.db, app.routing);
   const authHandler = toNodeHandler(app.auth.auth);
   const streams = new EventStreams();
   const sendLogo = async (ws: string, res: ServerResponse) => {
@@ -516,15 +527,67 @@ export async function createApp(
         json(res, { user: { ...user, name: data.name } });
         return;
       }
-      if (path === "/v2/me" && method === "GET") {
-        const user = await userSession(app.auth, req);
+      if (path === "/v2/identity/providers" && method === "GET") {
+        await app.rate(
+          `identity-discovery:${req.socket.remoteAddress ?? "unknown"}`,
+          60,
+        );
+        const slug = z
+          .string()
+          .min(1)
+          .max(80)
+          .parse(url.searchParams.get("workspace"));
         json(res, {
-          user,
-          workspaces: await app.db.rows(
-            "SELECT w.*,m.role FROM memberships m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 ORDER BY w.name",
-            [user.id],
+          providers: await app.db.rows(
+            'SELECT p.id,p.name,p.workspace_id "workspaceId" FROM staff_oidc_providers p JOIN workspaces w ON w.id=p.workspace_id WHERE w.slug=$1 AND p.enabled',
+            [slug],
           ),
         });
+        return;
+      }
+      if (path === "/v2/identity/me" && method === "GET") {
+        json(res, await identity.account(req));
+        return;
+      }
+      if (path === "/v2/identity/step-up" && method === "POST") {
+        await app.rate(
+          `identity-step-up:${req.socket.remoteAddress ?? "unknown"}`,
+          20,
+        );
+        json(res, await identity.stepUp(req, await body(req)));
+        return;
+      }
+      if (path === "/v2/me" && method === "GET") {
+        const user = await userSession(app.auth, req);
+        const { s: session } = await identity.actor(req);
+        const workspaces = await app.db.rows(
+          "SELECT w.*,m.role FROM memberships m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 AND NOT m.disabled ORDER BY w.name",
+          [user.id],
+        );
+        for (const workspace of workspaces) {
+          const access = await resolveStaffPrincipal(
+            app.db,
+            workspace.id,
+            user.id,
+          );
+          Object.assign(workspace, {
+            capabilities: access.capabilities,
+            ticketScope: access.ticketScope,
+            customRoleId: access.customRoleId,
+          });
+          try {
+            await staffSessionPolicy(
+              app.db,
+              workspace.id,
+              user.id,
+              session.session.id,
+            );
+          } catch (error) {
+            if (!(error instanceof HttpError)) throw error;
+            workspace.identityError = error.message;
+          }
+        }
+        json(res, { user, workspaces });
         return;
       }
       if (path === "/v2/workspaces" && method === "POST") {
@@ -554,6 +617,10 @@ export async function createApp(
         const ws = match[1],
           suffix = match[2],
           p = await principal(app.db, app.auth, req, ws);
+        authorizeWorkspaceRoute(p, suffix, method);
+        const scopedTicket = suffix.match(/^\/conversations\/([^/]+)(?:\/|$)/);
+        if (staff(p) && scopedTicket)
+          await conversation(app.db, p, scopedTicket[1]);
         if (method !== "GET")
           await app.rate(
             `${ws}:${p.userId ?? p.contactId ?? tokenHash(req.headers.authorization ?? "")}`,
@@ -643,6 +710,49 @@ export async function createApp(
           json(res, { name: data.name });
           return;
         }
+        if (suffix === "/identity" && method === "GET") {
+          json(res, await identity.get(p));
+          return;
+        }
+        if (suffix === "/identity/provider" && method === "PUT") {
+          json(res, await identity.saveProvider(p, await body(req)));
+          return;
+        }
+        if (suffix === "/identity/policy" && method === "PUT") {
+          json(res, await identity.savePolicy(p, await body(req)));
+          return;
+        }
+        if (suffix === "/staff-roles") {
+          if (method === "GET") json(res, await roles.list(p));
+          else if (method === "POST")
+            json(res, await roles.save(p, await body(req)));
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const roleMember = suffix.match(/^\/staff-roles\/members\/([^/]+)$/);
+        if (roleMember && method === "PUT") {
+          json(
+            res,
+            await roles.assignMember(p, roleMember[1], await body(req)),
+          );
+          return;
+        }
+        const staffRole = suffix.match(/^\/staff-roles\/([^/]+)$/);
+        if (staffRole && method === "DELETE") {
+          json(res, await roles.remove(p, staffRole[1]));
+          return;
+        }
+        if (suffix === "/productivity" && method === "GET") {
+          json(res, await app.productivity.config(p));
+          return;
+        }
+        const intakeSource = suffix.match(
+          /^\/ticket-email\/inbound\/([^/]+)\/source$/,
+        );
+        if (intakeSource && method === "GET") {
+          json(res, await app.ticketEmail.intake.source(p, intakeSource[1]));
+          return;
+        }
         if (suffix === "/ticket-email") {
           if (method === "GET") json(res, await app.ticketEmail.settings(p));
           else if (method === "PUT")
@@ -651,6 +761,211 @@ export async function createApp(
             await app.ticketEmail.disconnect(p);
             json(res, { disconnected: true });
           } else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        if (suffix === "/ticket-email/addresses") {
+          if (method === "GET")
+            json(res, await app.ticketEmail.intake.addresses(p));
+          else if (method === "POST")
+            json(
+              res,
+              await app.ticketEmail.intake.saveAddress(p, await body(req)),
+            );
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const supportAddress = suffix.match(
+          /^\/ticket-email\/addresses\/([^/]+)$/,
+        );
+        if (supportAddress && method === "PUT") {
+          json(
+            res,
+            await app.ticketEmail.intake.saveAddress(
+              p,
+              await body(req),
+              supportAddress[1],
+            ),
+          );
+          return;
+        }
+        const intakeRetry = suffix.match(
+          /^\/ticket-email\/inbound\/([^/]+)\/retry$/,
+        );
+        if (intakeRetry && method === "POST") {
+          await app.ticketEmail.intake.retry(p, intakeRetry[1]);
+          json(res, { queued: true });
+          return;
+        }
+        if (suffix === "/routing" && method === "GET") {
+          json(res, await app.routing.snapshot(p));
+          return;
+        }
+        if (suffix === "/ticket-fields") {
+          if (method === "GET")
+            json(
+              res,
+              await app.productivity.fields(
+                p,
+                url.searchParams.get("archived") === "1",
+              ),
+            );
+          else if (method === "POST")
+            json(
+              res,
+              await app.productivity.saveField(p, null, await body(req)),
+            );
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const fieldDefinition = suffix.match(/^\/ticket-fields\/([^/]+)$/);
+        if (fieldDefinition && method === "PUT") {
+          json(
+            res,
+            await app.productivity.saveField(
+              p,
+              fieldDefinition[1],
+              await body(req),
+            ),
+          );
+          return;
+        }
+        if (suffix === "/ticket-forms") {
+          if (method === "GET")
+            json(
+              res,
+              await app.productivity.forms(
+                p,
+                url.searchParams.get("admin") === "1",
+              ),
+            );
+          else if (method === "POST")
+            json(
+              res,
+              await app.productivity.saveForm(p, null, await body(req)),
+            );
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const formDefinition = suffix.match(/^\/ticket-forms\/([^/]+)$/);
+        if (formDefinition && method === "PUT") {
+          json(
+            res,
+            await app.productivity.saveForm(
+              p,
+              formDefinition[1],
+              await body(req),
+            ),
+          );
+          return;
+        }
+        const library = suffix.match(/^\/(macros|saved-views)(?:\/([^/]+))?$/);
+        if (library) {
+          const kind = library[1] === "macros" ? "macros" : "views";
+          if (method === "GET" && !library[2])
+            json(
+              res,
+              await app.productivity.library(
+                p,
+                kind,
+                url.searchParams.get("archived") === "1",
+              ),
+            );
+          else if (
+            (method === "POST" && !library[2]) ||
+            (method === "PUT" && library[2])
+          )
+            json(
+              res,
+              await app.productivity.saveLibrary(
+                p,
+                kind,
+                library[2] ?? null,
+                await body(req),
+              ),
+            );
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const savedResults = suffix.match(/^\/saved-views\/([^/]+)\/results$/);
+        if (savedResults && method === "GET") {
+          json(
+            res,
+            await app.productivity.viewResults(
+              p,
+              savedResults[1],
+              Object.fromEntries(url.searchParams),
+            ),
+          );
+          return;
+        }
+        const ticketFields = suffix.match(/^\/conversations\/([^/]+)\/fields$/);
+        if (ticketFields) {
+          if (method === "GET")
+            json(res, await app.productivity.ticketFields(p, ticketFields[1]));
+          else if (method === "PUT")
+            json(
+              res,
+              await app.productivity.updateFields(
+                p,
+                ticketFields[1],
+                await body(req),
+              ),
+            );
+          else throw new HttpError(405, "Method not allowed");
+          return;
+        }
+        const macroPreview = suffix.match(
+          /^\/conversations\/([^/]+)\/macros\/([^/]+)\/preview$/,
+        );
+        if (macroPreview && method === "POST") {
+          json(
+            res,
+            await app.productivity.previewMacro(
+              p,
+              macroPreview[1],
+              macroPreview[2],
+            ),
+          );
+          return;
+        }
+        if (suffix === "/routing/settings" && method === "PUT") {
+          json(res, await app.routing.saveSettings(p, await body(req)));
+          return;
+        }
+        if (suffix === "/routing/teams" && method === "POST") {
+          json(res, await app.routing.saveTeam(p, await body(req)));
+          return;
+        }
+        if (suffix === "/routing/availability" && method === "PUT") {
+          json(res, await app.routing.availability(p, await body(req)));
+          return;
+        }
+        if (suffix === "/routing/heartbeat" && method === "POST") {
+          json(res, await app.routing.heartbeat(p));
+          return;
+        }
+        const capacity = suffix.match(/^\/routing\/agents\/([^/]+)\/capacity$/);
+        if (capacity && method === "PUT") {
+          json(
+            res,
+            await app.routing.setCapacity(p, capacity[1], await body(req)),
+          );
+          return;
+        }
+        const routingTicket = suffix.match(
+          /^\/conversations\/([^/]+)\/routing(?:\/(assign|requeue))?$/,
+        );
+        if (routingTicket) {
+          if (!routingTicket[2] && method === "GET")
+            json(res, await app.routing.explanation(p, routingTicket[1]));
+          else if (routingTicket[2] === "assign" && method === "POST")
+            json(
+              res,
+              await app.routing.assign(p, routingTicket[1], await body(req)),
+            );
+          else if (routingTicket[2] === "requeue" && method === "POST")
+            json(res, await app.routing.requeue(p, routingTicket[1]));
+          else throw new HttpError(405, "Method not allowed");
           return;
         }
         const emailRetry = suffix.match(/^\/ticket-email\/([^/]+)\/retry$/);
@@ -776,7 +1091,7 @@ export async function createApp(
           requireStaff(p);
           json(res, {
             members: await app.db.rows(
-              'SELECT m.user_id,m.role,u.name,u.email FROM memberships m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1',
+              'SELECT m.user_id,m.role,u.name,u.email FROM memberships m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND NOT m.disabled',
               [ws],
             ),
           });
@@ -792,22 +1107,17 @@ export async function createApp(
         }
         m = suffix.match(/^\/members\/([^/]+)$/);
         if (m && method === "DELETE") {
-          requireOwner(p);
-          if (m[1] === p.userId)
-            throw new HttpError(400, "Cannot remove your own owner membership");
-          await app.db.pool.query(
-            "DELETE FROM memberships WHERE workspace_id=$1 AND user_id=$2 AND role<>'owner'",
-            [ws, m[1]],
-          );
-          json(res, { removed: true });
+          json(res, await roles.removeMember(p, m[1]));
           return;
         }
         if (suffix === "/contacts" && method === "GET") {
           requireStaff(p);
+          const args: unknown[] = [ws],
+            visible = conversationVisibility(p, "c", args);
           json(res, {
             contacts: await app.db.rows(
-              "SELECT * FROM contacts WHERE workspace_id=$1 ORDER BY name LIMIT 500",
-              [ws],
+              `SELECT ct.* FROM contacts ct WHERE ct.workspace_id=$1 AND ${p.ticketScope && p.ticketScope !== "all" ? `EXISTS(SELECT 1 FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND ${visible})` : "TRUE"} ORDER BY name LIMIT 500`,
+              args,
             ),
           });
           return;
@@ -857,6 +1167,7 @@ export async function createApp(
         m = suffix.match(/^\/contacts\/([^/]+)\/mapping$/);
         if (m && method === "PUT") {
           requireAdmin(p);
+          await app.customers.contact(p, m[1]);
           const d = z
             .object({
               mappings: z.record(
@@ -966,6 +1277,15 @@ export async function createApp(
               403,
               "Use a scoped request or customer identity",
             );
+          const conversationArgs: unknown[] = [
+            ws,
+            staff(p),
+            p.contactId ?? null,
+            p.channelId ?? null,
+          ];
+          const visible = staff(p)
+            ? conversationVisibility(p, "c", conversationArgs)
+            : "TRUE";
           json(res, {
             conversations: await app.db.rows(
               `SELECT c.*,ct.name customer_name,ch.kind channel_kind,
@@ -988,9 +1308,9 @@ export async function createApp(
                  WHERE a.workspace_id=c.workspace_id AND r.conversation_id=c.id AND a.status='pending'
                  ORDER BY a.expires_at DESC LIMIT 1
                ) approval ON true
-               WHERE c.workspace_id=$1 AND ($2::boolean OR c.contact_id=$3) AND ($4::text IS NULL OR c.channel_id=$4)
+               WHERE c.workspace_id=$1 AND (${visible}) AND ($2::boolean OR c.contact_id=$3) AND ($4::text IS NULL OR c.channel_id=$4)
                ORDER BY c.updated_at DESC,c.id DESC LIMIT 200`,
-              [ws, staff(p), p.contactId ?? null, p.channelId ?? null],
+              conversationArgs,
             ),
           });
           return;
@@ -1004,6 +1324,9 @@ export async function createApp(
               channelId: z.string().optional(),
               contactId: z.string().optional(),
               attachments: z.array(z.string()).max(10).optional(),
+              formId: z.string().max(200).optional(),
+              formVersion: z.number().int().positive().optional(),
+              values: z.record(z.string(), z.unknown()).optional(),
             })
             .strict()
             .parse(await body(req));
@@ -1132,10 +1455,19 @@ export async function createApp(
           if (!tail && method === "GET") {
             const conv = await conversation(app.db, p, id);
             const messages = await app.db.rows(
-              `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY m.created_at,m.id`,
-              [ws, id, staff(p)],
+              `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (m.role<>'note' OR $4::boolean) AND (m.role<>'system' OR $5::boolean) ORDER BY m.created_at,m.id`,
+              [
+                ws,
+                id,
+                staff(p),
+                hasCapability(p, "tickets:note"),
+                hasCapability(p, "audit:read"),
+              ],
             );
-            const files = await app.attachments.list(p, id);
+            const files =
+              !staff(p) || hasCapability(p, "attachments:read")
+                ? await app.attachments.list(p, id)
+                : [];
             for (const message of messages)
               message.attachments = files.filter(
                 (file) => file.messageId === message.id,
@@ -1174,14 +1506,18 @@ export async function createApp(
                       "SELECT provider_id,status,error,created_at FROM inbound_ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
                       [ws, id],
                     ),
-                    runs: await app.db.rows(
-                      "SELECT * FROM runs WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
-                      [ws, id],
-                    ),
-                    approvals: await app.db.rows(
-                      "SELECT a.*,d.name action_name,d.kind action_kind FROM approvals a JOIN runs r ON r.id=a.run_id LEFT JOIN actions d ON d.id=a.action_id AND d.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND r.conversation_id=$2",
-                      [ws, id],
-                    ),
+                    runs: hasCapability(p, "workflow:read")
+                      ? await app.db.rows(
+                          "SELECT * FROM runs WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
+                          [ws, id],
+                        )
+                      : [],
+                    approvals: hasCapability(p, "actions:read")
+                      ? await app.db.rows(
+                          "SELECT a.*,d.name action_name,d.kind action_kind FROM approvals a JOIN runs r ON r.id=a.run_id LEFT JOIN actions d ON d.id=a.action_id AND d.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND r.conversation_id=$2",
+                          [ws, id],
+                        )
+                      : [],
                   }
                 : {}),
             });
@@ -1215,6 +1551,9 @@ export async function createApp(
                 assignedTo: z.string().nullable().optional(),
                 tags: z.array(z.string().max(60)).max(20).optional(),
                 externalAssigneeId: z.string().regex(/^\d+$/).optional(),
+                teamId: z.string().max(200).nullable().optional(),
+                overrideCapacity: z.boolean().optional(),
+                reason: z.string().max(500).optional(),
               })
               .strict()
               .parse(await body(req));
@@ -1242,12 +1581,25 @@ export async function createApp(
                 latest: async () =>
                   (await app.db.one(
                     "SELECT coalesce(max(id),0) id FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR public)",
-                    [ws, id, staff(current)],
+                    [
+                      ws,
+                      id,
+                      staff(current) &&
+                        hasCapability(current, "tickets:note") &&
+                        hasCapability(current, "audit:read"),
+                    ],
                   ))!.id,
                 read: (after) =>
                   app.db.rows(
                     "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND id>$3 AND ($4::boolean OR public) ORDER BY id LIMIT 100",
-                    [ws, id, after, staff(current)],
+                    [
+                      ws,
+                      id,
+                      after,
+                      staff(current) &&
+                        hasCapability(current, "tickets:note") &&
+                        hasCapability(current, "audit:read"),
+                    ],
                   ),
               },
             );
@@ -1258,22 +1610,55 @@ export async function createApp(
           requireStaff(p);
           const conversationId = url.searchParams.get("conversationId");
           if (conversationId) await conversation(app.db, p, conversationId);
+          else if (p.ticketScope && p.ticketScope !== "all")
+            throw new HttpError(
+              403,
+              "Workspace assistance requires access to all tickets",
+            );
           json(res, {
-            tasks: await app.db.rows(
-              "SELECT * FROM assistance_tasks WHERE workspace_id=$1 AND conversation_id IS NOT DISTINCT FROM $2 ORDER BY created_at DESC LIMIT 30",
-              [ws, conversationId],
-            ),
+            tasks: await app.assistance.list(p, conversationId),
           });
           return;
         }
         if (suffix === "/assistance" && method === "POST") {
-          json(res, await app.assistance.start(p, await body(req)), 202);
+          const input = await body(req);
+          if (input.conversationId)
+            await conversation(app.db, p, input.conversationId);
+          else if (p.ticketScope && p.ticketScope !== "all")
+            throw new HttpError(
+              403,
+              "Workspace assistance requires access to all tickets",
+            );
+          json(res, await app.assistance.start(p, input), 202);
           return;
         }
         m = suffix.match(
           /^\/assistance\/([^/]+)\/(cancel|retry|apply|compose)$/,
         );
         if (m && method === "POST") {
+          const task = requireValue(
+            await app.db.one(
+              "SELECT conversation_id,kind FROM assistance_tasks WHERE workspace_id=$1 AND id=$2",
+              [ws, m[1]],
+            ),
+          );
+          if (task.conversation_id)
+            await conversation(app.db, p, task.conversation_id);
+          else if (p.ticketScope && p.ticketScope !== "all")
+            throw new HttpError(
+              403,
+              "Workspace assistance requires access to all tickets",
+            );
+          if (m[2] === "apply") {
+            if (task.kind === "article") {
+              if (!hasCapability(p, "knowledge:manage"))
+                throw new HttpError(
+                  403,
+                  "Permission required: knowledge:manage",
+                );
+            } else if (!hasCapability(p, "tickets:update"))
+              throw new HttpError(403, "Permission required: tickets:update");
+          }
           json(
             res,
             m[2] === "compose"
@@ -1699,10 +2084,12 @@ export async function createApp(
         }
         if (suffix === "/approvals" && method === "GET") {
           requireStaff(p);
+          const args: unknown[] = [ws],
+            visible = conversationVisibility(p, "c", args);
           json(res, {
             approvals: await app.db.rows(
-              "SELECT a.*,r.conversation_id FROM approvals a JOIN runs r ON r.id=a.run_id WHERE a.workspace_id=$1 ORDER BY a.expires_at DESC",
-              [ws],
+              `SELECT a.*,r.conversation_id FROM approvals a JOIN runs r ON r.id=a.run_id JOIN conversations c ON c.workspace_id=r.workspace_id AND c.id=r.conversation_id WHERE a.workspace_id=$1 AND (${visible}) ORDER BY a.expires_at DESC`,
+              args,
             ),
           });
           return;

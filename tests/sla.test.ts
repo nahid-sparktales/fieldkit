@@ -347,8 +347,8 @@ test("SLA observes only unseen messages, coalesces jobs, and still captures dela
   await app.db.event(app.db.pool, x.ws.id, "conversation.synced", {}, x.c.id);
   assert.equal(
     one.mock.callCount() - before,
-    3,
-    "policy, conversation, and one authority observation; no historical INSERT attempts",
+    5,
+    "constant SLA, rollout authority and routing checks; no historical INSERT attempts",
   );
   const count = await app.db.one(
     "SELECT count(*)::int n FROM sla_observations WHERE workspace_id=$1 AND kind='customer'",

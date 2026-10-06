@@ -1,0 +1,284 @@
+.productivity-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.productivity-library {
+  display: grid;
+  gap: 12px;
+  position: sticky;
+  top: 24px;
+}
+.productivity-library label,
+.productivity-form-fields > label,
+.productivity-field {
+  display: grid;
+  gap: 6px;
+}
+.productivity-library-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: left;
+  gap: 4px;
+  padding: 14px;
+}
+.productivity-library-row[aria-current="true"] {
+  border-color: var(--accent);
+  background: var(--accent-wash);
+}
+.productivity-library small {
+  color: var(--muted);
+}
+.productivity-library details button {
+  display: block;
+  margin-top: 8px;
+  width: 100%;
+  text-align: left;
+}
+.productivity-form-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.productivity-form-fields > fieldset {
+  border: 1px solid var(--line);
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.productivity-form-fields label input,
+.productivity-form-fields label select,
+.productivity-form-fields label textarea {
+  width: 100%;
+}
+.productivity-form-fields .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.productivity-form-fields .checkbox input {
+  width: auto;
+}
+.productivity-option {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+}
+.productivity-option > label:first-child {
+  flex: 1;
+}
+.productivity-fields {
+  display: grid;
+  gap: 16px;
+  margin-block: 16px;
+}
+.productivity-field > label {
+  font-weight: 600;
+}
+.productivity-field fieldset {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+}
+.productivity-field .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.productivity-field input[type="checkbox"] {
+  width: auto;
+}
+.productivity-field > p {
+  margin: 0;
+}
+.productivity-form-entry {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.form-rule-editor {
+  margin-top: 16px;
+}
+.saved-view-filter {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 10px;
+}
+.saved-view-filter label {
+  flex: 1;
+  min-width: 100px;
+  display: grid;
+  gap: 5px;
+}
+.ticket-custom-fields {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  margin-block: 16px;
+}
+.ticket-field-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 14px;
+}
+.ticket-field-summary dt,
+.saved-view-ticket dt {
+  text-transform: capitalize;
+  font-size: 12px;
+  color: var(--muted);
+}
+.ticket-field-summary dd,
+.saved-view-ticket dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.macro-picker {
+  position: relative;
+}
+.macro-picker-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  margin-block: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.macro-picker-panel label {
+  display: grid;
+  gap: 6px;
+}
+.macro-results {
+  max-height: 220px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+.macro-results > button {
+  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.macro-results small {
+  color: var(--muted);
+}
+.macro-picker-panel textarea {
+  width: 100%;
+}
+.macro-change,
+.macro-staged > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-block: 8px;
+  overflow-wrap: anywhere;
+}
+.macro-staged {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-block: 8px;
+}
+.saved-view-select,
+.saved-view-search {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+  font-weight: 600;
+}
+.saved-view-ticket {
+  display: block;
+  text-align: left;
+  width: 100%;
+  padding: 16px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+}
+.saved-view-caption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.saved-view-caption > button {
+  margin-left: auto;
+}
+.filter-value-options {
+  border: 1px solid var(--line);
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+.saved-view-ticket[aria-current="true"] {
+  background: var(--accent-wash);
+  box-shadow: inset 3px 0 var(--accent);
+}
+.saved-view-ticket h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+.saved-view-ticket dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.saved-view-ticket dd {
+  font-size: 13px;
+}
+.productivity-editor {
+  min-width: 0;
+}
+.productivity-editor .button-row {
+  flex-wrap: wrap;
+}
+.productivity-editor input:disabled,
+.productivity-editor select:disabled,
+.productivity-editor textarea:disabled {
+  opacity: 0.65;
+}
+@media (max-width: 850px) {
+  .productivity-layout {
+    grid-template-columns: 1fr;
+  }
+  .productivity-library {
+    position: static;
+  }
+  .productivity-library-row {
+    min-height: 48px;
+  }
+  .productivity-form-entry {
+    padding: 12px;
+  }
+  .saved-view-filter {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  .productivity-option {
+    flex-wrap: wrap;
+  }
+  .macro-results > button {
+    flex-direction: column;
+  }
+  .productivity-form-fields .form-grid {
+    grid-template-columns: 1fr;
+  }
+}

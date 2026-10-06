@@ -25,6 +25,12 @@ import { MessageList, useConversationEvents } from "./conversation-ui.js";
 import { ConversationFeedback } from "./ConversationFeedback.js";
 import { Field, Notice, type Row } from "./quality-ui.js";
 import "./customer-support.css";
+import {
+  FormFields,
+  TicketFields,
+  visibleValues,
+} from "./ProductivityFields.js";
+import type { Values } from "../../../packages/platform/src/productivity-contracts.js";
 
 type Identity = {
   workspaceId: string;
@@ -607,7 +613,17 @@ function NewTicket({
     [body, setBody] = useState(""),
     [files, setFiles] = useState<Row[]>([]),
     key = useRef(crypto.randomUUID());
-  useDraftWarning(Boolean(body || subject || files.length), onDraftChange);
+  const forms = useLoad(
+    () => api(identity.workspaceId, "/ticket-forms"),
+    [identity.workspaceId],
+  );
+  const [formId, setFormId] = useState("default"),
+    [values, setValues] = useState<Values>({});
+  const form = forms.data?.forms.find((f: Row) => f.id === formId);
+  useDraftWarning(
+    Boolean(body || subject || files.length || Object.keys(values).length),
+    onDraftChange,
+  );
   return (
     <form
       className="ticket-compose"
@@ -620,11 +636,67 @@ function NewTicket({
             requestKey: key.current,
             attachments: attachmentIds(files),
             channelId: identity.channelId,
+            ...(form
+              ? {
+                  formId: form.id,
+                  formVersion: form.revision,
+                  values: visibleValues(form.fields, values),
+                }
+              : {}),
           });
           onCreated(c.id);
         });
       }}
     >
+      {forms.error && (
+        <p role="alert">
+          Custom forms could not be loaded. You can still submit a general
+          request.{" "}
+          <button type="button" onClick={forms.reload}>
+            Try again
+          </button>
+        </p>
+      )}
+      {forms.data?.forms.length > 0 && (
+        <Field label="Request type">
+          <select
+            aria-label="Request type"
+            value={formId}
+            disabled={a.busy}
+            onChange={(e) => {
+              if (
+                Object.keys(values).length &&
+                !confirm("Discard the fields entered for this request type?")
+              )
+                return;
+              setFormId(e.target.value);
+              setValues({});
+              key.current = crypto.randomUUID();
+            }}
+          >
+            <option value="default">General support</option>
+            {forms.data.forms.map((f: Row) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </select>
+        </Field>
+      )}
+      {form && (
+        <>
+          <p className="field-hint">{form.description}</p>
+          <FormFields
+            fields={form.fields}
+            values={values}
+            disabled={a.busy}
+            onChange={(v) => {
+              setValues(v);
+              key.current = crypto.randomUUID();
+            }}
+          />
+        </>
+      )}
       <Field label="Subject">
         <input
           autoFocus
@@ -683,7 +755,10 @@ function NewTicket({
           type="button"
           disabled={a.busy}
           onClick={() => {
-            if ((!body && !subject) || confirm("Discard this unsent ticket?"))
+            if (
+              (!body && !subject && !Object.keys(values).length) ||
+              confirm("Discard this unsent ticket?")
+            )
               cancel();
           }}
         >
@@ -732,7 +807,8 @@ function TicketThread({
     [body, setBody] = useState(""),
     [files, setFiles] = useState<Row[]>([]),
     key = useRef(crypto.randomUUID());
-  useDraftWarning(Boolean(body || files.length), onDraftChange);
+  const [fieldDirty, setFieldDirty] = useState(false);
+  useDraftWarning(Boolean(body || files.length || fieldDirty), onDraftChange);
   useConversationEvents(
     identity.workspaceId,
     id,
@@ -766,7 +842,11 @@ function TicketThread({
       <button
         className="link"
         onClick={() => {
-          if (!body || confirm("Discard your unsent reply?")) back();
+          if (
+            (!body && !fieldDirty) ||
+            confirm("Discard your unsaved ticket changes?")
+          )
+            back();
         }}
       >
         ← My tickets
@@ -782,6 +862,13 @@ function TicketThread({
         </div>
         <TicketStatus conv={conv} messages={l.data.messages} />
       </header>
+      <TicketFields
+        ws={identity.workspaceId}
+        id={id}
+        customer
+        onDirtyChange={setFieldDirty}
+        changed={l.reload}
+      />
       <div className={`ticket-notice ${closed ? "closed" : ""}`} role="status">
         <strong>
           {closed

@@ -1,3 +1,4 @@
+import { refreshPrincipal, resolveStaffPrincipal, requireCapability, hasCapability, canReadConversation } from "./permissions.js";
 import { createHash } from "node:crypto";
 import { mkdir, open, readFile, unlink, readdir, stat } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
@@ -69,7 +70,10 @@ export class Attachments {
   }
   async settings(p: Principal, raw?: unknown) {
     identity(p);
+    if (raw !== undefined) requireOwner(p);
+    if (staff(p)) p = await refreshPrincipal(this.db,p);
     if (raw !== undefined) {
+      requireCapability(p,"settings:manage");
       requireOwner(p);
       const d = AttachmentSettings.parse(raw);
       if (d.enabled) await this.scanner.health();
@@ -93,7 +97,7 @@ export class Attachments {
     )) ?? { enabled: false, anonymous: false, revision: 0 };
     return {
       ...settings,
-      allowed: settings.enabled && (p.role !== "visitor" || settings.anonymous),
+      allowed: settings.enabled && (p.role !== "visitor" || settings.anonymous) && (!staff(p) || hasCapability(p,"attachments:upload")),
       limits: this.limits(p),
       aiEligible: false,
     };
@@ -105,6 +109,20 @@ export class Attachments {
   }
   private async access(p: Principal, row: any, q?: Queryable) {
     identity(p);
+    if (staff(p)) {
+      p = await refreshPrincipal(this.db,p,q);
+      if (row.visibility === "staff" && !hasCapability(p,"tickets:note")) throw new HttpError(404,"Attachment not found");
+    }
+    const emailStaging =
+      p.emailIntake &&
+      p.role === "customer" &&
+      row.uploader_role === "email" &&
+      row.contact_id === p.contactId &&
+      !!(await this.db.one(
+        "SELECT c.id FROM conversations c JOIN support_email_addresses a ON a.workspace_id=c.workspace_id AND a.id=c.support_address_id JOIN connections k ON k.id=a.integration_id AND k.workspace_id=c.workspace_id AND k.status='connected' WHERE c.workspace_id=$1 AND c.id=$2 AND c.contact_id=$3 AND c.channel_id=$4 AND c.origin='email'",
+        [p.workspaceId, row.conversation_id, p.contactId, row.channel_id],
+        q,
+      ));
     if (
       staff(p) &&
       !(await this.db.one(
@@ -116,6 +134,7 @@ export class Attachments {
       throw new HttpError(403, "Staff access was revoked");
     if (
       !staff(p) &&
+      !emailStaging &&
       !(await this.db.one(
         "SELECT 1 FROM contacts WHERE workspace_id=$1 AND id=$2 AND ($3 OR verified)",
         [p.workspaceId, p.contactId, p.role === "visitor"],
@@ -161,7 +180,12 @@ export class Attachments {
       else await this.channel(p, row.channel_id, q);
     }
   }
-  private async channel(p: Principal, id: string, q?: Queryable) {
+  private async channel(
+    p: Principal,
+    id: string,
+    q?: Queryable,
+    conversationId?: string,
+  ) {
     const channel = requireValue(
       await this.db.one(
         "SELECT * FROM channels WHERE workspace_id=$1 AND id=$2",
@@ -169,8 +193,18 @@ export class Attachments {
         q,
       ),
     );
+    const emailAdmission =
+      p.emailIntake &&
+      p.role === "customer" &&
+      conversationId &&
+      !!(await this.db.one(
+        "SELECT c.id FROM conversations c JOIN support_email_addresses a ON a.workspace_id=c.workspace_id AND a.id=c.support_address_id JOIN connections k ON k.id=a.integration_id AND k.workspace_id=c.workspace_id AND k.status='connected' WHERE c.workspace_id=$1 AND c.id=$2 AND c.contact_id=$3 AND c.channel_id=$4 AND c.origin='email'",
+        [p.workspaceId, conversationId, p.contactId, id],
+        q,
+      ));
     if (
       !staff(p) &&
+      !emailAdmission &&
       (!channel.published ||
         (p.channelId && p.channelId !== id) ||
         (channel.kind === "portal" &&
@@ -204,6 +238,7 @@ export class Attachments {
     };
   }
   async get(p: Principal, id: string) {
+    if (staff(p)) { p = await refreshPrincipal(this.db,p); requireCapability(p,"attachments:read"); }
     const row = requireValue(
       await this.db.one(
         "SELECT * FROM attachments WHERE workspace_id=$1 AND id=$2",
@@ -214,20 +249,23 @@ export class Attachments {
     return this.publicRow(row);
   }
   async list(p: Principal, id: string, q?: Queryable) {
+    if (staff(p)) { p = await refreshPrincipal(this.db,p); requireCapability(p,"attachments:read"); }
     await conversation(this.db, p, id, q);
     return (
       await this.db.rows(
-        "SELECT a.* FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.workspace_id=$1 AND a.conversation_id=$2 AND a.status<>'deleted' AND ($3 OR (a.visibility='customer' AND m.role IN ('customer','staff','assistant') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) ORDER BY a.created_at,a.id",
-        [p.workspaceId, id, staff(p)],
+        "SELECT a.* FROM attachments a JOIN messages m ON m.id=a.message_id WHERE a.workspace_id=$1 AND a.conversation_id=$2 AND a.status<>'deleted' AND ($3 OR (a.visibility='customer' AND m.role IN ('customer','staff','assistant') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (a.visibility<>'staff' OR $4) ORDER BY a.created_at,a.id",
+        [p.workspaceId, id, staff(p),hasCapability(p,"tickets:note")],
         q,
       )
     ).map((r) => this.publicRow(r));
   }
   async reserve(p: Principal, raw: unknown) {
+    if (staff(p)) { p = await refreshPrincipal(this.db,p); requireCapability(p,"attachments:upload"); }
     const d = AttachmentInput.parse(raw),
       who = identity(p),
       limits = this.limits(p),
       name = attachmentName(d.name);
+    if (d.private && staff(p)) requireCapability(p,"tickets:note");
     if (d.private && !staff(p))
       throw new HttpError(403, "Private files are restricted to staff");
     if (p.role === "visitor" && !d.conversationId)
@@ -265,6 +303,7 @@ export class Attachments {
         p,
         conv?.channel_id ?? d.channelId!,
         q,
+        conv?.id,
       );
       const prior = await this.db.one(
         "SELECT * FROM attachments WHERE workspace_id=$1 AND uploader=$2 AND request_key=$3",
@@ -312,7 +351,7 @@ export class Attachments {
           settings.revision,
           d.requestKey,
           digest(d),
-          p.role,
+          p.emailIntake ? "email" : p.role,
         ],
         q,
       );
@@ -361,6 +400,7 @@ export class Attachments {
     return mime;
   }
   async upload(p: Principal, id: string, input: AsyncIterable<Uint8Array>) {
+    if (staff(p)) { p = await refreshPrincipal(this.db,p); requireCapability(p,"attachments:upload"); }
     const row = requireValue(
       await this.db.one(
         "SELECT * FROM attachments WHERE workspace_id=$1 AND id=$2",
@@ -505,6 +545,7 @@ export class Attachments {
     q: PoolClient,
   ) {
     if (!ids.length) return;
+    if (staff(p)) { p=await refreshPrincipal(this.db,p,q); requireCapability(p,"attachments:upload"); if (note) requireCapability(p,"tickets:note"); }
     if (new Set(ids).size !== ids.length || ids.length > this.limits(p).count)
       throw new HttpError(400, "Too many or repeated attachment IDs");
     const rows = await this.db.rows(
@@ -667,6 +708,7 @@ export class Attachments {
     id: string,
     action: "cancel" | "delete" | "retry",
   ) {
+    if (staff(p)) { p=await refreshPrincipal(this.db,p); requireCapability(p,"attachments:upload"); }
     await this.db.tx(async (q) => {
       const row = requireValue(
         await this.db.one(
@@ -689,7 +731,7 @@ export class Attachments {
           attachmentId: id,
         });
       } else {
-        if (row.message_id) requireAdmin(p);
+        if (row.message_id) { requireCapability(p,"tickets:delete"); requireAdmin(p); }
         else if (row.uploader !== identity(p))
           throw new HttpError(403, "Only the uploader can remove a draft file");
         await q.query(
@@ -769,12 +811,21 @@ export class Attachments {
       q,
     );
     if (!settings?.enabled) return false;
-    if (row.uploader.startsWith("staff:"))
+    if (row.uploader_role === "email")
       return !!(await this.db.one(
-        "SELECT 1 FROM memberships WHERE workspace_id=$1 AND user_id=$2",
-        [row.workspace_id, row.uploader.slice(6)],
+        "SELECT c.id FROM conversations c JOIN support_email_addresses a ON a.workspace_id=c.workspace_id AND a.id=c.support_address_id JOIN connections k ON k.id=a.integration_id AND k.workspace_id=c.workspace_id AND k.status='connected' WHERE c.workspace_id=$1 AND c.id=$2 AND c.contact_id=$3 AND c.channel_id=$4 AND c.origin='email'",
+        [row.workspace_id, row.conversation_id, row.contact_id, row.channel_id],
         q,
       ));
+    if (row.uploader.startsWith("staff:")) {
+      try {
+        const p=await resolveStaffPrincipal(this.db,row.workspace_id,row.uploader.slice(6),q);
+        if (!hasCapability(p,"attachments:upload") || (row.visibility==="staff" && !hasCapability(p,"tickets:note"))) return false;
+        if (!row.conversation_id) return true;
+        const conv=await this.db.one("SELECT assigned_to,team_id FROM conversations WHERE workspace_id=$1 AND id=$2",[row.workspace_id,row.conversation_id],q);
+        return !!conv && canReadConversation(p,conv);
+      } catch (error) { if (error instanceof HttpError) return false; throw error; }
+    }
     const contact = await this.db.one(
       "SELECT verified FROM contacts WHERE workspace_id=$1 AND id=$2",
       [row.workspace_id, row.contact_id],
@@ -889,6 +940,7 @@ export class Attachments {
         await unlink(this.path(row.storage_key, preview)).catch(() => {});
   }
   async download(p: Principal, id: string, preview = false) {
+    if (staff(p)) { p = await refreshPrincipal(this.db,p); requireCapability(p,"attachments:read"); }
     const row = requireValue(
       await this.db.one(
         "SELECT * FROM attachments WHERE workspace_id=$1 AND id=$2",

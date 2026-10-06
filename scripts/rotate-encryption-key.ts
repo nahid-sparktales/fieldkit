@@ -53,6 +53,58 @@ try {
         ],
       );
     }
+    for (const row of await db.rows(
+      "SELECT id,workspace_id,payload_ciphertext FROM email_intake_events WHERE payload_ciphertext IS NOT NULL",
+      [],
+      q,
+    )) {
+      const scope = `email-intake:${row.workspace_id}:${row.id}`;
+      await q.query(
+        "UPDATE email_intake_events SET payload_ciphertext=$1 WHERE workspace_id=$2 AND id=$3",
+        [
+          seal(
+            next,
+            scope,
+            unseal(
+              db.config.FIELDKIT_ENCRYPTION_KEY,
+              scope,
+              row.payload_ciphertext,
+            ),
+          ),
+          row.workspace_id,
+          row.id,
+        ],
+      );
+    }
+    for (const row of await db.rows(
+      "SELECT id,workspace_id,secret FROM staff_oidc_providers",
+      [],
+      q,
+    )) {
+      const scope = `oidc:${row.workspace_id}:${row.id}`;
+      await q.query("UPDATE staff_oidc_providers SET secret=$1 WHERE id=$2", [
+        seal(
+          next,
+          scope,
+          unseal(db.config.FIELDKIT_ENCRYPTION_KEY, scope, row.secret),
+        ),
+        row.id,
+      ]);
+    }
+    for (const row of await db.rows(
+      'SELECT id,secret FROM "twoFactor"',
+      [],
+      q,
+    )) {
+      await q.query('UPDATE "twoFactor" SET secret=$1 WHERE id=$2', [
+        seal(
+          next,
+          "auth:totp",
+          unseal(db.config.FIELDKIT_ENCRYPTION_KEY, "auth:totp", row.secret),
+        ),
+        row.id,
+      ]);
+    }
   });
   console.log(
     "Credentials re-encrypted. Set FIELDKIT_ENCRYPTION_KEY to the new key before restarting app and worker. Keep the previous key with the pre-rotation backup.",

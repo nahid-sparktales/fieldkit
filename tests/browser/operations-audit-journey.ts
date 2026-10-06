@@ -106,13 +106,20 @@ export async function verifyOperationsAudit(page: Page, ws: string) {
     ],
   ]) {
     const url = `**/v2/workspaces/${ws}/${endpoint}`;
-    await page.route(url, (route) =>
-      route.fulfill({
+    await page.route(url, async (route) => {
+      // Keep background refreshes in the outage until the user actually clicks Retry.
+      if (
+        await page.evaluate(
+          () => (window as any).__operationsRetryClicked === true,
+        )
+      )
+        return route.fallback();
+      return route.fulfill({
         status: 503,
         contentType: "application/json",
         body: JSON.stringify({ error: "Temporary test outage" }),
-      }),
-    );
+      });
+    });
     await page.goto(`/?workspace=${ws}&view=${encodeURIComponent(view)}`);
     await expect(
       page.getByText("Temporary test outage", { exact: true }),
@@ -122,11 +129,24 @@ export async function verifyOperationsAudit(page: Page, ws: string) {
     await expect(
       page.getByRole("button", { name: "Try again", exact: true }),
     ).toBeVisible();
-    await page.unroute(url);
+    await page.evaluate(() => {
+      document.addEventListener(
+        "click",
+        (event) => {
+          if (
+            (event.target as Element).closest("button")?.textContent ===
+            "Try again"
+          )
+            (window as any).__operationsRetryClicked = true;
+        },
+        { capture: true },
+      );
+    });
     await page.getByRole("button", { name: "Try again", exact: true }).click();
     await expect(
       page.getByText("Temporary test outage", { exact: true }),
     ).toBeHidden();
+    await page.unroute(url);
     if (endpoint === "sla") {
       await expect(
         page.getByRole("heading", { name: "Response queue", exact: true }),

@@ -8,6 +8,7 @@ import {
 } from "../packages/platform/src/model.js";
 import { Settings } from "../packages/platform/src/contracts.js";
 import { uid } from "../packages/platform/src/db.js";
+import type { Principal } from "../packages/platform/src/auth.js";
 import {
   testConfig,
   resetDatabase,
@@ -36,6 +37,29 @@ beforeEach(() => {
 });
 const task = (id: string) =>
   app.db.one("SELECT * FROM assistance_tasks WHERE id=$1", [id]);
+async function restrictedActor(
+  ws: string,
+  capabilities: string[],
+  scope = "all",
+): Promise<Principal> {
+  const userId = uid(),
+    role = uid();
+  await app.db.pool.query(
+    "INSERT INTO staff_roles(workspace_id,id,name,capabilities,ticket_scope,created_by) VALUES($1,$2,$2,$3,$4,$5)",
+    [ws, role, JSON.stringify(capabilities), scope, userId],
+  );
+  await app.db.pool.query(
+    "INSERT INTO memberships(workspace_id,user_id,role,custom_role_id) VALUES($1,$2,'agent',$3)",
+    [ws, userId, role],
+  );
+  return { workspaceId: ws, userId, role: "agent" };
+}
+const responseCaps = [
+  "tickets:read",
+  "tickets:reply",
+  "assistance:use",
+  "knowledge:read",
+];
 async function conversationFixture() {
   const w = await workspace(app);
   await knowledge(app, w.ws.id);
@@ -329,8 +353,11 @@ test("workflows reject other tenants, lost roles, stale conversations and fabric
     /Staff/,
   );
   await assert.rejects(
-    app.assistance.start({ ...w.owner, role: "agent" }, { kind: "faq_review" }),
-    /administrator/,
+    app.assistance.start(
+      await restrictedActor(w.ws.id, ["assistance:use", "knowledge:read"]),
+      { kind: "faq_review" },
+    ),
+    /knowledge:manage/,
   );
   const stale = (await app.assistance.start(w.owner, {
     kind: "response",
@@ -502,4 +529,200 @@ test("live support adapter uses structured output, bounded calls and actual toke
   } finally {
     replacement.mock.restore();
   }
+});
+
+test("assistance respects current scoped access and never exposes private draft context to a note-restricted reader", async () => {
+  const w = await conversationFixture();
+  await app.message(
+    w.owner,
+    w.conv.id,
+    { body: "PRIVATE-CONTEXT-TEST", requestKey: uid() },
+    true,
+  );
+  const reader = await restrictedActor(w.ws.id, responseCaps, "assigned");
+  await assert.rejects(
+    app.assistance.start(reader, {
+      kind: "response",
+      conversationId: w.conv.id,
+    }),
+    /not found/i,
+  );
+  await assert.rejects(app.assistance.list(reader, w.conv.id), /not found/i);
+  await app.db.pool.query(
+    "UPDATE conversations SET assigned_to=$2 WHERE id=$1",
+    [w.conv.id, reader.userId],
+  );
+  await assert.rejects(
+    app.assistance.start(reader, {
+      kind: "research",
+      conversationId: w.conv.id,
+    }),
+    /tickets:note/,
+  );
+  const internal = (await app.assistance.start(w.owner, {
+    kind: "research",
+    conversationId: w.conv.id,
+  }))!;
+  await app.assistance.advance(w.ws.id, internal.id);
+  assert.equal((await task(internal.id))!.status, "completed");
+  assert.deepEqual(await app.assistance.list(reader, w.conv.id), []);
+  await assert.rejects(
+    app.assistance.compose(reader, internal.id, { body: "Reviewed note" }),
+    /tickets:note/,
+  );
+  await assert.rejects(
+    app.assistance.control(reader, internal.id, "cancel"),
+    /tickets:note/,
+  );
+  let calls = 0;
+  model.assistHook = async (input) => {
+    calls++;
+    assert.ok(
+      input.messages.every((m) =>
+        ["customer", "staff", "assistant"].includes(m.role),
+      ),
+    );
+    assert.ok(!JSON.stringify(input).includes("PRIVATE-CONTEXT-TEST"));
+  };
+  const response = (await app.assistance.start(reader, {
+    kind: "response",
+    conversationId: w.conv.id,
+  }))!;
+  await app.assistance.advance(w.ws.id, response.id);
+  assert.equal((await task(response.id))!.status, "completed");
+  assert.equal(calls, 1);
+  assert.deepEqual(
+    (await app.assistance.list(reader, w.conv.id)).map((r) => r.id),
+    [response.id],
+  );
+  await app.db.pool.query(
+    "UPDATE conversations SET assigned_to=null WHERE id=$1",
+    [w.conv.id],
+  );
+  await assert.rejects(
+    app.assistance.compose(reader, response.id, { body: "Reviewed reply" }),
+    /not found/i,
+  );
+  await assert.rejects(app.assistance.list(reader, w.conv.id), /not found/i);
+});
+
+test("queued and in-flight assistance jobs recheck removed, disabled and newly restricted initiators", async () => {
+  for (const change of [
+    "disabled",
+    "removed",
+    "reassigned",
+    "during-model",
+  ] as const) {
+    const w = await conversationFixture();
+    const actor = await restrictedActor(w.ws.id, responseCaps, "assigned");
+    await app.db.pool.query(
+      "UPDATE conversations SET assigned_to=$2 WHERE id=$1",
+      [w.conv.id, actor.userId],
+    );
+    const run = (await app.assistance.start(actor, {
+      kind: "response",
+      conversationId: w.conv.id,
+    }))!;
+    let calls = 0;
+    model.assistHook = async () => {
+      calls++;
+      if (change === "during-model")
+        await app.db.pool.query(
+          "UPDATE memberships SET disabled=true WHERE workspace_id=$1 AND user_id=$2",
+          [w.ws.id, actor.userId],
+        );
+    };
+    if (change === "disabled")
+      await app.db.pool.query(
+        "UPDATE memberships SET disabled=true WHERE workspace_id=$1 AND user_id=$2",
+        [w.ws.id, actor.userId],
+      );
+    if (change === "removed")
+      await app.db.pool.query(
+        "DELETE FROM memberships WHERE workspace_id=$1 AND user_id=$2",
+        [w.ws.id, actor.userId],
+      );
+    if (change === "reassigned")
+      await app.db.pool.query(
+        "UPDATE conversations SET assigned_to=null WHERE id=$1",
+        [w.conv.id],
+      );
+    await app.assistance.advance(w.ws.id, run.id);
+    const result = (await task(run.id))!;
+    assert.equal(result.status, "failed", change);
+    assert.match(result.error, /required access/);
+    assert.equal(result.output.draft, undefined);
+    assert.equal(calls, change === "during-model" ? 1 : 0);
+  }
+});
+
+test("assistance apply cannot bypass changed scope, even for an already applied result", async () => {
+  const w = await conversationFixture();
+  const actor = await restrictedActor(
+    w.ws.id,
+    [...responseCaps, "tickets:note", "audit:read", "tickets:update"],
+    "assigned",
+  );
+  await app.db.pool.query(
+    "UPDATE conversations SET assigned_to=$2 WHERE id=$1",
+    [w.conv.id, actor.userId],
+  );
+  const run = (await app.assistance.start(actor, {
+    kind: "triage",
+    conversationId: w.conv.id,
+  }))!;
+  await app.assistance.advance(w.ws.id, run.id);
+  const draft = (await task(run.id))!.output.draft;
+  const input = {
+    title: draft.title,
+    body: draft.body,
+    priority: draft.priority,
+    category: draft.category,
+  };
+  await app.assistance.apply(actor, run.id, input);
+  await app.db.pool.query(
+    "UPDATE conversations SET assigned_to=null WHERE id=$1",
+    [w.conv.id],
+  );
+  await assert.rejects(
+    app.assistance.apply(actor, run.id, input),
+    /not found/i,
+  );
+});
+
+test("read-only assistance access preserves FAQ history without granting FAQ mutations or private support drafts", async () => {
+  const w = await conversationFixture();
+  const review = (await app.assistance.start(w.owner, { kind: "faq_review" }))!;
+  const reader = await restrictedActor(w.ws.id, [
+    "assistance:use",
+    "knowledge:read",
+    "tickets:read",
+  ]);
+  assert.deepEqual(
+    (await app.assistance.list(reader)).map((r) => r.id),
+    [review.id],
+  );
+  await assert.rejects(
+    app.assistance.start(reader, { kind: "faq_review" }),
+    /knowledge:manage/,
+  );
+  await assert.rejects(
+    app.assistance.control(reader, review.id, "cancel"),
+    /knowledge:manage/,
+  );
+  const scoped = await restrictedActor(w.ws.id, responseCaps, "assigned");
+  await assert.rejects(app.assistance.list(scoped), /all tickets/);
+  const reply = (await app.assistance.start(w.owner, {
+    kind: "response",
+    conversationId: w.conv.id,
+  }))!;
+  await app.assistance.advance(w.ws.id, reply.id);
+  assert.deepEqual(
+    (await app.assistance.list(reader, w.conv.id)).map((r) => r.id),
+    [reply.id],
+  );
+  await assert.rejects(
+    app.assistance.compose(reader, reply.id, { body: "Would send" }),
+    /tickets:reply/,
+  );
 });

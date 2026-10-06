@@ -104,6 +104,11 @@ The production build generates Brotli/gzip assets; optional screens load on dema
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | [Operations](docs/operations.md)                                                  | Installation, TLS, upgrades, backups, retention, and credential rotation |
 | [Customer support](docs/customer-support.md)                                      | Portal, widget, ticket email, inbound replies, and feedback              |
+| [Email intake](docs/helpdesk-email.md)                                            | Support aliases, threading, attachments, failures and replay             |
+| [Fields, forms, macros and views](docs/helpdesk-productivity.md)                  | Structured requests and everyday staff workflows                         |
+| [Teams and routing](docs/helpdesk-routing.md)                                     | Availability, workload limits, manual and automatic assignment           |
+| [Staff identity](docs/staff-identity.md) / [custom roles](docs/staff-roles.md)    | OIDC, MFA, permission scopes and operator recovery                       |
+| [Help-desk implementation](docs/helpdesk-implementation.md)                       | Migrations, architecture decisions and local verification                |
 | [Branding and settings](docs/branding.md)                                         | Help-center customization, profile settings, and the new logo assets     |
 | [Workflows](docs/workflows.md) / [custom components](docs/workflow-components.md) | Guided/visual editing, custom replies, code steps, and runner setup      |
 | [Models](docs/models.md) / [integrations](docs/integrations.md)                   | Provider setup, OAuth registrations, identities, and business actions    |

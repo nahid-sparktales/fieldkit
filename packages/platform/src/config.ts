@@ -46,6 +46,8 @@ const Schema = z.object({
     .default(1024 * 1024 * 1024),
   FIELDKIT_ATTACHMENT_SCANS: z.coerce.number().int().min(1).max(4).default(2),
   FIELDKIT_MODEL_ENDPOINTS: z.string().default(""),
+  FIELDKIT_OIDC_ISSUERS: z.string().default(""),
+  FIELDKIT_BREAK_GLASS_USERS: z.string().default(""),
   FIELDKIT_ENCRYPTION_KEY: z
     .string()
     .refine(

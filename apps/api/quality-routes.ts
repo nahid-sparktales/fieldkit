@@ -1,3 +1,4 @@
+import { authorizeWorkspaceRoute } from "./route-permissions.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Platform } from "../../packages/platform/src/platform.js";
 import {
@@ -38,7 +39,9 @@ export async function qualityRoutes(
       `${p.workspaceId}:${p.userId ?? p.role}`,
       {
         authorize: async () => {
-          requireStaff(await principal(app.db, app.auth, req, p.workspaceId));
+          const current = await principal(app.db, app.auth, req, p.workspaceId);
+          requireStaff(current);
+          authorizeWorkspaceRoute(current,path,method);
         },
         latest: async () =>
           (await app.db.one(

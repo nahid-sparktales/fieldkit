@@ -1,3 +1,5 @@
+import { StaffRolesEditor } from "./RolesEditor.js";
+import { SecurityPage, MfaChallenge, SsoSignIn } from "./SecurityPage.js";
 import "./validation-config.js";
 const ShadowPage = React.lazy(() =>
   import("./ShadowPage.js").then((m) => ({ default: m.ShadowPage })),
@@ -45,6 +47,17 @@ import { appLink, assigneeLabel, replaceCurrentRoute } from "./customer-ui.js";
 import { confirmDiscardChanges, useUnsavedChanges } from "./unsaved-changes.js";
 import { useSettingsForm } from "./settings-form.js";
 import { ActivityPage } from "./ActivityPage.js";
+const ProductivityPage = React.lazy(() =>
+  import("./ProductivityPage.js").then((m) => ({
+    default: m.ProductivityPage,
+  })),
+);
+const TeamsPage = React.lazy(() =>
+  import("./TeamsPage.js").then((m) => ({ default: m.TeamsPage })),
+);
+import { AgentAvailabilityControl, RoutingAssignment } from "./TeamsPage.js";
+import { TicketFields } from "./ProductivityFields.js";
+import { MacroPicker, MacroChanges, type MacroDraft } from "./MacroPicker.js";
 import { ActionsPage } from "./ActionsPage.js";
 import "./admin-workspace.css";
 import { SupportOptions } from "./SupportOptions.js";
@@ -210,7 +223,11 @@ function AuthScreen({
   brandName?: string;
 }) {
   const [mode, setMode] = useState(
-      new URLSearchParams(location.search).has("token") ? "reset" : "login",
+      new URLSearchParams(location.search).has("mfa")
+        ? "mfa"
+        : new URLSearchParams(location.search).has("token")
+          ? "reset"
+          : "login",
     ),
     a = useAction();
   useEffect(() => {
@@ -246,7 +263,10 @@ function AuthScreen({
             password: String(d.get("password")),
           });
         if (result.error) throw new Error(result.error.message);
-        if (mode === "login") done();
+        if (mode === "login") {
+          if (result.data?.twoFactorRedirect) setMode("mfa");
+          else done();
+        }
       },
       mode === "signup"
         ? "Check your email to verify your account."
@@ -257,6 +277,12 @@ function AuthScreen({
             : "",
     );
   }
+  if (mode === "mfa")
+    return (
+      <div className="auth-page">
+        <MfaChallenge done={done} />
+      </div>
+    );
   return (
     <div className={compact ? "auth-inline" : "auth-page"}>
       {!compact && (
@@ -346,6 +372,7 @@ function AuthScreen({
                     : "Sign in"}
           </button>
         </form>
+        {!compact && mode === "login" && <SsoSignIn />}
         <div className="auth-links">
           <button
             onClick={() => setMode(mode === "signup" ? "login" : "signup")}
@@ -441,13 +468,20 @@ const navigation = [
       "Connections",
       "Publish",
       "Team",
+      "Teams & routing",
+      "Productivity",
       "Settings",
+      "Security",
       "Activity",
     ],
   },
 ];
 const sections = navigation.flatMap((group) => group.items);
+const viewSlug = (section: string) =>
+  section === "Teams & routing" ? "teams" : section.toLowerCase();
 const staffSections = [
+  "Teams & routing",
+  "Productivity",
   "Settings",
   "Inbox",
   "Needs attention",
@@ -468,7 +502,7 @@ function App() {
     ),
     [view, setView] = useState(() => {
       const v = new URLSearchParams(location.search).get("view");
-      return sections.find((s) => s.toLowerCase() === v) ?? "Setup";
+      return sections.find((s) => viewSlug(s) === v) ?? "Setup";
     }),
     [menu, setMenu] = useState(false),
     [mobile, setMobile] = useState(
@@ -485,7 +519,7 @@ function App() {
     if (
       !Object.values(inboxDrafts).some((workspace) =>
         Object.values(workspace).some(
-          (draft) => draft.body.trim() || draft.files?.length,
+          (draft) => draft.body.trim() || draft.files?.length || draft.macro,
         ),
       )
     )
@@ -520,7 +554,7 @@ function App() {
       const target = params.get("workspace");
       if (target) setWs(target);
       setView(
-        sections.find((s) => s.toLowerCase() === params.get("view")) ?? "Setup",
+        sections.find((s) => viewSlug(s) === params.get("view")) ?? "Setup",
       );
       setMenu(false);
       setRouteRevision((v) => v + 1);
@@ -617,8 +651,37 @@ function App() {
   if (!ws) return <WorkspaceSetup done={() => void refresh()} />;
   const workspace = session.workspaces.find((w: Row) => w.id === ws),
     role = workspace?.role;
-  const activeView =
-    role === "agent" && !staffSections.includes(view) ? "Inbox" : view;
+  const viewCapabilities: Record<string, string> = {
+    Inbox: "tickets:read",
+    "Needs attention": "tickets:read",
+    Customers: "customers:read",
+    Knowledge: "knowledge:read",
+    Analytics: "analytics:read",
+    Workflow: "workflow:read",
+    "Test Lab": "workflow:read",
+    "Shadow & rollout": "workflow:read",
+    Actions: "actions:read",
+    Setup: "settings:manage",
+    Readiness: "tickets:read",
+    Connections: "settings:manage",
+    Publish: "settings:manage",
+    Team: "members:manage",
+    "Teams & routing": "tickets:read",
+    Productivity: "tickets:read",
+    Activity: "audit:read",
+  };
+  const canView = (name: string) =>
+    ["Settings", "Security"].includes(name) ||
+    (workspace?.capabilities
+      ? workspace.capabilities.includes(viewCapabilities[name])
+      : role !== "agent" || staffSections.includes(name));
+  const activeView = workspace?.identityError
+    ? "Security"
+    : canView(view)
+      ? view
+      : canView("Inbox")
+        ? "Inbox"
+        : "Settings";
   const go = (v: string, tab?: string) => {
     if (v === view && !tab) {
       setMenu(false);
@@ -631,7 +694,7 @@ function App() {
       history.pushState(
         {},
         "",
-        `/?workspace=${ws}&view=${encodeURIComponent(v.toLowerCase())}${tab ? `&tab=${encodeURIComponent(tab)}` : ""}`,
+        `/?workspace=${ws}&view=${encodeURIComponent(viewSlug(v))}${tab ? `&tab=${encodeURIComponent(tab)}` : ""}`,
       );
     if (tab) setRouteRevision((value) => value + 1);
     window.scrollTo({ top: 0 });
@@ -680,7 +743,7 @@ function App() {
               history.pushState(
                 {},
                 "",
-                `/?workspace=${e.target.value}&view=${encodeURIComponent(activeView.toLowerCase())}`,
+                `/?workspace=${e.target.value}&view=${encodeURIComponent(viewSlug(activeView))}`,
               );
             }}
           >
@@ -693,9 +756,7 @@ function App() {
         </label>
         <nav aria-label="Main navigation">
           {navigation.map((group) => {
-            const items = group.items.filter(
-              (s) => role !== "agent" || staffSections.includes(s),
-            );
+            const items = group.items.filter((s) => canView(s));
             return (
               items.length > 0 && (
                 <div className="nav-group" key={group.label}>
@@ -719,6 +780,7 @@ function App() {
           })}
         </nav>
         <div className="sidebar-bottom">
+          <AgentAvailabilityControl key={ws} ws={ws} />
           <div className="own-it">
             <span className="status-dot" /> Your infrastructure. Your data.
           </div>
@@ -783,7 +845,25 @@ function App() {
           <React.Suspense
             fallback={<LoadingState label="Opening this section…" />}
           >
-            {activeView === "Setup" ? (
+            {activeView === "Security" ? (
+              <>
+                <Alert>{workspace?.identityError}</Alert>
+                <SecurityPage
+                  ws={ws}
+                  canManage={
+                    !workspace?.identityError &&
+                    workspace?.capabilities?.includes("identity:manage")
+                  }
+                  changed={() => void refresh()}
+                >
+                  {!workspace?.identityError &&
+                    (workspace?.capabilities?.includes("roles:manage") ||
+                      workspace?.capabilities?.includes("members:manage")) && (
+                      <StaffRolesEditor ws={ws} />
+                    )}
+                </SecurityPage>
+              </>
+            ) : activeView === "Setup" ? (
               <Setup ws={ws} go={go} />
             ) : activeView === "Inbox" ? (
               <Inbox
@@ -839,6 +919,10 @@ function App() {
                 userId={session.user.id}
                 workspaceName={workspace.name}
               />
+            ) : activeView === "Teams & routing" ? (
+              <TeamsPage ws={ws} />
+            ) : activeView === "Productivity" ? (
+              <ProductivityPage ws={ws} />
             ) : activeView === "Settings" ? (
               <SettingsPage
                 ws={ws}
@@ -1108,6 +1192,7 @@ type InboxDraft = {
   note: boolean;
   requestKey: string;
   files?: Row[];
+  macro?: MacroDraft;
 };
 function Inbox({
   ws,
@@ -1471,6 +1556,11 @@ function InboxConversation({
             </button>
           )}
         </div>
+        <details>
+          <summary>Team, capacity & assignment history</summary>
+          <RoutingAssignment ws={ws} conv={conv} onChange={refresh} />
+        </details>
+        <TicketFields key={id} ws={ws} id={id} changed={refresh} />
         <div className="ticket-context">
           <span className={`ticket-priority ${statusTone(conv.priority)}`}>
             Priority: {conv.priority}
@@ -1843,6 +1933,7 @@ function InboxConversation({
                   body: sent.body,
                   requestKey: sent.requestKey,
                   attachments: attachmentIds(sent.files),
+                  ...(sent.macro ? { macro: sent.macro } : {}),
                 },
               );
               clearDraft(sent);
@@ -1875,6 +1966,32 @@ function InboxConversation({
             Internal note
           </label>
         </div>
+        <MacroPicker
+          ws={ws}
+          id={id}
+          disabled={a.busy}
+          onApply={(macroDraft) => {
+            if (
+              currentDraft.body.trim() &&
+              !confirm(
+                "Replace this unsent response with the reviewed macro draft?",
+              )
+            )
+              return;
+            updateDraft({
+              body: macroDraft.body,
+              note: macroDraft.note,
+              macro: macroDraft.macro,
+            });
+            requestAnimationFrame(() => composer.current?.focus());
+          }}
+        />
+        {currentDraft.macro && (
+          <MacroChanges
+            macro={currentDraft.macro}
+            onChange={(macro) => updateDraft({ macro })}
+          />
+        )}
         <textarea
           ref={composer}
           aria-label="Reply"
@@ -1917,9 +2034,11 @@ function InboxConversation({
             <small id="composer-audience">
               {currentDraft.note
                 ? "Only visible to your team"
-                : conv.status === "resolved"
-                  ? "Sending a reply reopens this conversation"
-                  : "Visible to the customer · pauses the agent"}
+                : currentDraft.macro?.changes.status === "resolved"
+                  ? "Sending this reply resolves the conversation"
+                  : conv.status === "resolved"
+                    ? "Sending a reply reopens this conversation"
+                    : "Visible to the customer · pauses the agent"}
             </small>
             <small className="composer-shortcut">
               ⌘ / Ctrl + Enter to send
@@ -4470,6 +4589,13 @@ function TeamPage({
       {a.success && <p className="success">{a.success}</p>}
       <section className="panel">
         <h2>Invite a teammate</h2>
+        <p>
+          Invitations, removals, and role changes require recent verification.{" "}
+          <a href={`/?workspace=${encodeURIComponent(ws)}&view=security`}>
+            Verify your identity in Security
+          </a>{" "}
+          before changing access.
+        </p>
         <form
           className="source-form"
           onSubmit={(e) => {

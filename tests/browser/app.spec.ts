@@ -8,6 +8,10 @@ import { verifyAdminAudit } from "./admin-audit-journey.js";
 import { verifyBuilderAudit } from "./builder-audit-journey.js";
 import { verifyContentWorkspace } from "./content-audit-journey.js";
 import { verifyOperationsAudit } from "./operations-audit-journey.js";
+import { verifyHumanRouting } from "./human-routing-journey.js";
+import { verifyProductivityJourney } from "./productivity-journey.js";
+import { verifyEmailIntakeSettings } from "./email-intake-journey.js";
+import { verifySecurityJourney } from "./security-journey.js";
 import { readFile } from "node:fs/promises";
 import {
   customizeHelpCenter,
@@ -19,7 +23,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   page,
   browser,
 }) => {
-  test.setTimeout(300000);
+  test.setTimeout(420000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.exposeFunction("recordPolicyViolation", (directive: string) =>
@@ -114,17 +118,19 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
 
   await page.getByRole("button", { name: "Connections", exact: true }).click();
   await expect(page.locator(".provider-logo img")).toHaveCount(11);
-  expect(
-    await page
-      .locator(".provider-logo img")
-      .evaluateAll((images) =>
-        images.every(
-          (image) =>
-            (image as HTMLImageElement).complete &&
-            (image as HTMLImageElement).naturalWidth > 0,
+  await expect
+    .poll(() =>
+      page
+        .locator(".provider-logo img")
+        .evaluateAll((images) =>
+          images.every(
+            (image) =>
+              (image as HTMLImageElement).complete &&
+              (image as HTMLImageElement).naturalWidth > 0,
+          ),
         ),
-      ),
-  ).toBe(true);
+    )
+    .toBe(true);
   await page
     .locator(".connection-card")
     .filter({
@@ -1275,6 +1281,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await verifyBuilderAudit(page);
   await verifyOperationsAudit(page, auditWorkspace);
   await verifyAdminAudit(page, auditWorkspace);
+  await verifyHumanRouting(page, auditWorkspace);
+  await customer.goto("/support/northstar-workshop");
+  await verifyProductivityJourney(page, customer, auditWorkspace);
+  await verifyEmailIntakeSettings(page);
+  await verifySecurityJourney(page, auditWorkspace);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(errors).toEqual([]);
   await customerContext.close();

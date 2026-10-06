@@ -1,4 +1,13 @@
 import { SupportOptionsInput } from "./support-options.js";
+import { HumanRouting } from "./human-routing.js";
+import { Productivity } from "./productivity.js";
+import {
+  refreshPrincipal,
+  requireCapability,
+  hasCapability,
+  BUILTIN_CAPABILITIES,
+} from "./permissions.js";
+import { requireFreshSession } from "./identity-auth.js";
 import { Readiness } from "./readiness.js";
 import { Attachments } from "./attachments.js";
 import { Shadow } from "./shadow.js";
@@ -61,6 +70,8 @@ export class Platform {
   attachments: Attachments;
   sla: Sla;
   shadow: Shadow;
+  routing: HumanRouting;
+  productivity: Productivity;
   constructor(
     public config: Config,
     options: {
@@ -73,6 +84,11 @@ export class Platform {
     } = {},
   ) {
     this.db = new Database(config);
+    this.routing = new HumanRouting(this.db, options.clock);
+    this.productivity = new Productivity(this.db, {
+      assign: (q, p, conv, input) =>
+        this.routing.applyManual(q, p, conv, input),
+    });
     this.attachments = new Attachments(this.db, options.scanner);
     this.customers = new Customers(this.db);
     this.branding = new Branding(this.db);
@@ -88,6 +104,21 @@ export class Platform {
       this.attachments,
     );
     this.ticketEmail.beforeSend = (q, ws, id) => this.sla.emailGuard(q, ws, id);
+    this.ticketEmail.intake.onCreate = async (q, conv, p) => {
+      const intake = await this.productivity.applyIntake(
+        p,
+        conv,
+        { source: "email" },
+        q,
+      );
+      if (!conv.team_id && intake?.defaultTeamId) {
+        await q.query(
+          "UPDATE conversations SET team_id=$1 WHERE workspace_id=$2 AND id=$3",
+          [intake.defaultTeamId, p.workspaceId, conv.id],
+        );
+        conv.team_id = intake.defaultTeamId;
+      }
+    };
     this.model = options.model ?? new LiveModel(this.db, this.connections);
     this.knowledge = new Knowledge(this.db, this.connections, this.model);
     this.actions = new Actions(this.db, this.connections);
@@ -144,6 +175,7 @@ export class Platform {
     this.db.onEvent = async (q, event) => {
       await this.sla.observe(q, event);
       await this.shadow.observe(q, event);
+      await this.routing.onEvent(q, event);
     };
     this.db.onTurn = (q, conv, runId) =>
       this.shadow.captureTurn(q, conv, runId);
@@ -162,6 +194,28 @@ export class Platform {
     await this.db.boss.start();
   }
   async workers() {
+    await this.db.boss.work<{ workspaceId?: string; eventId?: string }>(
+      "email-intake",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId && data.eventId)
+            await this.ticketEmail.intake.process(
+              data.workspaceId,
+              data.eventId,
+            );
+          else await this.ticketEmail.intake.recover();
+      },
+    );
+    await this.db.boss.schedule("email-intake", "* * * * *", {});
+    await this.db.boss.work<{ workspaceId?: string }>(
+      "human-routing",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId) await this.routing.drain(data.workspaceId);
+          else await this.routing.sweep();
+      },
+    );
+    await this.db.boss.schedule("human-routing", "* * * * *", {});
     await this.db.boss.work<{ workspaceId: string; resultId: string }>(
       "shadow",
       { batchSize: 1, localConcurrency: 1 },
@@ -310,6 +364,8 @@ export class Platform {
     await this.db.boss.schedule("maintenance", "0 * * * *", {});
   }
   async maintenance() {
+    await this.ticketEmail.intake.recover();
+    await this.routing.sweep();
     await this.attachments.reconcile();
     await this.shadow.reconcile();
     await this.quality.schedule();
@@ -327,6 +383,18 @@ export class Platform {
         }),
       );
     await this.db.pool.query("DELETE FROM oauth_states WHERE expires_at<now()");
+    await this.db.pool.query(
+      "DELETE FROM staff_oidc_transactions WHERE expires_at<now()-interval '1 day'",
+    );
+    await this.db.pool.query(
+      "DELETE FROM staff_sso_challenges WHERE expires_at<now()",
+    );
+    await this.db.pool.query(
+      "DELETE FROM staff_totp_uses WHERE used_at<now()-interval '10 minutes'",
+    );
+    await this.db.pool.query(
+      'DELETE FROM staff_session_security s WHERE NOT EXISTS(SELECT 1 FROM session active WHERE active.id=s.session_id AND active."expiresAt">now())',
+    );
     await this.db.pool.query("DELETE FROM credentials WHERE expires_at<now()");
     await this.db.pool.query("DELETE FROM rate_limits WHERE expires_at<now()");
     for (const a of await this.db.rows(
@@ -413,10 +481,41 @@ export class Platform {
     requireAdmin(p);
     const value = token(),
       id = uid();
-    await this.db.pool.query(
-      "INSERT INTO invitations(id,workspace_id,email,role,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '7 days')",
-      [id, p.workspaceId, email.toLowerCase(), role, tokenHash(value)],
-    );
+    await this.db.tx(async (q) => {
+      await this.routing.lockWorkspace(q, p.workspaceId);
+      p = await refreshPrincipal(this.db, p, q);
+      requireAdmin(p);
+      requireCapability(p, "members:manage");
+      if (!p.sessionId || !p.userId)
+        throw new HttpError(
+          403,
+          "Verify your identity in Security before inviting staff",
+        );
+      await requireFreshSession(this.db, p.sessionId, p.userId, q);
+      if (p.ticketScope && p.ticketScope !== "all")
+        throw new HttpError(
+          403,
+          "Inviting a built-in role requires access to all tickets",
+        );
+      if (
+        !BUILTIN_CAPABILITIES[role] ||
+        BUILTIN_CAPABILITIES[role].some((cap) => !hasCapability(p, cap))
+      )
+        throw new HttpError(
+          403,
+          "You cannot invite a role with capabilities you do not hold",
+        );
+      await q.query(
+        "INSERT INTO invitations(id,workspace_id,email,role,token_hash,expires_at) VALUES($1,$2,$3,$4,$5,now()+interval '7 days')",
+        [id, p.workspaceId, email.toLowerCase(), role, tokenHash(value)],
+      );
+      await this.db.event(q, p.workspaceId, "permissions.member_invited", {
+        actorId: p.userId,
+        invitationId: id,
+        email: email.toLowerCase(),
+        role,
+      });
+    });
     await this.auth.send(
       email,
       "Join your team on Navigated Support",
@@ -448,6 +547,9 @@ export class Platform {
     });
   }
   async publishChannel(p: Principal, id: string, input: unknown) {
+    requireAdmin(p);
+    p = await refreshPrincipal(this.db, p);
+    requireCapability(p, "settings:manage");
     requireAdmin(p);
     const data = ChannelInput.parse(input);
     const channel = requireValue(
@@ -568,6 +670,9 @@ export class Platform {
   }
   async updateSupportOptions(p: Principal, input: unknown) {
     requireOwner(p);
+    p = await refreshPrincipal(this.db, p);
+    requireCapability(p, "settings:manage");
+    requireOwner(p);
     const { mode } = SupportOptionsInput.parse(input);
     const ticketsEnabled = mode === "both" || mode === "tickets";
     const chatEnabled = mode === "both" || mode === "chat";
@@ -607,6 +712,9 @@ export class Platform {
       channelId?: string;
       contactId?: string;
       attachments?: string[];
+      formId?: string;
+      formVersion?: number;
+      values?: Record<string, unknown>;
     },
   ) {
     const message = MessageInput.parse({
@@ -614,6 +722,11 @@ export class Platform {
       requestKey: input.requestKey,
       attachments: input.attachments,
     });
+    if (staff(p)) {
+      p = await refreshPrincipal(this.db, p);
+      requireCapability(p, "tickets:reply");
+      if (input.contactId) await this.customers.contact(p, input.contactId);
+    }
     const contactId = staff(p) ? input.contactId : p.contactId;
     if (!contactId) throw new HttpError(400, "A customer identity is required");
     requireValue(
@@ -663,6 +776,17 @@ export class Platform {
         q,
       );
       if (previous) {
+        await this.productivity.verifyIntakeRetry(
+          p,
+          previous,
+          {
+            formId: input.formId,
+            formVersion: input.formVersion,
+            values: input.values,
+            source: channel.kind === "widget" ? "widget" : "portal",
+          },
+          q,
+        );
         if (previous.first_body !== message.body)
           throw new HttpError(
             409,
@@ -693,6 +817,24 @@ export class Platform {
         )
       )[0];
       const firstMessageId = uid();
+      const intake = await this.productivity.applyIntake(
+        p,
+        conv,
+        {
+          formId: input.formId,
+          formVersion: input.formVersion,
+          values: input.values,
+          source: channel.kind === "widget" ? "widget" : "portal",
+        },
+        q,
+      );
+      if (intake?.defaultTeamId) {
+        await q.query(
+          "UPDATE conversations SET team_id=$1 WHERE workspace_id=$2 AND id=$3",
+          [intake.defaultTeamId, p.workspaceId, conv.id],
+        );
+        conv.team_id = intake.defaultTeamId;
+      }
       await q.query(
         "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id) VALUES($1,$2,$3,'customer',$4,$5,$6)",
         [
@@ -742,6 +884,12 @@ export class Platform {
     if (note) requireStaff(p);
     const data = MessageInput.parse(input);
     return this.db.tx(async (q) => {
+      if (staff(p)) {
+        await this.routing.lockWorkspace(q, p.workspaceId);
+        p = await refreshPrincipal(this.db, p, q);
+        requireCapability(p, note ? "tickets:note" : "tickets:reply");
+      } else if (data.macro)
+        throw new HttpError(403, "Macros require staff access");
       await conversation(this.db, p, id, q);
       const conv = requireValue(
         await this.db.one(
@@ -755,7 +903,20 @@ export class Platform {
         [p.workspaceId, id, data.requestKey],
         q,
       );
+      const role = note ? "note" : staff(p) ? "staff" : "customer";
       if (old) {
+        if (old.role !== role || old.author_id !== (p.userId ?? p.contactId))
+          throw new HttpError(
+            409,
+            "Request key already belongs to another message author or visibility",
+          );
+        await this.productivity.verifyMacroRetry(
+          p,
+          id,
+          data.requestKey,
+          data.macro,
+          q,
+        );
         if (old.body !== data.body)
           throw new HttpError(
             409,
@@ -769,7 +930,6 @@ export class Platform {
         );
         return old;
       }
-      const role = note ? "note" : staff(p) ? "staff" : "customer";
       const msg = (
         await this.db.rows(
           "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
@@ -787,6 +947,14 @@ export class Platform {
       )[0];
       await this.attachments.bind(p, conv, msg.id, data.attachments, note, q);
       if (note) {
+        if (data.macro)
+          await this.productivity.commitMacro(
+            p,
+            id,
+            data.macro,
+            { requestKey: data.requestKey, note },
+            q,
+          );
         if (conv.external_id)
           await this.support.queue(q, p.workspaceId, id, {
             body: data.body,
@@ -817,6 +985,23 @@ export class Platform {
           q,
         )
       )[0];
+      if (data.macro) {
+        await this.productivity.commitMacro(
+          p,
+          id,
+          data.macro,
+          { requestKey: data.requestKey, note },
+          q,
+        );
+        Object.assign(
+          next,
+          await this.db.one(
+            "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2",
+            [p.workspaceId, id],
+            q,
+          ),
+        );
+      }
       await q.query(
         "UPDATE approvals SET status='stale' WHERE run_id IN (SELECT id FROM runs WHERE conversation_id=$1) AND status='pending'",
         [id],
@@ -837,7 +1022,7 @@ export class Platform {
         {
           messageId: msg.id,
           previousStatus: conv.status,
-          status: "open",
+          status: next.status,
           actorType: role,
         },
         id,
@@ -887,26 +1072,40 @@ export class Platform {
       assignedTo?: string | null;
       tags?: string[];
       externalAssigneeId?: string;
+      teamId?: string | null;
+      overrideCapacity?: boolean;
+      reason?: string;
     },
   ) {
     requireStaff(p);
     return this.db.tx(async (q) => {
-      const conv = requireValue(
+      await this.routing.lockWorkspace(q, p.workspaceId);
+      p = await refreshPrincipal(this.db, p, q);
+      requireCapability(p, "tickets:update");
+      await conversation(this.db, p, id, q);
+      let conv = requireValue(
         await this.db.one(
           "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
           [p.workspaceId, id],
           q,
         ),
       );
-      if (
-        input.assignedTo &&
-        !(await this.db.one(
-          "SELECT 1 FROM memberships WHERE workspace_id=$1 AND user_id=$2",
-          [p.workspaceId, input.assignedTo],
+      if (input.assignedTo !== undefined || input.teamId !== undefined)
+        conv = await this.routing.applyManual(
           q,
-        ))
-      )
-        throw new HttpError(400, "Assignee is not a workspace staff member");
+          p,
+          {
+            ...conv,
+            mode: input.mode ?? conv.mode,
+            status: input.status ?? conv.status,
+          },
+          {
+            assignedTo: input.assignedTo,
+            teamId: input.teamId,
+            overrideCapacity: input.overrideCapacity,
+            reason: input.reason,
+          },
+        );
       const result = (
         await this.db.rows(
           "UPDATE conversations SET mode=$1,status=$2,assigned_to=$3,revision=revision+1,updated_at=now() WHERE id=$4 RETURNING *",
@@ -963,6 +1162,8 @@ export class Platform {
   ) {
     requireAdmin(p);
     return this.db.tx(async (q) => {
+      p = await refreshPrincipal(this.db, p, q);
+      requireCapability(p, "actions:approve");
       const a = requireValue(
         await this.db.one(
           "SELECT * FROM approvals WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
@@ -993,6 +1194,7 @@ export class Platform {
           q,
         ),
       );
+      await conversation(this.db, p, conv.id, q);
       if (conv.mode !== "agent" || conv.revision !== run.revision)
         throw new HttpError(
           409,

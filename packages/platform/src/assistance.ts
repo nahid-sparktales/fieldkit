@@ -1,7 +1,12 @@
 import { z } from "zod";
 import { Database, uid, type Queryable } from "./db.js";
 import { HttpError, requireValue } from "./config.js";
-import { requireAdmin, requireStaff, type Principal } from "./auth.js";
+import { conversation, requireStaff, type Principal } from "./auth.js";
+import {
+  refreshPrincipal,
+  resolveStaffPrincipal,
+  requireCapability,
+} from "./permissions.js";
 import {
   AssistanceInput,
   FaqSuggestions,
@@ -40,11 +45,72 @@ export class Assistance {
     public support: Support,
   ) {}
 
+  private permissions(p: Principal, kind: string, readOnly = false) {
+    requireStaff(p);
+    requireCapability(p, "assistance:use");
+    requireCapability(p, "knowledge:read");
+    if (adminTask(kind) && !readOnly) requireCapability(p, "knowledge:manage");
+    if (kind === "faq_review") {
+      if (p.ticketScope && p.ticketScope !== "all")
+        throw new HttpError(
+          403,
+          "Workspace assistance requires access to all tickets",
+        );
+    } else {
+      requireCapability(p, "tickets:read");
+      if (kind === "response") {
+        if (!readOnly) requireCapability(p, "tickets:reply");
+      } else {
+        // These existing workflows include private notes and system history.
+        // Do not expose an older full-context result to a narrower reader.
+        requireCapability(p, "tickets:note");
+        requireCapability(p, "audit:read");
+      }
+      if (kind === "triage" && !readOnly)
+        requireCapability(p, "tickets:update");
+    }
+  }
+
+  private async actor(
+    p: Principal,
+    kind: string,
+    conversationId?: string | null,
+    q?: Queryable,
+  ) {
+    requireStaff(p);
+    p = await refreshPrincipal(this.db, p, q);
+    this.permissions(p, kind);
+    if (conversationId) await conversation(this.db, p, conversationId, q);
+    return p;
+  }
+
+  async list(p: Principal, conversationId: string | null = null) {
+    requireStaff(p);
+    p = await refreshPrincipal(this.db, p);
+    requireCapability(p, "assistance:use");
+    requireCapability(p, "knowledge:read");
+    if (conversationId) await conversation(this.db, p, conversationId);
+    else this.permissions(p, "faq_review", true);
+    const rows = await this.db.rows(
+      "SELECT * FROM assistance_tasks WHERE workspace_id=$1 AND conversation_id IS NOT DISTINCT FROM $2 ORDER BY created_at DESC LIMIT 30",
+      [p.workspaceId, conversationId],
+    );
+    return rows.filter((task) => {
+      try {
+        this.permissions(p, task.kind, true);
+        return true;
+      } catch (error) {
+        if (error instanceof HttpError && error.status === 403) return false;
+        throw error;
+      }
+    });
+  }
+
   async start(p: Principal, raw: unknown) {
     requireStaff(p);
     const input = AssistanceInput.parse(raw),
       ws = p.workspaceId;
-    if (adminTask(input.kind)) requireAdmin(p);
+    p = await this.actor(p, input.kind, input.conversationId);
     if ((input.kind === "faq_review") === Boolean(input.conversationId))
       throw new HttpError(
         400,
@@ -57,6 +123,7 @@ export class Assistance {
     );
     await this.db.connection(ws, settings.responseProvider);
     return this.db.tx(async (q) => {
+      p = await this.actor(p, input.kind, input.conversationId, q);
       await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `assist-start:${ws}`,
       ]);
@@ -136,19 +203,22 @@ export class Assistance {
   }
 
   async authorize(task: any, q?: Queryable) {
-    const member = await this.db.one(
-      `SELECT role FROM memberships WHERE workspace_id=$1 AND user_id=$2 ${q ? "FOR SHARE" : ""}`,
-      [task.workspace_id, task.created_by],
-      q,
-    );
-    if (
-      !member ||
-      (adminTask(task.kind) && !["owner", "admin"].includes(member.role))
-    )
+    try {
+      const p = await resolveStaffPrincipal(
+        this.db,
+        task.workspace_id,
+        task.created_by,
+        q,
+      );
+      return await this.actor(p, task.kind, task.conversation_id, q);
+    } catch (error) {
+      if (!(error instanceof HttpError) || ![403, 404].includes(error.status))
+        throw error;
       throw new HttpError(
         403,
         "The person who started this workflow no longer has the required access.",
       );
+    }
   }
 
   async control(p: Principal, id: string, action: "cancel" | "retry") {
@@ -165,7 +235,7 @@ export class Assistance {
           q,
         ),
       );
-      if (adminTask(task.kind)) requireAdmin(p);
+      p = await this.actor(p, task.kind, task.conversation_id, q);
       if (action === "retry") {
         if (task.status !== "failed")
           throw new HttpError(409, "Only failed workflows can be retried.");
@@ -252,6 +322,7 @@ export class Assistance {
   }
 
   async reviewBatch(task: any) {
+    await this.authorize(task);
     const ws = task.workspace_id;
     const batch = requireValue(
       await this.db.one(
@@ -382,14 +453,10 @@ export class Assistance {
   }
 
   async draftSupport(task: any) {
+    const principal = await this.authorize(task);
     const ws = task.workspace_id,
       customerSafe = task.kind === "response";
-    const conv = requireValue(
-      await this.db.one(
-        "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2",
-        [ws, task.conversation_id],
-      ),
-    );
+    const conv = await conversation(this.db, principal, task.conversation_id);
     if (conv.revision !== task.conversation_revision)
       throw new HttpError(
         409,
@@ -435,6 +502,7 @@ export class Assistance {
         await this.db.one("SELECT settings FROM workspaces WHERE id=$1", [ws]),
       ).settings,
     );
+    await this.authorize(task);
     const draft = SupportSuggestion.parse(
       await this.model.assist({
         workspaceId: ws,
@@ -529,7 +597,7 @@ export class Assistance {
           400,
           "Review this result in the reply or internal-note composer.",
         );
-      if (task.kind === "article") requireAdmin(p);
+      p = await this.actor(p, task.kind, task.conversation_id, q);
       if (task.output.applied) return task.output;
       if (task.status !== "completed")
         throw new HttpError(409, "Wait for the workflow to complete.");
@@ -619,6 +687,7 @@ export class Assistance {
           q,
         ),
       );
+      p = await this.actor(p, task.kind, task.conversation_id, q);
       if (
         task.status !== "completed" ||
         !["research", "response", "escalation"].includes(task.kind)

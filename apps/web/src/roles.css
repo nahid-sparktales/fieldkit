@@ -1,0 +1,106 @@
+.staff-roles {
+  display: grid;
+  gap: 20px;
+}
+.staff-roles header p {
+  max-width: 75ch;
+}
+.role-editor-layout {
+  display: grid;
+  grid-template-columns: 250px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+.role-choice {
+  display: block;
+  width: 100%;
+  text-align: left;
+  margin-top: 10px;
+  min-height: 64px;
+}
+.role-choice[aria-pressed="true"] {
+  border-color: var(--accent, #236a52);
+  background: var(--soft, #edf5f0);
+}
+.role-choice small,
+.member-role small {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted, #586b65);
+}
+.role-form > fieldset,
+.member-role > fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+}
+.capability-matrix {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.capability-matrix fieldset {
+  border: 1px solid var(--line, #dce2df);
+  border-radius: 8px;
+  padding: 12px;
+  min-width: 0;
+}
+.capability-matrix legend {
+  text-transform: capitalize;
+  font-weight: 700;
+}
+.capability-matrix label,
+.member-role label:has(input) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  overflow-wrap: anywhere;
+}
+.capability-matrix input,
+.member-role input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+.member-role {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) minmax(260px, 2fr);
+  gap: 18px;
+  padding: 20px 0;
+  border-bottom: 1px solid var(--line, #dce2df);
+}
+.member-role > fieldset {
+  grid-template-columns: minmax(130px, 1fr) minmax(120px, 1fr) auto;
+  align-items: end;
+}
+.member-role select {
+  display: block;
+  min-height: 44px;
+  width: 100%;
+}
+.member-role .quality-actions {
+  flex-wrap: wrap;
+}
+@media (max-width: 900px) {
+  .role-editor-layout,
+  .member-role {
+    grid-template-columns: 1fr;
+  }
+  .member-role > fieldset {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 600px) {
+  .capability-matrix {
+    grid-template-columns: 1fr;
+  }
+  .staff-roles button,
+  .staff-roles input:not([type="checkbox"]),
+  .staff-roles select {
+    min-height: 44px;
+  }
+}

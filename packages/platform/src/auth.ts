@@ -1,3 +1,5 @@
+import { IDENTITY_FACTOR_GUARD } from "./identity-schema.js";
+import { staffIdentityPlugins, staffSessionPolicy } from "./identity-auth.js";
 import { betterAuth } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { fromNodeHeaders } from "better-auth/node";
@@ -6,6 +8,13 @@ import type { IncomingMessage } from "node:http";
 import type { Database } from "./db.js";
 import { HttpError, requireValue } from "./config.js";
 import { tokenHash } from "./security.js";
+import {
+  canReadConversation,
+  refreshPrincipal,
+  resolveStaffPrincipal,
+  type Capability,
+  type TicketScope,
+} from "./permissions.js";
 
 export type Mailer = (
   to: string,
@@ -16,6 +25,7 @@ export type Mailer = (
     messageId?: string;
     inReplyTo?: string;
     references?: string[];
+    from?: string;
   },
 ) => Promise<void>;
 export function createAuth(db: Database, mailer?: Mailer) {
@@ -46,6 +56,28 @@ export function createAuth(db: Database, mailer?: Mailer) {
       });
     });
   const auth = betterAuth({
+    plugins: [...staffIdentityPlugins(db)],
+    account: {
+      encryptOAuthTokens: true,
+      accountLinking: {
+        enabled: true,
+        disableImplicitLinking: true,
+        requireLocalEmailVerified: true,
+        allowDifferentEmails: false,
+      },
+    },
+    // ID tokens are verified during the callback and are not needed afterwards.
+    // Better Auth encryptOAuthTokens covers access/refresh tokens, not ID tokens.
+    databaseHooks: {
+      account: {
+        create: {
+          before: async (data) => ({ data: { ...data, idToken: null } }),
+        },
+        update: {
+          before: async (data) => ({ data: { ...data, idToken: null } }),
+        },
+      },
+    },
     appName: "Navigated Support",
     baseURL: c.FIELDKIT_URL,
     basePath: "/api/auth",
@@ -56,6 +88,7 @@ export function createAuth(db: Database, mailer?: Mailer) {
       enabled: true,
       requireEmailVerification: true,
       minPasswordLength: 12,
+      revokeSessionsOnPasswordReset: true,
       sendResetPassword: async ({ user, url }) =>
         send(
           user.email,
@@ -90,17 +123,28 @@ export function createAuth(db: Database, mailer?: Mailer) {
     async migrate() {
       const m = await getMigrations(auth.options);
       await m.runMigrations();
+      await db.pool.query(IDENTITY_FACTOR_GUARD);
     },
   };
 }
 export type Auth = ReturnType<typeof createAuth>;
 export type Principal = {
+  /** Internal provider-authenticated file intake; never accepted from a request body. */
+  emailIntake?: boolean;
   workspaceId: string;
   userId?: string;
   role: "owner" | "admin" | "agent" | "customer" | "visitor" | "service";
   contactId?: string;
   channelId?: string;
   scopes?: string[];
+  capabilities?: Capability[];
+  ticketScope?: TicketScope;
+  teamIds?: string[];
+  customRoleId?: string;
+  authRevision?: number;
+  sessionId?: string;
+  authenticatedAt?: number;
+  stepUpAt?: number;
 };
 export async function userSession(auth: Auth, req: IncomingMessage) {
   if (req.headers.authorization !== undefined)
@@ -174,7 +218,26 @@ export async function principal(
     "SELECT role FROM memberships WHERE workspace_id=$1 AND user_id=$2",
     [workspaceId, user.id],
   );
-  if (member) return { workspaceId, userId: user.id, role: member.role };
+  if (member) {
+    const session = await auth.auth.api.getSession({
+      headers: fromNodeHeaders(req.headers),
+    });
+    if (!session) throw new HttpError(401, "Sign in first");
+    const security = await staffSessionPolicy(
+      db,
+      workspaceId,
+      user.id,
+      session.session.id,
+    );
+    return {
+      ...(await resolveStaffPrincipal(db, workspaceId, user.id)),
+      sessionId: session.session.id,
+      authenticatedAt: new Date(session.session.createdAt).getTime(),
+      stepUpAt: security.step_up_at
+        ? new Date(security.step_up_at).getTime()
+        : undefined,
+    };
+  }
   const contact = await db.one(
     "SELECT id FROM contacts WHERE workspace_id=$1 AND user_id=$2 AND verified",
     [workspaceId, user.id],
@@ -207,6 +270,7 @@ export async function conversation(
   id: string,
   q = db.pool as import("./db.js").Queryable,
 ) {
+  if (staff(p)) p = await refreshPrincipal(db, p, q);
   const row = requireValue(
     await db.one(
       "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2",
@@ -214,6 +278,8 @@ export async function conversation(
       q,
     ),
   );
+  if (staff(p) && !canReadConversation(p, row))
+    throw new HttpError(404, "Conversation not found");
   if (
     !staff(p) &&
     (row.contact_id !== p.contactId ||
