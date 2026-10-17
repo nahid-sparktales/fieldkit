@@ -58,6 +58,7 @@ export const MessageInput = z
     requestKey: z.string().min(8).max(120),
     attachments: z.array(z.string().max(200)).max(10).default([]),
     macro: MacroProposal.optional(),
+    expectedReplyRevision: z.number().int().positive().optional(),
   })
   .strict()
   .refine(

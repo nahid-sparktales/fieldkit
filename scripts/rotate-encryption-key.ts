@@ -38,7 +38,7 @@ try {
     )) {
       const scope = `ticket:${row.workspace_id}:${row.conversation_id}`;
       await q.query(
-        "UPDATE ticket_email_routes SET token_ciphertext=$1 WHERE conversation_id=$2",
+        "UPDATE ticket_email_routes SET token_ciphertext=$1 WHERE id=$2",
         [
           seal(
             next,
@@ -49,7 +49,29 @@ try {
               row.token_ciphertext,
             ),
           ),
-          row.conversation_id,
+          row.id,
+        ],
+      );
+    }
+    for (const row of await db.rows(
+      "SELECT * FROM collaboration_invitations WHERE token_ciphertext IS NOT NULL",
+      [],
+      q,
+    )) {
+      const scope = `collaboration:${row.workspace_id}:${row.id}`;
+      await q.query(
+        "UPDATE collaboration_invitations SET token_ciphertext=$1 WHERE id=$2",
+        [
+          seal(
+            next,
+            scope,
+            unseal(
+              db.config.FIELDKIT_ENCRYPTION_KEY,
+              scope,
+              row.token_ciphertext,
+            ),
+          ),
+          row.id,
         ],
       );
     }
@@ -72,6 +94,28 @@ try {
             ),
           ),
           row.workspace_id,
+          row.id,
+        ],
+      );
+    }
+    for (const row of await db.rows(
+      "SELECT id,workspace_id,artifact_ciphertext FROM report_jobs WHERE artifact_ciphertext IS NOT NULL",
+      [],
+      q,
+    )) {
+      const scope = `report:${row.workspace_id}:${row.id}`;
+      await q.query(
+        "UPDATE report_jobs SET artifact_ciphertext=$1 WHERE id=$2",
+        [
+          seal(
+            next,
+            scope,
+            unseal(
+              db.config.FIELDKIT_ENCRYPTION_KEY,
+              scope,
+              row.artifact_ciphertext,
+            ),
+          ),
           row.id,
         ],
       );

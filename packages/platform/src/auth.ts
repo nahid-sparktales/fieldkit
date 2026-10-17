@@ -8,6 +8,8 @@ import type { IncomingMessage } from "node:http";
 import type { Database } from "./db.js";
 import { HttpError, requireValue } from "./config.js";
 import { tokenHash } from "./security.js";
+import { customerTicketAccess } from "./customer-access.js";
+import { canonicalTicket } from "./ticket-canonical.js";
 import {
   canReadConversation,
   refreshPrincipal,
@@ -16,6 +18,7 @@ import {
   type TicketScope,
 } from "./permissions.js";
 
+export type MailAttachment = { filename:string; content:Buffer; contentType:string };
 export type Mailer = (
   to: string,
   subject: string,
@@ -26,6 +29,7 @@ export type Mailer = (
     inReplyTo?: string;
     references?: string[];
     from?: string;
+    attachments?: MailAttachment[];
   },
 ) => Promise<void>;
 export function createAuth(db: Database, mailer?: Mailer) {
@@ -271,19 +275,12 @@ export async function conversation(
   q = db.pool as import("./db.js").Queryable,
 ) {
   if (staff(p)) p = await refreshPrincipal(db, p, q);
-  const row = requireValue(
-    await db.one(
-      "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2",
-      [p.workspaceId, id],
-      q,
-    ),
-  );
+  const row = await canonicalTicket(db,p.workspaceId,id,q);
   if (staff(p) && !canReadConversation(p, row))
     throw new HttpError(404, "Conversation not found");
   if (
     !staff(p) &&
-    (row.contact_id !== p.contactId ||
-      (p.channelId && p.channelId !== row.channel_id))
+    !(await customerTicketAccess(db,p,row,q)).read
   )
     throw new HttpError(404, "Conversation not found");
   return row;

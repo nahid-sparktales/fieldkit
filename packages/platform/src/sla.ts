@@ -6,7 +6,10 @@ import {
   type Principal,
   requireAdmin,
   requireStaff,
+  conversation,
 } from "./auth.js";
+import { refreshPrincipal, requireCapability } from "./permissions.js";
+import { HumanRouting } from "./human-routing.js";
 import { HttpError, requireValue } from "./config.js";
 import { digest } from "./security.js";
 import {
@@ -267,6 +270,7 @@ export class Sla {
       "sla.transition",
       {
         obligationId: o.id,
+        generation: o.generation,
         kind: o.kind,
         state,
         cause,
@@ -339,7 +343,7 @@ export class Sla {
         [ws, id],
         q,
       );
-      if (!conv) return;
+      if (!conv || conv.merged_into_id) return;
       for (const e of await this.db.rows(
         "SELECT * FROM sla_observations WHERE workspace_id=$1 AND conversation_id=$2 AND processed_at IS NULL ORDER BY id LIMIT 500",
         [ws, id],
@@ -594,9 +598,24 @@ export class Sla {
   async waiting(p: Principal, id: string, raw: unknown) {
     const input = SlaWait.parse(raw);
     await this.access(p);
+    p = await refreshPrincipal(this.db, p);
+    requireCapability(p, "tickets:update");
+    if ((await conversation(this.db, p, id)).id !== id)
+      throw new HttpError(
+        409,
+        "This ticket was merged. Open its current conversation.",
+      );
     await this.advance(p.workspaceId, id);
     return this.db.tx(async (q) => {
+      await new HumanRouting(this.db).lockWorkspace(q, p.workspaceId);
+      p = await refreshPrincipal(this.db, p, q);
       await this.access(p, false, q);
+      requireCapability(p, "tickets:update");
+      if ((await conversation(this.db, p, id, q)).id !== id)
+        throw new HttpError(
+          409,
+          "This ticket was merged. Open its current conversation.",
+        );
       const c = requireValue(
         await this.db.one(
           "SELECT c.*,ch.published,ch.kind FROM conversations c JOIN channels ch ON ch.id=c.channel_id WHERE c.workspace_id=$1 AND c.id=$2 FOR UPDATE OF c",
@@ -779,7 +798,7 @@ export class Sla {
         [ws, id],
         q,
       );
-      if (!c) return;
+      if (!c || c.merged_into_id) return;
       await q.query(
         "UPDATE conversations SET sla_checked_at=$3 WHERE workspace_id=$1 AND id=$2",
         [ws, id, this.clock()],
@@ -836,6 +855,21 @@ export class Sla {
           [o.id, o.generation, threshold],
           q,
         );
+        if (
+          threshold === "warning" &&
+          !(await this.db.one(
+            "SELECT 1 FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND kind='sla.warning' AND data->>'obligationId'=$3 AND data->>'generation'=$4",
+            [ws, id, o.id, String(o.generation)],
+            q,
+          ))
+        )
+          await this.db.event(
+            q,
+            ws,
+            "sla.warning",
+            { obligationId: o.id, generation: o.generation },
+            id,
+          );
         if (!sent)
           for (const recipient of recipients) {
             const n = await this.db.one(
@@ -880,7 +914,26 @@ export class Sla {
           );
           continue;
         }
-        if (!wait.allowed || now < new Date(wait.due_at)) continue;
+        if (
+          wait.automation_managed ||
+          !wait.allowed ||
+          now < new Date(wait.due_at)
+        )
+          continue;
+        // A newly configured rule and an unmigrated legacy wait share one contact generation.
+        if (
+          await this.db.one(
+            "SELECT 1 FROM ticket_automation_followups WHERE workspace_id=$1 AND conversation_id=$2 AND source_message_id=$3 AND generation=$4",
+            [ws, id, wait.source_message_id, wait.sent_count + 1],
+            q,
+          )
+        ) {
+          await q.query(
+            "UPDATE sla_waits SET status='canceled',reason='Another automation already followed up on this source message' WHERE id=$1",
+            [wait.id],
+          );
+          continue;
+        }
         const messageId = uid(),
           generation = wait.sent_count + 1;
         await q.query(

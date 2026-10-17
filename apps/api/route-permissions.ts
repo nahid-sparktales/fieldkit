@@ -14,10 +14,16 @@ export function authorizeWorkspaceRoute(
   method: string,
 ) {
   if (!staff(p)) return;
+  if (/^\/automations\/notifications(\/|$)/.test(path)) {
+    requireCapability(p, "tickets:read");
+    return;
+  }
+  if (/^\/collaboration\/invitations\/[^/]+\/(retry|resend)$/.test(path))
+    return;
   const read = method === "GET";
   let capability: Capability | undefined;
   if (
-    /^\/(analytics|quality|evaluation|readiness|shadow|rollouts|audit|operations|jobs|knowledge)(\/|$)/.test(
+    /^\/(analytics|reports|dashboards|automations|quality|evaluation|readiness|shadow|rollouts|audit|operations|jobs|knowledge)(\/|$)/.test(
       path,
     ) ||
     path === "/workflow/step-results" ||
@@ -38,6 +44,13 @@ export function authorizeWorkspaceRoute(
     requireCapability(p, "tickets:note");
   if (/^\/(analytics|quality|evaluation|shadow|rollouts)(\/|$)/.test(path))
     capability = read ? "analytics:read" : "workflow:manage";
+  else if (/^\/(reports|dashboards)(\/|$)/.test(path))
+    capability = "analytics:read";
+  else if (/^\/automations(\/|$)/.test(path)) capability = "automations:manage";
+  else if (/^\/organizations(\/|$)/.test(path))
+    capability = "organizations:manage";
+  else if (/^\/ticket-batches(\/|$)/.test(path))
+    capability = read ? "tickets:read" : "tickets:update";
   else if (/^\/knowledge(\/|$)/.test(path))
     capability = read ? "knowledge:read" : "knowledge:manage";
   else if (/^\/readiness(\/|$)/.test(path))
@@ -94,6 +107,19 @@ export function authorizeWorkspaceRoute(
           : method === "DELETE"
             ? "tickets:delete"
             : "tickets:update";
+    if (
+      /\/(collaboration|participants|participant-suggestions|following)(\/|$)/.test(
+        path,
+      )
+    )
+      capability =
+        read || path.includes("/following")
+          ? "tickets:read"
+          : "tickets:participants";
+    if (/\/sharing$/.test(path)) capability = "organizations:manage";
+    if (/\/merge(?:-preview|-candidates)?$/.test(path))
+      capability = "tickets:merge";
+    if (path.endsWith("/presence")) capability = "tickets:read";
     if (path.endsWith("/read") || /\/macros\/[^/]+\/preview$/.test(path))
       capability = "tickets:read";
     if (path.endsWith("/test-case")) requireCapability(p, "workflow:read");

@@ -585,6 +585,21 @@ export class Assistance {
     const input = AssistanceApply.parse(raw),
       ws = p.workspaceId;
     return this.db.tx(async (q) => {
+      await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `human-routing:${ws}`,
+      ]);
+      const ticket = requireValue(
+        await this.db.one(
+          "SELECT conversation_id FROM assistance_tasks WHERE workspace_id=$1 AND id=$2",
+          [ws, id],
+          q,
+        ),
+      );
+      await q.query(
+        "SELECT id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        [ws, ticket.conversation_id],
+      );
+
       const task = requireValue(
         await this.db.one(
           "SELECT * FROM assistance_tasks WHERE workspace_id=$1 AND id=$2 FOR UPDATE",

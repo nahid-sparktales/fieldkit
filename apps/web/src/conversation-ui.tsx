@@ -94,7 +94,7 @@ export function MessageList({
                     ? `Internal note${m.author_name ? " · " + m.author_name : ""}`
                     : m.role === "staff"
                       ? "Support team"
-                      : "Customer"}
+                      : m.actor_name || "Customer"}
             </strong>
             <time
               dateTime={m.created_at}
@@ -108,6 +108,11 @@ export function MessageList({
               })}
             </time>
           </div>
+          {m.source_ticket_id && (
+            <p className="merged-provenance">
+              From ticket #{m.source_ticket_id.slice(0, 8)}
+            </p>
+          )}
           <p>{m.body}</p>
           {ws && !!m.attachments?.length && (
             <AttachmentCards

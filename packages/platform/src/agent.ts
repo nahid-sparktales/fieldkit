@@ -626,6 +626,12 @@ export class Agent {
     run.state.response =
       "I’m passing this to the support team so they can help you further.";
   }
+  private async requesterAuthority(run:any,conv:any,q?:import('./db.js').Queryable) {
+    if(run.preview||run.evaluation)return true;
+    const latest=await this.db.one("SELECT actor_contact_id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role='customer' ORDER BY created_at DESC,id DESC LIMIT 1",[run.workspace_id,conv.id],q);
+    // Legacy rows have no explicit actor. New shared correspondence never borrows the requester's account authority.
+    return !latest?.actor_contact_id||latest.actor_contact_id===conv.contact_id;
+  }
   async current(run: any) {
     if (run.preview) return run.previewConversation;
     const c = requireValue(
@@ -638,6 +644,10 @@ export class Agent {
       run.status = "stale";
       run.state.route = "stale";
       return null;
+    }
+    if(!(await this.requesterAuthority(run,c))) {
+      await this.db.tx(async q=>{await new HumanRouting(this.db).lockWorkspace(q,run.workspace_id);const row=await this.db.one("UPDATE conversations SET mode='human',status='needs_staff',revision=revision+1 WHERE workspace_id=$1 AND id=$2 AND revision=$3 AND mode='agent' RETURNING id",[run.workspace_id,c.id,c.revision],q);if(row)await this.db.event(q,run.workspace_id,'conversation.handoff',{reason:'A collaborator request requires human review'},c.id,true);});
+      run.status='stale';run.state.route='stale';return null;
     }
     return c;
   }
@@ -1008,6 +1018,7 @@ export class Agent {
     if (!(await this.current(run))) return;
     try {
       await this.db.tx(async (q) => {
+        await new HumanRouting(this.db).lockWorkspace(q,run.workspace_id);
         await rolloutFence(this.db, q, run.workspace_id, run.id);
         // Serialize the final side-effect boundary with takeover and incoming messages.
         const conv = requireValue(
@@ -1019,6 +1030,7 @@ export class Agent {
         );
         if (conv.mode !== "agent" || conv.revision !== run.revision)
           throw new HttpError(409, "Conversation changed before execution");
+        if(!(await this.requesterAuthority(run,conv,q))) throw new HttpError(409,'Collaborator correspondence cannot authorize requester account actions');
         const p = run.state.proposal as Proposal;
         await q.query(
           "SELECT id FROM actions WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
@@ -1147,6 +1159,7 @@ export class Agent {
         run.status = "stale";
         return;
       }
+      if(!(await this.requesterAuthority(run,conv,q)))this.handoff(run,'A collaborator request requires human review');
       try {
         await this.workflowAuthority(run, q);
       } catch {

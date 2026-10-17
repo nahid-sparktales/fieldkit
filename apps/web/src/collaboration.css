@@ -1,0 +1,143 @@
+.collaboration-panel {
+  display: grid;
+  gap: 1rem;
+}
+.collaboration-panel h3,
+.collaboration-panel h4 {
+  margin: 0;
+}
+.collaboration-panel p {
+  margin: 0.25rem 0;
+  color: var(--muted);
+}
+.collaboration-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.6rem;
+}
+.collaboration-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--line);
+}
+.collaboration-list span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.collaboration-list small,
+.organizations-workspace nav small {
+  display: block;
+  color: var(--muted);
+  margin-top: 0.25rem;
+}
+.collaboration-panel form,
+.organization-detail form,
+.organizations-page > .panel {
+  display: grid;
+  gap: 0.75rem;
+}
+.collaboration-panel label,
+.organization-detail label,
+.organizations-page > .panel label {
+  display: grid;
+  gap: 0.4rem;
+}
+.collaboration-panel details {
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--line);
+}
+.collaboration-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 0.75rem;
+}
+.collaboration-follow {
+  padding: 1rem;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+}
+.collaboration-follow label {
+  display: flex;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+.collaboration-follow input[type="checkbox"] {
+  width: 1.1rem;
+  height: 1.1rem;
+  accent-color: var(--accent);
+  appearance: auto;
+}
+.organizations-page {
+  max-width: 1200px;
+  margin: auto;
+  padding: 1.5rem;
+  display: grid;
+  gap: 1.5rem;
+}
+.organizations-workspace {
+  display: grid;
+  grid-template-columns: minmax(210px, 280px) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+.organizations-workspace nav {
+  display: grid;
+  gap: 0.5rem;
+}
+.organizations-workspace nav button {
+  text-align: left;
+  padding: 1rem;
+  white-space: normal;
+}
+.organizations-workspace nav button[aria-current="page"] {
+  border-color: var(--accent);
+  background: var(--soft);
+}
+.organization-detail {
+  min-width: 0;
+  display: grid;
+  gap: 1rem;
+}
+.organization-detail h2,
+.organization-detail h3 {
+  margin: 0;
+}
+.collaboration-panel button,
+.organization-detail button {
+  min-height: 40px;
+}
+.collaboration-panel input,
+.collaboration-panel select,
+.organization-detail input,
+.organization-detail select {
+  min-width: 0;
+  width: 100%;
+}
+@media (max-width: 700px) {
+  .organizations-page {
+    padding: 1rem;
+  }
+  .organizations-workspace {
+    grid-template-columns: 1fr;
+  }
+  .organizations-workspace nav {
+    display: flex;
+    overflow: auto;
+  }
+  .organizations-workspace nav button {
+    min-width: 180px;
+  }
+  .collaboration-list li {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .collaboration-panel form button {
+    width: 100%;
+  }
+}

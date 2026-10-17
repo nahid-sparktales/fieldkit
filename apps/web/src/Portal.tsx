@@ -79,6 +79,7 @@ function ClosedFeedback({
   onSubmitted: (resolved: boolean) => void;
   onRefresh: () => void;
 }) {
+  if (detail.access && !detail.access.submitFeedback) return null;
   const last = detail.messages.at(-1),
     feedback = detail.feedback?.find((f: Row) => f.source === "native");
   return feedback ||
@@ -118,7 +119,10 @@ export function Portal({
   const [identity, setIdentity] = useState<Identity | null>(null),
     [authOpen, setAuthOpen] = useState(false),
     [view, setView] = useState(
-      new URLSearchParams(location.search).has("ticket") ? "tickets" : "home",
+      new URLSearchParams(location.search).has("ticket") ||
+        new URLSearchParams(location.search).has("invitation")
+        ? "tickets"
+        : "home",
     ),
     [selected, setSelected] = useState(
       new URLSearchParams(location.search).get("ticket") ?? "",
@@ -142,12 +146,33 @@ export function Portal({
         : request(`/v2/public/${slug}/articles?q=${encodeURIComponent(query)}`),
     [slug, query, widget],
   );
+  const [ticketScope, setTicketScope] = useState("mine");
+  const [invitationToken, setInvitationToken] = useState(
+    new URLSearchParams(location.search).get("invitation") ?? "",
+  );
+  const invitation = useLoad(
+    () =>
+      identity && invitationToken
+        ? api(
+            identity.workspaceId,
+            `/collaboration/invitations/${encodeURIComponent(invitationToken)}`,
+          )
+        : Promise.resolve(null),
+    [identity?.contactId, invitationToken],
+  );
+  const organizations = useLoad(
+    () =>
+      identity
+        ? api(identity.workspaceId, "/organizations")
+        : Promise.resolve({ organizations: [] }),
+    [identity?.contactId, invitationToken],
+  );
   const tickets = useLoad(
     () =>
       identity
-        ? api(identity.workspaceId, "/conversations")
+        ? api(identity.workspaceId, `/conversations?scope=${ticketScope}`)
         : Promise.resolve({ conversations: [] }),
-    [identity?.contactId, view, selected],
+    [identity?.contactId, view, selected, ticketScope],
   );
   const join = async () => {
     const next = await request(`/v2/public/${slug}/join`, {});
@@ -316,6 +341,45 @@ export function Portal({
         </div>
       ) : view === "tickets" || view === "new" ? (
         <main className="portal-content ticket-page">
+          {identity && invitationToken && (
+            <section className="panel">
+              <h2>Support invitation</h2>
+              {invitation.error ? (
+                <p role="alert">{invitation.error}</p>
+              ) : invitation.data ? (
+                <>
+                  <p>
+                    {invitation.data.name} · {invitation.data.scope}
+                  </p>
+                  <Notice action={a} />
+                  <button
+                    className="primary"
+                    disabled={a.busy}
+                    onClick={() =>
+                      void a.run(async () => {
+                        const accepted = await api(
+                          identity.workspaceId,
+                          `/collaboration/invitations/${encodeURIComponent(invitationToken)}`,
+                          { accept: true },
+                        );
+                        setInvitationToken("");
+                        const url = new URL(location.href);
+                        url.searchParams.delete("invitation");
+                        history.replaceState(null, "", url);
+                        tickets.reload();
+                        if (accepted.conversationId)
+                          select(accepted.conversationId);
+                      })
+                    }
+                  >
+                    Accept invitation
+                  </button>
+                </>
+              ) : (
+                <p role="status">Loading invitation…</p>
+              )}
+            </section>
+          )}
           {selected && identity ? (
             <TicketThread
               key={`${identity.contactId}:${selected}`}
@@ -331,7 +395,13 @@ export function Portal({
               <div className="section-heading">
                 <div>
                   <span className="eyebrow">YOUR SUPPORT REQUESTS</span>
-                  <h1>{view === "new" ? "Submit a ticket" : "My tickets"}</h1>
+                  <h1>
+                    {view === "new"
+                      ? "Submit a ticket"
+                      : ticketScope === "company"
+                        ? "Company tickets"
+                        : "My tickets"}
+                  </h1>
                   <p>
                     {brand.ticketsEnabled
                       ? "Send a message. We’ll email you when support replies."
@@ -368,6 +438,33 @@ export function Portal({
                 />
               ) : (
                 <section className="ticket-list" aria-label="Your tickets">
+                  {organizations.data?.organizations.some(
+                    (o: Row) => o.role === "manager",
+                  ) && (
+                    <div
+                      className="company-ticket-tabs"
+                      aria-label="Ticket scope"
+                    >
+                      <button
+                        aria-pressed={ticketScope === "mine"}
+                        onClick={() => setTicketScope("mine")}
+                      >
+                        My tickets
+                      </button>
+                      <button
+                        aria-pressed={ticketScope === "company"}
+                        onClick={() => setTicketScope("company")}
+                      >
+                        Company tickets
+                      </button>
+                    </div>
+                  )}
+                  {ticketScope === "company" && (
+                    <p>
+                      Tickets explicitly shared with companies you manage. Email
+                      notifications require a separate invitation from support.
+                    </p>
+                  )}
                   {tickets.loading && !tickets.data ? (
                     <p role="status">Loading your tickets…</p>
                   ) : tickets.error ? (
@@ -398,7 +495,11 @@ export function Portal({
                     ))
                   ) : (
                     <div className="support-empty">
-                      <h2>No tickets yet</h2>
+                      <h2>
+                        {ticketScope === "company"
+                          ? "No company tickets shared yet"
+                          : "No tickets yet"}
+                      </h2>
                       <p>
                         {brand.ticketsEnabled
                           ? "Need a hand? Send your first request to the support team."
@@ -862,13 +963,22 @@ function TicketThread({
         </div>
         <TicketStatus conv={conv} messages={l.data.messages} />
       </header>
-      <TicketFields
-        ws={identity.workspaceId}
-        id={id}
-        customer
-        onDirtyChange={setFieldDirty}
-        changed={l.reload}
-      />
+      {(!l.data.access || l.data.access.updateFields) && (
+        <TicketFields
+          ws={identity.workspaceId}
+          id={conv.id}
+          customer
+          onDirtyChange={setFieldDirty}
+          changed={l.reload}
+        />
+      )}
+      {l.data.access?.visibleSince && (
+        <p className="ticket-notice">
+          You can see correspondence sent after you were added on{" "}
+          {date(l.data.access.visibleSince)}. Earlier messages and files are
+          private.
+        </p>
+      )}
       <div className={`ticket-notice ${closed ? "closed" : ""}`} role="status">
         <strong>
           {closed
@@ -880,8 +990,11 @@ function TicketThread({
         <p>
           {closed
             ? "Still need help? Reply below to reopen the conversation."
+            : l.data.access && !l.data.access.requester && !l.data.access.visibleSince
+              ? "Follow updates here. Email notifications require support to add you as a participant."
             : `You can leave this page. Replies ${conv.channel_kind === "portal" ? `will be emailed to ${identity.email}.` : "are saved here in your chat history."}`}
           {!closed &&
+            (!l.data.access || l.data.access.requester || !!l.data.access.visibleSince) &&
             conv.channel_kind === "portal" &&
             brand.emailReplies &&
             " You can also reply directly to the email."}
@@ -993,24 +1106,26 @@ function TicketThread({
                     ? "Add more details"
                     : "Reply to support"}
             </button>
-            {!closed && !conv.external_id && (
-              <button
-                disabled={a.busy}
-                onClick={() =>
-                  void a.run(async () => {
-                    await api(
-                      identity.workspaceId,
-                      `/conversations/${id}/status`,
-                      { status: "resolved" },
-                    );
-                    l.reload();
-                    onChange();
-                  })
-                }
-              >
-                Close ticket
-              </button>
-            )}
+            {!closed &&
+              !conv.external_id &&
+              (!l.data.access || l.data.access.changeStatus) && (
+                <button
+                  disabled={a.busy}
+                  onClick={() =>
+                    void a.run(async () => {
+                      await api(
+                        identity.workspaceId,
+                        `/conversations/${id}/status`,
+                        { status: "resolved" },
+                      );
+                      l.reload();
+                      onChange();
+                    })
+                  }
+                >
+                  Close ticket
+                </button>
+              )}
           </div>
         )}
       </section>

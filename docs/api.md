@@ -291,3 +291,18 @@ Conversation `/events` and workspace `/quality/events`, `/readiness/events`, `/s
 - Persist the `id` independently of `data`: a workspace stream can advance past a batch of unrelated events with an ID and heartbeat comment, without a data event. Clients should refresh after receiving data, coalescing closely spaced changes.
 - Customer streams contain only public events from the authorized conversation. Permissions are rechecked during polling; losing access closes the stream. There is no promise of replay after underlying records have been deleted by retention.
 - Limits are 8 streams per actor/workspace and 128 per process; excess connections receive `429` with `Retry-After: 5`. Streams last up to five minutes, avoid overlapping polls, and stop producing while the socket is under backpressure. Native EventSource handles reconnection; fetch-based clients must send the last cursor and back off on errors.
+
+
+## Everyday collaboration (schemas 24–28)
+
+All routes remain below `/v2/workspaces/:workspaceId` and require the existing authenticated principal and CSRF protection. See [everyday help desk](everyday-helpdesk.md) for limits, permissions, concurrency and migration behavior.
+
+- `/organizations`, `/:id`, `/:id/invitations`, `/:id/members/:contactId`: organization administration and verified invitation membership. Customers may list only their accepted organizations.
+- `/collaboration/invitations/:token`: authenticated customer preview and explicit acceptance; `/:invitationId/retry` recovers a staff-authorized invitation delivery.
+- `/conversations/:id/collaboration`, `/participants`, `/participants/:participantId`, `/following`, `/sharing`: public correspondence grants, internal followers, explicit company history sharing.
+- `/ticket-batches` POST: `{requestKey, action, tickets:[{id,expectedEditVersion}]}`. GET `/:id` returns the creator's durable per-ticket results under current access.
+- `/conversations/:id/merge-candidates`, `/merge-preview` POST `{targetId}`, `/merge` POST `{targetId,sourceVersion,targetVersion,requestKey}`: restricted duplicate workflow.
+- `/conversations/:id/presence` GET/PUT `{tabId,typing,leave?}`: authenticated expiring presence, with no draft content.
+- `/conversations?scope=mine|company`: the existing customer list under centralized current grants. Direct ticket details return action-specific `access` and canonical `mergedFrom` metadata.
+- `/automations`, `/preview`, `/history`, `/:id/activation`, `/:id/history`: disabled rule drafts, dry runs, version activation and execution outcomes. `/notifications` exposes only currently authorized staff notifications.
+- `/reports/catalog`, `/query`, `/queries`, `/drilldown`, `/exports`, `/jobs`, `/jobs/:id/download`, `/schedules`; `/dashboards/:id` and `/:id/duplicate`: allowlisted reports and saved definitions. No raw SQL, executable formulas or public artifact URLs are accepted.

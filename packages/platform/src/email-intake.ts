@@ -1,3 +1,5 @@
+import { canonicalTicket } from "./ticket-canonical.js";
+import { customerTicketAccess } from "./customer-access.js";
 import { z } from "zod";
 import { load } from "cheerio";
 import type { PoolClient } from "pg";
@@ -61,6 +63,10 @@ const IncomingEmail = z.object({
   OriginalRecipient: z.email().max(254),
   FromFull: z.object({ Email: mailbox, Name: z.string().max(200).optional() }),
   ToFull: z
+    .array(z.object({ Email: mailbox }))
+    .max(100)
+    .default([]),
+  CcFull: z
     .array(z.object({ Email: mailbox }))
     .max(100)
     .default([]),
@@ -249,7 +255,14 @@ export class EmailIntake {
         q,
       );
       if (existing) {
-        if (existing.payload_hash !== hash)
+        // Schema 20–23 did not parse CcFull. Match that exact historical shape
+        // without changing the stored receipt/source: a retry must never add
+        // newly supplied CC suggestions to an envelope accepted before upgrade.
+        const { CcFull: _cc, ...beforeCollaboration } = d;
+        if (
+          existing.payload_hash !== hash &&
+          existing.payload_hash !== digest(beforeCollaboration)
+        )
           throw new HttpError(
             409,
             "Inbound message identity reused with changed content",
@@ -354,7 +367,7 @@ export class EmailIntake {
     const aliases = await this.db.rows(
       "SELECT DISTINCT workspace_id FROM support_email_addresses WHERE address=ANY($1::text[])",
       [
-        d.ToFull.map((r) =>
+        [...d.ToFull, ...d.CcFull].map((r) =>
           r.Email.split("+")[0] === r.Email
             ? r.Email
             : r.Email.replace(/\+[^@]+/, ""),
@@ -388,7 +401,7 @@ export class EmailIntake {
     if (plus >= 0) {
       const secret = local.slice(plus + 1);
       const route = await this.db.one(
-        `SELECT r.*,ct.email,ct.verified,c.support_address_id,c.origin,ch.published,c.external_id FROM ticket_email_routes r JOIN conversations c ON c.id=r.conversation_id JOIN contacts ct ON ct.id=c.contact_id JOIN channels ch ON ch.id=c.channel_id WHERE r.workspace_id=$1 AND r.token_hash=$2 AND r.contact_id=c.contact_id`,
+        `SELECT r.*,ct.email,ct.verified,c.support_address_id,c.origin,ch.published,c.external_id FROM ticket_email_routes r JOIN conversations c ON c.workspace_id=r.workspace_id AND c.id=r.conversation_id JOIN contacts ct ON ct.workspace_id=r.workspace_id AND ct.id=r.contact_id JOIN channels ch ON ch.id=c.channel_id LEFT JOIN ticket_participants tp ON tp.workspace_id=r.workspace_id AND tp.id=r.participant_id WHERE r.workspace_id=$1 AND r.token_hash=$2 AND ((r.participant_id IS NULL AND r.contact_id=c.contact_id) OR (tp.active AND tp.contact_id=r.contact_id AND tp.conversation_id=r.conversation_id AND tp.email=ct.email))`,
         [ws, tokenHash(secret)],
       );
       if (!route)
@@ -400,26 +413,60 @@ export class EmailIntake {
         return { reason: "Sender does not match the conversation participant" };
       if (
         route.external_id ||
-        (!route.verified && route.origin !== "email") ||
-        (!route.published && route.origin !== "email")
+        (!route.participant_id &&
+          !route.verified &&
+          route.origin !== "email") ||
+        (!route.participant_id && !route.published && route.origin !== "email")
       )
         return { reason: "Customer or channel no longer eligible" };
       if (route.support_address_id && route.support_address_id !== address?.id)
         return {
           reason: "Reply token does not belong to this support address",
         };
+      const canonical = await canonicalTicket(
+        this.db,
+        ws,
+        route.conversation_id,
+      );
+      if (
+        !(
+          await customerTicketAccess(
+            this.db,
+            {
+              workspaceId: ws,
+              role: "customer",
+              contactId: route.contact_id,
+              emailIntake: true,
+            },
+            canonical,
+          )
+        ).reply
+      )
+        return { reason: "Participant access was revoked" };
       const references = [event.reply_ref, ...event.references_list].filter(
         Boolean,
       );
       if (references.length) {
-        const other = await this.db.one(
-          `SELECT conversation_id FROM email_intake_events WHERE workspace_id=$1 AND message_ref=ANY($2::text[]) AND conversation_id IS NOT NULL AND conversation_id<>$3 UNION ALL SELECT conversation_id FROM ticket_emails WHERE workspace_id=$1 AND message_ref=ANY($2::text[]) AND conversation_id<>$3 LIMIT 1`,
+        const other = await this.db.rows(
+          `SELECT conversation_id FROM email_intake_events WHERE workspace_id=$1 AND message_ref=ANY($2::text[]) AND conversation_id IS NOT NULL AND conversation_id<>$3 UNION ALL SELECT conversation_id FROM ticket_emails WHERE workspace_id=$1 AND message_ref=ANY($2::text[]) AND conversation_id<>$3 UNION ALL SELECT e.conversation_id FROM ticket_email_deliveries d JOIN ticket_emails e ON e.id=d.email_id WHERE d.workspace_id=$1 AND d.message_ref=ANY($2::text[]) AND e.conversation_id<>$3`,
           [ws, references, route.conversation_id],
         );
-        if (other)
-          return { reason: "References conflict with the reply address" };
+        for (const reference of other)
+          if (
+            (await canonicalTicket(this.db, ws, reference.conversation_id))
+              .id !== canonical.id
+          )
+            return { reason: "References conflict with the reply address" };
       }
-      return { address, route, body };
+      return {
+        address,
+        route: {
+          ...route,
+          source_conversation_id: route.conversation_id,
+          conversation_id: canonical.id,
+        },
+        body,
+      };
     }
     if (event.reply_ref || event.references_list.length)
       return {
@@ -439,10 +486,12 @@ export class EmailIntake {
     );
     if (!event) return;
     try {
-      const d = unseal<Envelope>(
-        this.db.config.FIELDKIT_ENCRYPTION_KEY,
-        `email-intake:${ws}:${id}`,
-        event.payload_ciphertext,
+      const d = IncomingEmail.parse(
+        unseal<unknown>(
+          this.db.config.FIELDKIT_ENCRYPTION_KEY,
+          `email-intake:${ws}:${id}`,
+          event.payload_ciphertext,
+        ),
       );
       const decision = await this.resolve(ws, event, d);
       if (decision.reason) {
@@ -531,12 +580,12 @@ export class EmailIntake {
       const customer: Principal = {
         workspaceId: ws,
         role: "customer",
-        contactId: conv.contact_id,
-        emailIntake: conv.origin === "email",
+        contactId: decision.route?.contact_id ?? conv.contact_id,
+        emailIntake: true,
       };
       const participant = await this.db.one(
         "SELECT email FROM contacts WHERE workspace_id=$1 AND id=$2",
-        [ws, conv.contact_id],
+        [ws, customer.contactId],
       );
       if (participant?.email?.toLowerCase() !== d.FromFull.Email) {
         await this.finish(
@@ -564,37 +613,58 @@ export class EmailIntake {
         await this.finish(event, lease, "quarantined", recheck.reason);
         return;
       }
-      const message = await this.append(customer, conv.id, {
-        body: decision.body,
-        requestKey: `email:${digest([event.integration_id, event.provider_id])}`,
-        attachments: attachmentIds,
-      });
+      const message = await this.append(
+        customer,
+        decision.route?.source_conversation_id ?? conv.id,
+        {
+          body: decision.body,
+          requestKey: `email:${digest([event.integration_id, event.provider_id])}`,
+          attachments: attachmentIds,
+        },
+      );
       await this.db.tx(async (q) => {
         const current = await this.db.one(
           "UPDATE email_intake_events SET status='received',error=NULL,conversation_id=$3,message_id=$4,address_id=$5,lease_until=NULL,lease_token=NULL,updated_at=now(),payload_ciphertext=$7 WHERE workspace_id=$1 AND id=$2 AND lease_token=$6 RETURNING id",
           [
             ws,
             id,
-            conv.id,
+            message.conversation_id ?? conv.id,
             message.id,
             decision.address?.id ?? null,
             lease,
             seal(
               this.db.config.FIELDKIT_ENCRYPTION_KEY,
               `email-intake:${ws}:${id}`,
-              { ...d, Attachments: [], Headers: [], ToFull: [] },
+              { ...d, Attachments: [], Headers: [], ToFull: [], CcFull: [] },
             ),
           ],
           q,
         );
         if (!current) return;
+        for (const cc of d.CcFull.slice(0, 20)) {
+          if (
+            cc.Email === d.FromFull.Email ||
+            cc.Email === decision.address?.address ||
+            cc.Email === decision.address?.reply_address
+          )
+            continue;
+          await q.query(
+            `INSERT INTO email_cc_suggestions(workspace_id,conversation_id,email) SELECT $1,$2,$3 WHERE NOT EXISTS(SELECT 1 FROM support_email_addresses WHERE address=$3 OR reply_address=$3) AND NOT EXISTS(SELECT 1 FROM ticket_participants WHERE workspace_id=$1 AND conversation_id=$2 AND email=$3 AND active) ON CONFLICT DO NOTHING`,
+            [ws, conv.id, cc.Email],
+          );
+        }
         await q.query(
           "INSERT INTO email_intake_attempts(workspace_id,event_id,attempt,status) VALUES($1,$2,$3,'received')",
           [ws, id, event.attempts],
         );
         await q.query(
           "INSERT INTO inbound_ticket_emails(workspace_id,provider_id,conversation_id,status,payload_hash) VALUES($1,$2,$3,'received',$4) ON CONFLICT DO NOTHING",
-          [ws, event.provider_id, conv.id, event.payload_hash],
+          [
+            ws,
+            event.provider_id,
+            message.conversation_id ?? conv.id,
+            event.payload_hash,
+          ],
         );
         if (!decision.route) {
           await this.db.event(

@@ -330,7 +330,7 @@ export class Support {
       );
       if (delivered?.payload.public) {
         const messages = await this.db.rows(
-          "UPDATE messages SET delivered_at=now() WHERE workspace_id=$1 AND conversation_id=$2 AND delivered_at IS NULL AND role IN ('assistant','staff') AND (id=$3 OR run_id=$4) RETURNING id,run_id",
+          "UPDATE messages SET delivered_at=clock_timestamp() WHERE workspace_id=$1 AND conversation_id=$2 AND delivered_at IS NULL AND role IN ('assistant','staff') AND (id=$3 OR run_id=$4) RETURNING id,run_id",
           [
             ws,
             link.conversation_id,

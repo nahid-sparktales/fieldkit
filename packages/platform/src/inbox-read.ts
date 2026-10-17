@@ -1,3 +1,4 @@
+import { ticketGroup } from "./ticket-canonical.js";
 import { z } from "zod";
 import { type Database } from "./db.js";
 import { type Principal, requireStaff, conversation } from "./auth.js";
@@ -57,7 +58,7 @@ export async function setInboxRead(
 ) {
   requireStaff(p);
   const d = Input.parse(raw);
-  await conversation(db, p, id);
+  id = (await conversation(db, p, id)).id;
   if (!d.read) {
     await db.pool.query(
       "DELETE FROM conversation_reads WHERE workspace_id=$1 AND conversation_id=$2 AND user_id=$3",
@@ -67,8 +68,8 @@ export async function setInboxRead(
   }
   // Acknowledge the snapshot the staff member actually opened, never unseen messages.
   const current = (await db.one(
-    "SELECT coalesce(max(inbox_sequence),0)::text cursor FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role='customer'",
-    [p.workspaceId, id],
+    "SELECT coalesce(max(inbox_sequence),0)::text cursor FROM messages WHERE workspace_id=$1 AND conversation_id=ANY($2::text[]) AND role='customer'",
+    [p.workspaceId, await ticketGroup(db, p.workspaceId, id)],
   ))!.cursor;
   if (BigInt(d.cursor) > BigInt(current))
     throw new HttpError(400, "Read cursor is ahead of this conversation");

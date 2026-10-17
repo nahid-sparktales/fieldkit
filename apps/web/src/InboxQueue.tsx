@@ -1,3 +1,4 @@
+import { BulkActionBar } from "./TicketOperations.js";
 import { useEffect, useId, useRef, useState } from "react";
 import { api, useLoad } from "./request.js";
 import { inboxStates } from "./inbox-state.js";
@@ -12,6 +13,7 @@ export function InboxQueue({
   drafts,
   onSelect,
   version,
+  canBulk = false,
 }: {
   ws: string;
   selected: string;
@@ -19,6 +21,7 @@ export function InboxQueue({
   drafts: Record<string, { body: string }>;
   onSelect: (c: Row) => void;
   version: number;
+  canBulk?: boolean;
 }) {
   const saved = (key: string, fallback: string) => {
     try {
@@ -37,6 +40,8 @@ export function InboxQueue({
     [page, setPage] = useState(1),
     [expanded, setExpanded] = useState(""),
     [filtersOpen, setFiltersOpen] = useState(false);
+  const [selection, setSelection] = useState<Record<string, Row>>({}),
+    [selecting, setSelecting] = useState(false);
   const filtersId = useId();
   const [savedView, setSavedView] = useState("");
   const savedViews = useLoad(() => api(ws, "/saved-views"), [ws]);
@@ -288,17 +293,79 @@ export function InboxQueue({
           <button onClick={l.reload}>Try again</button>
         </div>
       )}
+      {canBulk && group === "conversation" && (
+        <div className="button-row">
+          <button
+            aria-pressed={selecting}
+            onClick={() => {
+              setSelecting(!selecting);
+              setSelection({});
+            }}
+          >
+            {selecting ? "Done selecting" : "Select tickets"}
+          </button>
+          {selecting && (
+            <button
+              onClick={() =>
+                setSelection(
+                  Object.fromEntries(
+                    rows
+                      .filter(
+                        (c) => c.channel_kind === "portal" && !c.external_id,
+                      )
+                      .slice(0, 40)
+                      .map((c) => [c.id, c]),
+                  ),
+                )
+              }
+            >
+              Select this page
+            </button>
+          )}
+        </div>
+      )}
+      {Object.keys(selection).length > 0 && (
+        <BulkActionBar
+          ws={ws}
+          tickets={Object.values(selection)}
+          members={members}
+          onDone={l.reload}
+          onClear={() => setSelection({})}
+        />
+      )}
       <div className="conversation-items">
         {rows.map((c) =>
           group === "conversation" ? (
-            <ConversationCard
-              key={c.id}
-              c={c}
-              members={members}
-              selected={selected}
-              onSelect={onSelect}
-              draft={drafts[c.id]?.body}
-            />
+            <div className="bulk-select-row" key={c.id}>
+              {selecting &&
+                canBulk &&
+                c.channel_kind === "portal" &&
+                !c.external_id && (
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${c.subject}`}
+                    checked={!!selection[c.id]}
+                    disabled={
+                      !selection[c.id] && Object.keys(selection).length >= 40
+                    }
+                    onChange={(e) =>
+                      setSelection((old) => {
+                        const next = { ...old };
+                        if (e.target.checked) next[c.id] = c;
+                        else delete next[c.id];
+                        return next;
+                      })
+                    }
+                  />
+                )}
+              <ConversationCard
+                c={c}
+                members={members}
+                selected={selected}
+                onSelect={onSelect}
+                draft={drafts[c.id]?.body}
+              />
+            </div>
           ) : (
             <section
               key={c.contact_id}

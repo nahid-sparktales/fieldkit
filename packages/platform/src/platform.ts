@@ -1,3 +1,12 @@
+import { Collaboration } from "./collaboration.js";
+import { requireCustomerTicketAction } from "./customer-access.js";
+import {
+  TicketOperations,
+  type TicketPatchInput,
+} from "./ticket-operations.js";
+import { TicketAutomation } from "./ticket-automation-service.js";
+import { Reporting } from "./reporting.js";
+import { canonicalTicket, ticketGroup } from "./ticket-canonical.js";
 import { SupportOptionsInput } from "./support-options.js";
 import { HumanRouting } from "./human-routing.js";
 import { Productivity } from "./productivity.js";
@@ -72,6 +81,10 @@ export class Platform {
   shadow: Shadow;
   routing: HumanRouting;
   productivity: Productivity;
+  collaboration: Collaboration;
+  ticketOperations: TicketOperations;
+  automation: TicketAutomation;
+  reporting: Reporting;
   constructor(
     public config: Config,
     options: {
@@ -93,6 +106,23 @@ export class Platform {
     this.customers = new Customers(this.db);
     this.branding = new Branding(this.db);
     this.auth = createAuth(this.db, options.mailer);
+    this.collaboration = new Collaboration(this.db, this.auth.send);
+    this.ticketOperations = new TicketOperations(
+      this.db,
+      this.routing,
+      options.clock,
+    );
+    this.automation = new TicketAutomation(
+      this.db,
+      this.routing,
+      {
+        applyTicketChanges: (q, p, c, patch, meta) =>
+          this.ticketOperations.apply(q, p, c, patch, meta),
+        send: this.auth.send,
+      },
+      options.clock,
+    );
+    this.reporting = new Reporting(this.db, this.auth.send, options.clock);
     this.sla = new Sla(this.db, this.auth.send, options.clock);
     this.db.onEvent = (q, event) => this.sla.observe(q, event);
     this.connections = new Connections(this.db, options.fetch);
@@ -176,6 +206,7 @@ export class Platform {
       await this.sla.observe(q, event);
       await this.shadow.observe(q, event);
       await this.routing.onEvent(q, event);
+      await this.automation.observe(q, event);
     };
     this.db.onTurn = (q, conv, runId) =>
       this.shadow.captureTurn(q, conv, runId);
@@ -184,16 +215,71 @@ export class Platform {
     this.db.rolloutAuthority = (run, q) => this.shadow.authority(run, q);
     this.ticketEmail.beforeSend = async (q, ws, id) =>
       (await this.sla.emailGuard(q, ws, id)) &&
-      (await this.shadow.emailGuard(q, ws, id));
+      (await this.shadow.emailGuard(q, ws, id)) &&
+      (await this.automation.emailGuard(q, ws, id));
   }
   async migrate() {
     await this.db.migrate();
     await this.auth.migrate();
+    await this.automation.migrateLegacy();
   }
   async start() {
     await this.db.boss.start();
   }
   async workers() {
+    await this.db.boss.work<{ workspaceId?: string; batchId?: string }>(
+      "ticket-batch",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId && data.batchId)
+            await this.ticketOperations.advance(data.workspaceId, data.batchId);
+          else await this.ticketOperations.recover();
+      },
+    );
+    await this.db.boss.schedule("ticket-batch", "* * * * *", {});
+    await this.db.boss.work<{ workspaceId?: string; executionId?: string }>(
+      "ticket-automation",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId && data.executionId)
+            await this.automation.run(data.workspaceId, data.executionId);
+          else await this.automation.sweep();
+      },
+    );
+    await this.db.boss.schedule("ticket-automation", "* * * * *", {});
+    await this.db.boss.work<{ workspaceId: string; notificationId: string }>(
+      "ticket-automation-notify",
+      async (jobs) => {
+        for (const { data } of jobs)
+          await this.automation.deliverNotification(
+            data.workspaceId,
+            data.notificationId,
+          );
+      },
+    );
+    await this.db.boss.work<{ workspaceId?: string; jobId?: string }>(
+      "reporting",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId && data.jobId)
+            await this.reporting.advance(data.workspaceId, data.jobId);
+          else await this.reporting.tick();
+      },
+    );
+    await this.db.boss.schedule("reporting", "* * * * *", {});
+    await this.db.boss.work<{ workspaceId?: string; invitationId?: string }>(
+      "collaboration-email",
+      async (jobs) => {
+        for (const { data } of jobs)
+          if (data.workspaceId && data.invitationId)
+            await this.collaboration.deliverInvitation(
+              data.workspaceId,
+              data.invitationId,
+            );
+          else await this.collaboration.recover();
+      },
+    );
+    await this.db.boss.schedule("collaboration-email", "* * * * *", {});
     await this.db.boss.work<{ workspaceId?: string; eventId?: string }>(
       "email-intake",
       async (jobs) => {
@@ -351,16 +437,19 @@ export class Platform {
           j.data.path,
         );
     });
-    await this.db.boss.work<{ workspaceId: string; emailId: string }>(
+    await this.db.boss.work<{ workspaceId?: string; emailId?: string }>(
       "ticket-email",
       async (jobs) => {
         for (const job of jobs)
-          await this.ticketEmail.deliver(
-            job.data.workspaceId,
-            job.data.emailId,
-          );
+          if (job.data.workspaceId && job.data.emailId)
+            await this.ticketEmail.deliver(
+              job.data.workspaceId,
+              job.data.emailId,
+            );
+          else await this.ticketEmail.recover();
       },
     );
+    await this.db.boss.schedule("ticket-email", "* * * * *", {});
     await this.db.boss.schedule("maintenance", "0 * * * *", {});
   }
   async maintenance() {
@@ -412,12 +501,13 @@ export class Platform {
       await this.readiness.retain(ws.id, days);
       await this.attachments.retain(ws.id, days);
       await this.shadow.retain(ws.id, days);
+      await this.reporting.retain(ws.id, days);
       await this.db.pool.query(
         "DELETE FROM contact_notes WHERE workspace_id=$1 AND created_at<now()-($2::int*interval '1 day')",
         [ws.id, days],
       );
       const old = await this.db.rows(
-        "SELECT c.id FROM conversations c WHERE c.workspace_id=$1 AND c.status='resolved' AND c.updated_at<now()-($2::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.conversation_id=c.id AND o.status IN ('prepared','sent','unknown'))",
+        "SELECT c.id FROM conversations c WHERE c.workspace_id=$1 AND c.status='resolved' AND c.merged_into_id IS NULL AND c.updated_at<now()-($2::int*interval '1 day') AND NOT EXISTS(SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.conversation_id=c.id AND o.status IN ('prepared','sent','unknown'))",
         [ws.id, days],
       );
       for (const c of old) await this.deleteConversation(ws.id, c.id);
@@ -836,7 +926,7 @@ export class Platform {
         conv.team_id = intake.defaultTeamId;
       }
       await q.query(
-        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id) VALUES($1,$2,$3,'customer',$4,$5,$6)",
+        "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id,actor_contact_id) VALUES($1,$2,$3,'customer',$4,$5,$6,$7)",
         [
           firstMessageId,
           p.workspaceId,
@@ -844,6 +934,7 @@ export class Platform {
           message.body,
           message.requestKey,
           p.userId ?? contactId,
+          contactId,
         ],
       );
       await this.attachments.bind(
@@ -877,15 +968,23 @@ export class Platform {
         conv.id,
         true,
       );
-      return conv;
+      return requireValue(
+        await this.db.one(
+          "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2",
+          [p.workspaceId, conv.id],
+          q,
+        ),
+      );
     });
   }
   async message(p: Principal, id: string, input: unknown, note = false) {
     if (note) requireStaff(p);
     const data = MessageInput.parse(input);
     return this.db.tx(async (q) => {
+      await this.routing.lockWorkspace(q, p.workspaceId);
+      const originalId = id;
+      id = (await canonicalTicket(this.db, p.workspaceId, id, q)).id;
       if (staff(p)) {
-        await this.routing.lockWorkspace(q, p.workspaceId);
         p = await refreshPrincipal(this.db, p, q);
         requireCapability(p, note ? "tickets:note" : "tickets:reply");
       } else if (data.macro)
@@ -898,9 +997,12 @@ export class Platform {
           q,
         ),
       );
+      const access = staff(p)
+        ? null
+        : await requireCustomerTicketAction(this.db, p, conv, "reply", q);
       const old = await this.db.one(
-        "SELECT * FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND request_key=$3",
-        [p.workspaceId, id, data.requestKey],
+        "SELECT * FROM messages WHERE workspace_id=$1 AND conversation_id=ANY($2::text[]) AND request_key=$3 ORDER BY (conversation_id=$4) DESC LIMIT 1",
+        [p.workspaceId, [originalId, id], data.requestKey, originalId],
         q,
       );
       const role = note ? "note" : staff(p) ? "staff" : "customer";
@@ -912,7 +1014,7 @@ export class Platform {
           );
         await this.productivity.verifyMacroRetry(
           p,
-          id,
+          old.conversation_id,
           data.requestKey,
           data.macro,
           q,
@@ -930,9 +1032,19 @@ export class Platform {
         );
         return old;
       }
+      if (
+        staff(p) &&
+        !note &&
+        data.expectedReplyRevision !== undefined &&
+        data.expectedReplyRevision !== conv.reply_version
+      )
+        throw new HttpError(
+          409,
+          "New activity arrived while you were writing. Review the conversation before sending your saved draft.",
+        );
       const msg = (
         await this.db.rows(
-          "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *",
+          "INSERT INTO messages(id,workspace_id,conversation_id,role,body,request_key,author_id,actor_contact_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *",
           [
             uid(),
             p.workspaceId,
@@ -941,12 +1053,15 @@ export class Platform {
             data.body,
             data.requestKey,
             p.userId ?? p.contactId,
+            staff(p) ? null : p.contactId,
           ],
           q,
         )
       )[0];
       await this.attachments.bind(p, conv, msg.id, data.attachments, note, q);
       if (note) {
+        if (!conv.external_id)
+          await queueTicketEmail(this.db, q, p.workspaceId, msg.id);
         if (data.macro)
           await this.productivity.commitMacro(
             p,
@@ -973,15 +1088,20 @@ export class Platform {
         return msg;
       }
       if (!conv.external_id && role === "staff")
-        await q.query("UPDATE messages SET delivered_at=now() WHERE id=$1", [
+        await q.query("UPDATE messages SET delivered_at=clock_timestamp() WHERE id=$1", [
           msg.id,
         ]);
-      if (!conv.external_id && role === "staff")
+      if (!conv.external_id)
         await queueTicketEmail(this.db, q, p.workspaceId, msg.id);
       const next = (
         await this.db.rows(
           "UPDATE conversations SET revision=revision+1,status='open',mode=$1,updated_at=now() WHERE id=$2 RETURNING *",
-          [role === "staff" || !data.body ? "human" : conv.mode, id],
+          [
+            role === "staff" || !data.body || (access && !access.requester)
+              ? "human"
+              : conv.mode,
+            id,
+          ],
           q,
         )
       )[0];
@@ -1035,7 +1155,10 @@ export class Platform {
     if (!["customer", "visitor"].includes(p.role))
       throw new HttpError(403, "Customer access required");
     return this.db.tx(async (q) => {
+      await this.routing.lockWorkspace(q, p.workspaceId);
+      id = (await canonicalTicket(this.db, p.workspaceId, id, q)).id;
       const conv = await conversation(this.db, p, id, q);
+      await requireCustomerTicketAction(this.db, p, conv, "changeStatus", q);
       if (conv.external_id)
         throw new HttpError(
           409,
@@ -1066,91 +1189,23 @@ export class Platform {
   async control(
     p: Principal,
     id: string,
-    input: {
-      mode?: "agent" | "human";
-      status?: "open" | "resolved";
-      assignedTo?: string | null;
-      tags?: string[];
-      externalAssigneeId?: string;
-      teamId?: string | null;
-      overrideCapacity?: boolean;
-      reason?: string;
-    },
+    input: TicketPatchInput & { externalAssigneeId?: string },
   ) {
     requireStaff(p);
     return this.db.tx(async (q) => {
-      await this.routing.lockWorkspace(q, p.workspaceId);
-      p = await refreshPrincipal(this.db, p, q);
-      requireCapability(p, "tickets:update");
-      await conversation(this.db, p, id, q);
-      let conv = requireValue(
-        await this.db.one(
-          "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
-          [p.workspaceId, id],
-          q,
-        ),
-      );
-      if (input.assignedTo !== undefined || input.teamId !== undefined)
-        conv = await this.routing.applyManual(
-          q,
-          p,
-          {
-            ...conv,
-            mode: input.mode ?? conv.mode,
-            status: input.status ?? conv.status,
-          },
-          {
-            assignedTo: input.assignedTo,
-            teamId: input.teamId,
-            overrideCapacity: input.overrideCapacity,
-            reason: input.reason,
-          },
-        );
-      const result = (
-        await this.db.rows(
-          "UPDATE conversations SET mode=$1,status=$2,assigned_to=$3,revision=revision+1,updated_at=now() WHERE id=$4 RETURNING *",
-          [
-            input.mode ?? conv.mode,
-            input.status ?? conv.status,
-            input.assignedTo === undefined
-              ? conv.assigned_to
-              : input.assignedTo,
-            id,
-          ],
-          q,
-        )
-      )[0];
-      await q.query(
-        "UPDATE approvals SET status='stale' WHERE run_id IN (SELECT id FROM runs WHERE conversation_id=$1) AND status='pending'",
-        [id],
-      );
+      const conv = await this.ticketOperations.locked(q, p, id);
+      const { externalAssigneeId, ...patch } = input;
+      const result = await this.ticketOperations.apply(q, p, conv, patch);
       if (input.mode === "agent") await enqueueTurn(this.db, q, result);
       if (
         conv.external_id &&
-        (input.status || input.tags || input.externalAssigneeId)
+        (input.status || input.tags || externalAssigneeId)
       )
         await this.support.queue(q, p.workspaceId, id, {
           status: input.status === "resolved" ? "solved" : input.status,
           tags: input.tags,
-          assigneeId: input.externalAssigneeId,
+          assigneeId: externalAssigneeId,
         });
-      await this.db.event(
-        q,
-        p.workspaceId,
-        "conversation.updated",
-        {
-          mode: result.mode,
-          status: result.status,
-          previousStatus: conv.status,
-          previousMode: conv.mode,
-          actorType: "staff",
-          ...(input.mode === "human"
-            ? { handoffCategory: "staff_takeover" }
-            : {}),
-        },
-        id,
-        true,
-      );
       return result;
     });
   }
@@ -1162,6 +1217,18 @@ export class Platform {
   ) {
     requireAdmin(p);
     return this.db.tx(async (q) => {
+      await this.routing.lockWorkspace(q, p.workspaceId);
+      const approvalTicket = requireValue(
+        await this.db.one(
+          "SELECT r.conversation_id FROM approvals a JOIN runs r ON r.id=a.run_id WHERE a.workspace_id=$1 AND a.id=$2",
+          [p.workspaceId, id],
+          q,
+        ),
+      );
+      await q.query(
+        "SELECT id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        [p.workspaceId, approvalTicket.conversation_id],
+      );
       p = await refreshPrincipal(this.db, p, q);
       requireCapability(p, "actions:approve");
       const a = requireValue(
@@ -1264,31 +1331,53 @@ export class Platform {
       return { status: decision === "approve" ? "approved" : "rejected" };
     });
   }
-  async deleteConversation(ws: string, id: string) {
+  async deleteConversation(ws: string, id: string, actor?: Principal) {
     await this.db.tx(async (q) => {
-      const unknown = await this.db.one(
-        "SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.workspace_id=$1 AND r.conversation_id=$2 AND o.status IN ('prepared','sent','unknown')",
-        [ws, id],
-        q,
+      await this.routing.lockWorkspace(q, ws);
+      if (actor) {
+        if (actor.workspaceId !== ws) throw new HttpError(404, "Not found");
+        actor = await refreshPrincipal(this.db, actor, q);
+        requireAdmin(actor);
+        requireCapability(actor, "tickets:delete");
+        await conversation(this.db, actor, id, q);
+      }
+      const target = await canonicalTicket(this.db, ws, id, q);
+      if (target.id !== id)
+        throw new HttpError(
+          409,
+          "Delete the canonical ticket to remove its merged history together",
+        );
+      const ids = await ticketGroup(this.db, ws, id, q);
+      await q.query(
+        "SELECT id FROM conversations WHERE workspace_id=$1 AND id=ANY($2::text[]) ORDER BY id FOR UPDATE",
+        [ws, ids],
       );
-      if (unknown)
+      if (
+        await this.db.one(
+          "SELECT 1 FROM operations o JOIN runs r ON r.id=o.run_id WHERE r.workspace_id=$1 AND r.conversation_id=ANY($2::text[]) AND o.status IN ('prepared','sent','unknown')",
+          [ws, ids],
+          q,
+        )
+      )
         throw new HttpError(
           409,
           "Reconcile unresolved actions before deleting this conversation",
         );
       const runs = await this.db.rows(
-        "SELECT id FROM runs WHERE workspace_id=$1 AND conversation_id=$2",
-        [ws, id],
+        "SELECT id FROM runs WHERE workspace_id=$1 AND conversation_id=ANY($2::text[])",
+        [ws, ids],
         q,
       );
-      await this.quality.forgetConversation(ws, id, q);
+      for (const member of ids)
+        await this.quality.forgetConversation(ws, member, q);
+      await this.reporting.forgetConversation(ws, id, q);
       await q.query(
-        "DELETE FROM conversations WHERE workspace_id=$1 AND id=$2",
-        [ws, id],
+        "DELETE FROM conversations WHERE workspace_id=$1 AND id=ANY($2::text[])",
+        [ws, ids],
       );
       await q.query(
-        "DELETE FROM events WHERE workspace_id=$1 AND conversation_id=$2",
-        [ws, id],
+        "DELETE FROM events WHERE workspace_id=$1 AND conversation_id=ANY($2::text[])",
+        [ws, ids],
       );
       await this.db.enqueue(q, "maintenance", {
         deleteThreads: runs.map((r) => `${ws}:${r.id}`),

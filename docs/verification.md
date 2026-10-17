@@ -2,6 +2,52 @@
 
 Status: development release candidate. A passing double-backed test is not a successful live connector verification. The original demo's 33 tests are reported separately and do not count as real-provider evidence.
 
+## Everyday collaboration, automation and reporting — 2026-10-07
+
+This change extends schema 23 through five additive groups to schema 28. See the
+[operator guide](everyday-helpdesk.md) for activation, permissions, limits,
+delivery guarantees and disable procedures. Verification uses disposable
+`fieldkit_collaboration_*_test` databases, synthetic identities and captured mail.
+No existing customer database was migrated and no production mail was sent.
+
+| Check actually run | Observed result |
+| --- | --- |
+| `npx tsc --noEmit --noUnusedLocals --noUnusedParameters` | Passed |
+| `npm run build` | Passed; existing static/dynamic TeamsPage import warning remains |
+| `npm test` | 318 passed, no failures or skips; 81.8 seconds |
+| Focused automation regression after routing-event integration | 22 passed, including staff assignment/requeue/sharing events and loop prevention |
+| Focused reporting and automation desktop/mobile browser journeys | Passed; no page errors; starter metric text fits without scrolling |
+| Focused collaboration desktop/mobile browser journeys | Passed: organization/participant/follower UI and real local verified invitations, shared history, scanned uploads/downloads, future-only history and revocation |
+| `npm run test:browser` | Complete combined journey passed in 2.3 minutes, including all new help-desk collaboration, automation and reporting helpers; desktop/mobile captures inspected |
+| Schema-23 upgrade from actual baseline `bffa484` | Two migration passes preserved all five original messages, legacy encrypted route/token, provider receipt, delivered-mail state and active waiting deadline; old webhook replay and a new message through the old token succeeded without duplicate mail |
+| `npm run test:demo` | 33 passed, separate from provider verification |
+| `npm audit --audit-level=high` | Passed threshold; three existing moderate transitive advisories remain |
+| `npm run test:runner` | Blocked: `spawnSync docker ENOENT` |
+| Container builds, fresh Compose installation/worker restart, real scanner startup/restart | Not run locally: Docker executable/runtime unavailable |
+
+The backend suite includes participant history and sender binding, company
+membership revocation, list/detail/file/event permissions, attachment manifests,
+partial and uncertain delivery, collaborator identity isolation, optimistic edits,
+bulk partial outcomes/revocation/capacity, presence expiry, merge races and old
+links/receipts, timer recovery and legacy reminders, business calendars/DST,
+report/query/export agreement beyond 200 records, dashboard edit conflicts and
+scheduled-report authority. It also verifies that deleting report source data
+serializes with generation and wipes retained encrypted artifacts.
+
+The upgrade rehearsal used a temporary Git archive of `bffa484` and
+`fieldkit_upgrade_review_test`. It caught and fixed legacy webhook normalization:
+old receipts omitted the newly parsed CC list. Replay accepts the exact historical
+hash while retaining its original envelope; new CC headers cannot alter the old
+receipt or add participants. New receipts still reject changed CC, sender,
+recipient, content and attachments. The adopted legacy timer kept its original
+deadline and count, no general automation was enabled, and all preexisting ticket
+sharing stayed private.
+
+Local Node is 25.5.0; CI targets Node 24. The existing workflow includes the blocked
+container/scanner gates. These local results do not claim hosted CI or real SMTP,
+model, external-account or scanner verification. Existing historical CI results
+below apply only to their named revisions.
+
 ## Launch security and performance review — 2026-10-04
 
 See the [launch audit](launch-audit.md) for the current changes, measured bundle/query reductions, schema 18, checks actually run, and remaining gates. The [2026-10-05 CI run for `6d84d50`](https://github.com/nahid-sparktales/fieldkit/actions/runs/37271848160) passed all checks: 176 backend tests, 33 archived demo tests, strict types, dependency audit, builds/browser journey, Node 24 containers, real isolated runner, Compose installation/worker restart, and real scanner clean/EICAR detection after startup and restart. The earlier scanner failure was a startup race retaining old signatures in memory after an on-disk update; foreground refresh before daemon startup fixed it without changing the 48-hour limit. These CI results supersede the earlier container/scanner blockers and remain separate from the historical local report below and live vendor-account verification.

@@ -179,6 +179,7 @@ test("waiting needs delivered staff reply; follow-up is bounded and never satisf
     app.sla.tick(x.ws.id, x.c.id),
     app.sla.tick(x.ws.id, x.c.id),
   ]);
+  await Promise.all([app.automation.sweep(), app.automation.sweep()]);
   const messages = await app.db.rows(
     "SELECT * FROM messages WHERE conversation_id=$1 AND role='reminder'",
     [x.c.id],
@@ -234,6 +235,7 @@ test("replies, takeover, disabled channel and policy edits suppress obsolete wai
       });
     now = new Date(+new Date(w!.due_at) + 1);
     await app.sla.tick(x.ws.id, x.c.id);
+    await app.automation.sweep();
     assert.equal(
       (
         await app.db.rows(
@@ -382,5 +384,63 @@ test("SLA observes only unseen messages, coalesces jobs, and still captures dela
     await app.db.one("SELECT id FROM sla_observations WHERE origin=$1", [
       `response:${replyId}`,
     ]),
+  );
+});
+
+test("waiting mutations reject merged aliases and current staff scope before advancing timers", async () => {
+  const x = await setup(),
+    target = await app.newConversation(x.customer, {
+      channelId: x.channelId,
+      body: "Canonical target",
+      requestKey: uid(),
+    });
+  const preview = await app.ticketOperations.preview(
+    x.owner,
+    x.c.id,
+    target.id,
+  );
+  await app.ticketOperations.merge(x.owner, x.c.id, {
+    targetId: target.id,
+    sourceVersion: preview.source.editVersion,
+    targetVersion: preview.target.editVersion,
+    requestKey: uid(),
+  });
+  const before = (await app.db.one(
+    "SELECT count(*)::int n FROM events WHERE conversation_id=$1",
+    [x.c.id],
+  ))!.n;
+  await assert.rejects(
+    app.sla.waiting(x.owner, x.c.id, { waiting: false }),
+    /merged/,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM events WHERE conversation_id=$1",
+      [x.c.id],
+    ))!.n,
+    before,
+  );
+  const agentId = uid(),
+    roleId = uid();
+  await app.db.pool.query(
+    "INSERT INTO staff_roles(workspace_id,id,name,capabilities,ticket_scope,created_by) VALUES($1,$2,'Assigned waiting staff',$3,'assigned',$4)",
+    [
+      x.ws.id,
+      roleId,
+      JSON.stringify(["tickets:read", "tickets:update"]),
+      x.owner.userId,
+    ],
+  );
+  await app.db.pool.query(
+    "INSERT INTO memberships(workspace_id,user_id,role,custom_role_id) VALUES($1,$2,'agent',$3)",
+    [x.ws.id, agentId, roleId],
+  );
+  await assert.rejects(
+    app.sla.waiting(
+      { workspaceId: x.ws.id, userId: agentId, role: "agent" },
+      target.id,
+      { waiting: false },
+    ),
+    /not found/i,
   );
 });

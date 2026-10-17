@@ -1,3 +1,20 @@
+import { TicketPresence, MergeTicket } from "./TicketOperations.js";
+const CollaborationPanel = React.lazy(() =>
+  import("./CollaborationPanel.js").then((m) => ({
+    default: m.CollaborationPanel,
+  })),
+);
+const OrganizationsPage = React.lazy(() =>
+  import("./OrganizationsPage.js").then((m) => ({
+    default: m.OrganizationsPage,
+  })),
+);
+const DashboardPage = React.lazy(() =>
+  import("./DashboardPage.js").then((m) => ({ default: m.DashboardPage })),
+);
+const AutomationPage = React.lazy(() =>
+  import("./AutomationPage.js").then((m) => ({ default: m.AutomationPage })),
+);
 import { StaffRolesEditor } from "./RolesEditor.js";
 import { SecurityPage, MfaChallenge, SsoSignIn } from "./SecurityPage.js";
 import "./validation-config.js";
@@ -470,6 +487,7 @@ const navigation = [
       "Team",
       "Teams & routing",
       "Productivity",
+      "Automations",
       "Settings",
       "Security",
       "Activity",
@@ -502,7 +520,9 @@ function App() {
     ),
     [view, setView] = useState(() => {
       const v = new URLSearchParams(location.search).get("view");
-      return sections.find((s) => viewSlug(s) === v) ?? "Setup";
+      return v === "dashboards"
+        ? "Analytics"
+        : (sections.find((s) => viewSlug(s) === v) ?? "Setup");
     }),
     [menu, setMenu] = useState(false),
     [mobile, setMobile] = useState(
@@ -554,7 +574,10 @@ function App() {
       const target = params.get("workspace");
       if (target) setWs(target);
       setView(
-        sections.find((s) => viewSlug(s) === params.get("view")) ?? "Setup",
+        params.get("view") === "dashboards"
+          ? "Analytics"
+          : (sections.find((s) => viewSlug(s) === params.get("view")) ??
+              "Setup"),
       );
       setMenu(false);
       setRouteRevision((v) => v + 1);
@@ -668,6 +691,7 @@ function App() {
     Team: "members:manage",
     "Teams & routing": "tickets:read",
     Productivity: "tickets:read",
+    Automations: "tickets:read",
     Activity: "audit:read",
   };
   const canView = (name: string) =>
@@ -869,6 +893,7 @@ function App() {
               <Inbox
                 ws={ws}
                 role={role}
+                capabilities={workspace?.capabilities ?? []}
                 drafts={inboxDrafts[ws] ?? {}}
                 setDrafts={(update) =>
                   setInboxDrafts((all) => ({
@@ -878,7 +903,13 @@ function App() {
                 }
               />
             ) : activeView === "Customers" ? (
-              <CustomersPage ws={ws} admin={role !== "agent"} />
+              <CustomersWorkspace
+                ws={ws}
+                admin={role !== "agent"}
+                organizations={workspace?.capabilities?.includes(
+                  "organizations:manage",
+                )}
+              />
             ) : activeView === "Knowledge" ? (
               <KnowledgePage
                 ws={ws}
@@ -894,7 +925,12 @@ function App() {
             ) : activeView === "Test Lab" ? (
               <TestLabPage ws={ws} admin={role !== "agent"} />
             ) : activeView === "Analytics" ? (
-              <AnalyticsPage ws={ws} />
+              <AnalyticsWorkspace ws={ws} />
+            ) : activeView === "Automations" ? (
+              <AutomationPage
+                ws={ws}
+                manage={workspace?.capabilities?.includes("automations:manage")}
+              />
             ) : activeView === "Shadow & rollout" ? (
               <ShadowPage ws={ws} role={role} />
             ) : activeView === "Needs attention" ? (
@@ -1187,7 +1223,74 @@ function InboxStatus({ conversation }: { conversation: Row }) {
     </span>
   );
 }
+function CustomersWorkspace({
+  ws,
+  admin,
+  organizations,
+}: {
+  ws: string;
+  admin: boolean;
+  organizations: boolean;
+}) {
+  const [tab, setTab] = useState("customers");
+  return (
+    <>
+      <div className="workspace-subtabs" aria-label="Customer views">
+        <button
+          aria-pressed={tab === "customers"}
+          onClick={() => setTab("customers")}
+        >
+          Customers
+        </button>
+        {organizations && (
+          <button
+            aria-pressed={tab === "organizations"}
+            onClick={() => setTab("organizations")}
+          >
+            Organizations
+          </button>
+        )}
+      </div>
+      {tab === "organizations" ? (
+        <OrganizationsPage ws={ws} />
+      ) : (
+        <CustomersPage ws={ws} admin={admin} />
+      )}
+    </>
+  );
+}
+function AnalyticsWorkspace({ ws }: { ws: string }) {
+  const [tab, setTab] = useState(
+    new URLSearchParams(location.search).get("view") === "dashboards"
+      ? "dashboards"
+      : "overview",
+  );
+  return (
+    <>
+      <div className="workspace-subtabs" aria-label="Analytics views">
+        <button
+          aria-pressed={tab === "overview"}
+          onClick={() => setTab("overview")}
+        >
+          Overview
+        </button>
+        <button
+          aria-pressed={tab === "dashboards"}
+          onClick={() => setTab("dashboards")}
+        >
+          Dashboards
+        </button>
+      </div>
+      {tab === "dashboards" ? (
+        <DashboardPage ws={ws} />
+      ) : (
+        <AnalyticsPage ws={ws} />
+      )}
+    </>
+  );
+}
 type InboxDraft = {
+  expectedReplyRevision?: number;
   body: string;
   note: boolean;
   requestKey: string;
@@ -1197,11 +1300,13 @@ type InboxDraft = {
 function Inbox({
   ws,
   role,
+  capabilities,
   drafts,
   setDrafts,
 }: {
   ws: string;
   role: string;
+  capabilities: string[];
   drafts: Record<string, InboxDraft>;
   setDrafts: (
     update: (drafts: Record<string, InboxDraft>) => Record<string, InboxDraft>,
@@ -1257,6 +1362,7 @@ function Inbox({
         >
           <InboxQueue
             ws={ws}
+            canBulk={capabilities.includes("tickets:update")}
             selected={selected}
             members={members.data?.members ?? []}
             drafts={drafts}
@@ -1278,6 +1384,15 @@ function Inbox({
             ws={ws}
             role={role}
             id={selected}
+            canMerge={capabilities.includes("tickets:merge")}
+            onMerged={(id) => {
+              setSelected(id);
+              setSummary(undefined);
+              refresh();
+              replaceCurrentRoute(
+                `/?workspace=${ws}&view=inbox&conversation=${id}`,
+              );
+            }}
             summary={summary}
             members={members.data?.members ?? []}
             membersError={members.error}
@@ -1315,6 +1430,8 @@ function Inbox({
   );
 }
 function InboxConversation({
+  canMerge,
+  onMerged,
   ws,
   role,
   id,
@@ -1337,6 +1454,8 @@ function InboxConversation({
   reloadQueue: () => void;
   back: () => void;
   showDetail: boolean;
+  canMerge: boolean;
+  onMerged: (id: string) => void;
   draft?: InboxDraft;
   changeDraft: (draft: InboxDraft) => void;
   clearDraft: (sent: InboxDraft) => void;
@@ -1369,6 +1488,9 @@ function InboxConversation({
     }
     changeDraft({
       ...currentDraft,
+      expectedReplyRevision:
+        currentDraft.expectedReplyRevision ??
+        detail.data?.conversation.reply_version,
       ...changes,
       requestKey: crypto.randomUUID(),
     });
@@ -1402,7 +1524,7 @@ function InboxConversation({
   }, [detail.data?.messages.at(-1)?.id, tab]);
   const control = (d: Row, message: string) =>
     a.run(async () => {
-      await api(ws, `/conversations/${id}/control`, d);
+      await api(ws, `/conversations/${detail.data.conversation.id}/control`, d);
       refresh();
     }, message);
   const openAssistant = () => {
@@ -1430,6 +1552,10 @@ function InboxConversation({
   );
   const customer =
     detail.data.customer?.name || summary?.customer_name || "Visitor";
+  const replyChanged =
+    !currentDraft.note &&
+    currentDraft.expectedReplyRevision !== undefined &&
+    currentDraft.expectedReplyRevision !== conv.reply_version;
   const feedback: Row[] = detail.data.feedback ?? [];
   const notes = detail.data.messages.filter((m: Row) => m.role === "note");
   const ticketTabs = [
@@ -1443,6 +1569,17 @@ function InboxConversation({
 
   return (
     <section className="conversation-detail" aria-label="Selected conversation">
+      <TicketPresence
+        ws={ws}
+        id={conv.id}
+        typing={!!currentDraft.body.trim() && !currentDraft.note}
+      />
+      {detail.data.mergedFrom && (
+        <p className="alert">
+          This ticket was merged into #{conv.id.slice(0, 8)}. You’re viewing the
+          combined conversation.
+        </p>
+      )}
       <header className="ticket-header">
         <button className="inbox-back" onClick={back}>
           ← All conversations
@@ -1560,7 +1697,7 @@ function InboxConversation({
           <summary>Team, capacity & assignment history</summary>
           <RoutingAssignment ws={ws} conv={conv} onChange={refresh} />
         </details>
-        <TicketFields key={id} ws={ws} id={id} changed={refresh} />
+        <TicketFields key={conv.id} ws={ws} id={conv.id} changed={refresh} />
         <div className="ticket-context">
           <span className={`ticket-priority ${statusTone(conv.priority)}`}>
             Priority: {conv.priority}
@@ -1823,7 +1960,7 @@ function InboxConversation({
         tabIndex={0}
         hidden={tab !== "activity"}
       >
-        <SlaConversation ws={ws} id={id} revision={conv.revision} />
+        <SlaConversation ws={ws} id={conv.id} revision={conv.revision} />
         <h3>Improve future answers</h3>
         <p>
           Capture this conversation for testing or highlight missing knowledge.
@@ -1875,6 +2012,14 @@ function InboxConversation({
             )}
           </section>
         )}
+        <CollaborationPanel
+          ws={ws}
+          conversationId={conv.id}
+          onChanged={refresh}
+        />
+        {canMerge && !conv.external_id && conv.channel_kind === "portal" && (
+          <MergeTicket ws={ws} id={conv.id} onMerged={onMerged} />
+        )}
         <h3>Agent activity & evidence</h3>
         {!detail.data.runs.length && (
           <p>No agent runs for this conversation yet.</p>
@@ -1916,7 +2061,8 @@ function InboxConversation({
             a.busy ||
             !draft ||
             (!draft.body.trim() && !attachmentIds(draft.files).length) ||
-            attachmentsPending(draft.files)
+            attachmentsPending(draft.files) ||
+            replyChanged
           )
             return;
           if (draft.body.trim() === "/customer-support") {
@@ -1932,6 +2078,7 @@ function InboxConversation({
                 {
                   body: sent.body,
                   requestKey: sent.requestKey,
+                  expectedReplyRevision: sent.expectedReplyRevision,
                   attachments: attachmentIds(sent.files),
                   ...(sent.macro ? { macro: sent.macro } : {}),
                 },
@@ -1947,6 +2094,22 @@ function InboxConversation({
           );
         }}
       >
+        {replyChanged && (
+          <div className="reply-review" role="alert">
+            A public message arrived while you were drafting. Your draft is
+            saved. Review the conversation before sending.
+            <button
+              type="button"
+              onClick={() => {
+                updateDraft({ expectedReplyRevision: conv.reply_version });
+                a.setError("");
+                thread.current?.scrollTo({ top: thread.current.scrollHeight });
+              }}
+            >
+              I reviewed the new activity
+            </button>
+          </div>
+        )}
         <div className="composer-heading">
           <strong>
             {currentDraft.note ? "Internal note" : `Reply to ${customer}`}
@@ -1968,7 +2131,7 @@ function InboxConversation({
         </div>
         <MacroPicker
           ws={ws}
-          id={id}
+          id={conv.id}
           disabled={a.busy}
           onApply={(macroDraft) => {
             if (
@@ -2050,7 +2213,8 @@ function InboxConversation({
               a.busy ||
               (!currentDraft.body.trim() &&
                 !attachmentIds(currentDraft.files).length) ||
-              attachmentsPending(currentDraft.files)
+              attachmentsPending(currentDraft.files) ||
+              replyChanged
             }
           >
             {a.busy

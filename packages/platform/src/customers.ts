@@ -29,7 +29,7 @@ export class Customers {
     const visible = conversationVisibility(p,"c",args);
     return requireValue(
       await this.db.one(
-        `SELECT ct.* FROM contacts ct WHERE ct.workspace_id=$1 AND ct.id=$2 AND ${p.ticketScope && p.ticketScope !== "all" ? `EXISTS(SELECT 1 FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND ${visible})` : "TRUE"}`,
+        `SELECT ct.* FROM contacts ct WHERE ct.workspace_id=$1 AND ct.id=$2 AND ${p.ticketScope && p.ticketScope !== "all" ? `EXISTS(SELECT 1 FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.merged_into_id IS NULL AND c.contact_id=ct.id AND ${visible})` : "TRUE"}`,
         args,
       ),
     );
@@ -59,8 +59,8 @@ export class Customers {
       FROM conversations c JOIN contacts ct ON ct.workspace_id=c.workspace_id AND ct.id=c.contact_id
       LEFT JOIN channels ch ON ch.workspace_id=c.workspace_id AND ch.id=c.channel_id
       LEFT JOIN conversation_reads cr ON cr.workspace_id=c.workspace_id AND cr.conversation_id=c.id AND cr.user_id=$9
-      LEFT JOIN LATERAL (SELECT max(inbox_sequence) cursor FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='customer') latest ON true
-      WHERE c.workspace_id=$1 AND (${visible}) AND ($2='all' OR ${typeSQL}=$2)
+      LEFT JOIN LATERAL (SELECT max(inbox_sequence) cursor FROM messages m WHERE m.workspace_id=c.workspace_id AND (m.conversation_id=c.id OR m.conversation_id IN(SELECT id FROM conversations merged WHERE merged.workspace_id=c.workspace_id AND merged.merged_into_id=c.id)) AND m.role='customer') latest ON true
+      WHERE c.workspace_id=$1 AND c.merged_into_id IS NULL AND (${visible}) AND ($2='all' OR ${typeSQL}=$2)
       AND ($3='all' OR ($3='unassigned' AND c.assigned_to IS NULL) OR c.assigned_to=$3)
       AND ($4='' OR strpos(lower(c.subject||' '||ct.name||' '||coalesce(ct.email,'')),lower($4))>0)
       AND ($5::text IS NULL OR c.contact_id=$5)
@@ -94,7 +94,7 @@ export class Customers {
       const summaries = await this.db.rows(
         `SELECT c.id,
         (SELECT jsonb_build_object('dueAt',o.due_at,'state',o.state,'urgency',CASE WHEN o.breached_at IS NOT NULL OR o.due_at<=now() THEN 'overdue' WHEN o.warning_at<=now() THEN 'at risk' ELSE 'on track' END) FROM sla_obligations o WHERE o.workspace_id=c.workspace_id AND o.conversation_id=c.id AND o.ended_at IS NULL AND o.state<>'paused' ORDER BY o.due_at LIMIT 1) sla,
-        (SELECT left(body,240) FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1) last_message,
+        (SELECT left(body,240) FROM messages m WHERE m.workspace_id=c.workspace_id AND (m.conversation_id=c.id OR m.conversation_id IN(SELECT id FROM conversations merged WHERE merged.workspace_id=c.workspace_id AND merged.merged_into_id=c.id)) AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1) last_message,
         (SELECT count(*)::int FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id) feedback_count,
         (SELECT resolved FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id ORDER BY updated_at DESC LIMIT 1) feedback_resolved,
         (SELECT rating FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id ORDER BY updated_at DESC LIMIT 1) feedback_rating
@@ -118,13 +118,13 @@ export class Customers {
     const visible = conversationVisibility(p,"c",args);
     const where = `WHERE ct.workspace_id=$1 AND ($2='' OR strpos(lower(ct.name||' '||coalesce(ct.email,'')||' '||coalesce(ct.external_id,'')),lower($2))>0)
       AND ($3='all' OR ($3='verified' AND ct.verified) OR ($3='visitor' AND NOT ct.verified))
-      AND ${p.ticketScope && p.ticketScope !== "all" ? `EXISTS(SELECT 1 FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND ${visible})` : "TRUE"}`;
+      AND ${p.ticketScope && p.ticketScope !== "all" ? `EXISTS(SELECT 1 FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.merged_into_id IS NULL AND c.contact_id=ct.id AND ${visible})` : "TRUE"}`;
     return this.db.one(
       `WITH customers AS (
       SELECT ct.id,ct.name,ct.email,ct.verified,ct.user_id,ct.external_id,
-      (SELECT count(*)::int FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND (${visible})) conversations,
-      (SELECT count(*)::int FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND (${visible}) AND c.status<>'resolved') open_conversations,
-      (SELECT max(updated_at) FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.contact_id=ct.id AND (${visible})) last_activity
+      (SELECT count(*)::int FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.merged_into_id IS NULL AND c.contact_id=ct.id AND (${visible})) conversations,
+      (SELECT count(*)::int FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.merged_into_id IS NULL AND c.contact_id=ct.id AND (${visible}) AND c.status<>'resolved') open_conversations,
+      (SELECT max(updated_at) FROM conversations c WHERE c.workspace_id=ct.workspace_id AND c.merged_into_id IS NULL AND c.contact_id=ct.id AND (${visible})) last_activity
       FROM contacts ct ${where}
     ), page AS (SELECT * FROM customers ORDER BY last_activity DESC NULLS LAST,name,id LIMIT $4 OFFSET $5)
     SELECT (SELECT count(*)::int FROM customers) total,coalesce((SELECT jsonb_agg(row_to_json(p)) FROM page p),'[]') customers,
@@ -142,13 +142,13 @@ export class Customers {
       count(*) FILTER(WHERE ch.kind='widget')::int chats,
       count(*) FILTER(WHERE ch.kind IS DISTINCT FROM 'widget')::int tickets,
       min(c.created_at) first_contact,max(c.updated_at) last_activity
-      FROM conversations c LEFT JOIN channels ch ON ch.id=c.channel_id AND ch.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.contact_id=$2 AND (${visible})`,
+      FROM conversations c LEFT JOIN channels ch ON ch.id=c.channel_id AND ch.workspace_id=c.workspace_id WHERE c.workspace_id=$1 AND c.merged_into_id IS NULL AND c.contact_id=$2 AND (${visible})`,
       args,
     );
     const notes = hasCapability(p,"tickets:note") ? await this.db.one(
       `SELECT
       (SELECT count(*) FROM contact_notes WHERE workspace_id=$1 AND contact_id=$2 AND ${!p.ticketScope || p.ticketScope === "all" ? "TRUE" : "FALSE"})+
-      (SELECT count(*) FROM messages m JOIN conversations c ON c.id=m.conversation_id AND c.workspace_id=m.workspace_id WHERE c.workspace_id=$1 AND c.contact_id=$2 AND (${visible}) AND m.role='note') AS count`,
+      (SELECT count(*) FROM messages m JOIN conversations source ON source.id=m.conversation_id AND source.workspace_id=m.workspace_id JOIN conversations c ON c.workspace_id=source.workspace_id AND c.id=coalesce(source.merged_into_id,source.id) WHERE c.workspace_id=$1 AND c.contact_id=$2 AND (${visible}) AND m.role='note') AS count`,
       args,
     ) : {count:0};
     return { contact, summary: { ...summary, notes: Number(notes!.count) } };
@@ -167,7 +167,7 @@ export class Customers {
       FROM contact_notes n LEFT JOIN "user" u ON u.id=n.author_id WHERE n.workspace_id=$1 AND n.contact_id=$2 AND ${!p.ticketScope || p.ticketScope === "all" ? "TRUE" : "FALSE"}
       UNION ALL
       SELECT m.id,m.body,m.created_at,u.name author_name,c.id conversation_id,c.subject,'conversation' scope
-      FROM messages m JOIN conversations c ON c.id=m.conversation_id AND c.workspace_id=m.workspace_id LEFT JOIN "user" u ON u.id=m.author_id
+      FROM messages m JOIN conversations source ON source.id=m.conversation_id AND source.workspace_id=m.workspace_id JOIN conversations c ON c.workspace_id=source.workspace_id AND c.id=coalesce(source.merged_into_id,source.id) LEFT JOIN "user" u ON u.id=m.author_id
       WHERE c.workspace_id=$1 AND c.contact_id=$2 AND (${visible}) AND m.role='note'
     ), page AS (SELECT * FROM notes ORDER BY created_at DESC,id DESC LIMIT $3 OFFSET $4)
     SELECT (SELECT count(*)::int FROM notes) total,coalesce((SELECT jsonb_agg(row_to_json(p)) FROM page p),'[]') notes,

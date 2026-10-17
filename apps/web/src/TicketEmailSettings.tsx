@@ -41,6 +41,7 @@ export function TicketEmailSettings({ ws }: { ws: string }) {
       quarantined: "Needs review",
       received: "Processed",
       retrying: "Retry scheduled",
+      waiting_files: "Waiting for file scanning",
     })[value] ?? value;
   return (
     <section className="panel ticket-email-settings">
@@ -481,13 +482,14 @@ export function TicketEmailSettings({ ws }: { ws: string }) {
               · {m.attempts} attempts
             </small>
             {m.error && <p>{m.error}</p>}
+            {!!l.data.deliveries?.some((d:Row)=>d.email_id===m.id)&&<details><summary>Recipient delivery status</summary>{l.data.deliveries.filter((d:Row)=>d.email_id===m.id).map((d:Row)=><p key={d.id}><strong>{d.recipient}</strong> · {stateLabel(d.status)} · {d.attempts} attempts{d.error&&` · ${d.error}`}</p>)}<p className="muted">Recovery retries failed or uncertain recipients only. Accepted copies are not resent.</p></details>}
             {l.data.canRetry && ["failed", "unknown"].includes(m.status) && (
               <button
                 disabled={a.busy}
                 onClick={() => {
                   if (
                     confirm(
-                      "Check the provider first. Retrying an uncertain delivery can send a duplicate. Retry this email?",
+                      "Check the provider first. Retrying an uncertain delivery can send a duplicate. Retry only failed or uncertain recipients?",
                     )
                   )
                     void a.run(async () => {

@@ -1,3 +1,8 @@
+import { COLLABORATION_SCHEMA } from "./collaboration-schema.js";
+import { EMAIL_COLLABORATION_SCHEMA } from "./email-collaboration-schema.js";
+import { TICKET_OPERATIONS_SCHEMA } from "./ticket-operations-schema.js";
+import { TICKET_AUTOMATION_SCHEMA } from "./ticket-automation-schema.js";
+import { REPORTING_SCHEMA } from "./reporting-schema.js";
 import { IDENTITY_SCHEMA } from "./identity-schema.js";
 import { CUSTOMER_SUPPORT_SCHEMA } from "./customer-support-schema.js";
 import { PERMISSIONS_SCHEMA } from "./permissions-schema.js";
@@ -18,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { type Config, HttpError, log } from "./config.js";
 
 export const uid = randomUUID;
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 28;
 export type Queryable = Pick<Pool, "query"> | PoolClient;
 export class Database {
   selectWorkflow?: (q: PoolClient, conv: any) => Promise<any>;
@@ -123,12 +128,17 @@ export class Database {
     await this.pool.query(PRODUCTIVITY_SCHEMA);
     await this.pool.query(HUMAN_ROUTING_SCHEMA);
     await this.pool.query(IDENTITY_SCHEMA);
+    await this.pool.query(COLLABORATION_SCHEMA);
+    await this.pool.query(EMAIL_COLLABORATION_SCHEMA);
+    await this.pool.query(TICKET_OPERATIONS_SCHEMA);
+    await this.pool.query(TICKET_AUTOMATION_SCHEMA);
+    await this.pool.query(REPORTING_SCHEMA);
     await this.pool.query(`
       CREATE INDEX IF NOT EXISTS events_workspace_cursor ON events(workspace_id,id);
       CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(workspace_id,conversation_id,created_at,id);
     `);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18),(19),(20),(21),(22),(23) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24),(25),(26),(27),(28) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();
@@ -142,6 +152,11 @@ export class Database {
       "quality",
       "feedback-sync",
       "ticket-email",
+      "collaboration-email",
+      "ticket-batch",
+      "ticket-automation",
+      "ticket-automation-notify",
+      "reporting",
       "email-intake",
       "human-routing",
       "diagnostic",

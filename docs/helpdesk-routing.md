@@ -64,9 +64,10 @@ is `human` **or** status is `needs_staff`. This count is shared across all teams
 
 Counts come directly from conversations inside the assignment transaction. No
 separate increment/decrement counter can drift after a restart or failed job.
-Lowering a limit does not remove existing work. Reopening retains an authorized
-existing owner, even if the reopened ticket brings their count over their limit;
-new automatic claims stop until that workload falls. An owner removed from the
+Lowering a limit does not remove existing work. A new customer reply or requester
+reopening retains an authorized existing owner, even if it brings their count over
+the limit; new automatic claims stop until workload falls. Staff controls and bulk
+reopen check capacity and return a conflict if the existing owner is at capacity. An owner removed from the
 workspace/team, disabled, or no longer authorized to receive the ticket is cleared
 and the ticket is requeued. This reconciliation is retried by the persisted worker
 and periodic sweep; it does not guess a replacement before eligibility checks.

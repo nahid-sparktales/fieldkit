@@ -305,14 +305,40 @@ export class HumanRouting {
       q,
     ))!.count as number;
   }
+  /** Status changes must not bypass the same capacity used by assignment. */
+  async validateConsumption(q: PoolClient, previous: Row, next: Row) {
+    if (consumes(previous) || !consumes(next) || !next.assigned_to) return;
+    const limit =
+      (
+        await this.db.one(
+          "SELECT capacity FROM agent_availability WHERE workspace_id=$1 AND user_id=$2",
+          [next.workspace_id, next.assigned_to],
+          q,
+        )
+      )?.capacity ?? 5;
+    if (
+      (await this.workload(next.workspace_id, next.assigned_to, q, next.id)) >=
+      limit
+    )
+      throw new HttpError(
+        409,
+        "Agent is at capacity. Reassign this ticket before reopening it.",
+      );
+  }
   /** Caller must acquire lockWorkspace BEFORE locking the conversation. Same path for macros. */
   async applyManual(
     q: PoolClient,
     p: Principal,
     conv: Row,
     raw: ManualAssignmentInput,
+    origin: Record<string, unknown> = {},
   ) {
     p = await this.authority(q, p, "tickets:assign");
+    if (conv.merged_into_id)
+      throw new HttpError(
+        409,
+        "This ticket was merged. Open the current conversation.",
+      );
     await conversation(this.db, p, conv.id, q);
     const d = ManualAssignment.parse(raw),
       teamId = d.teamId === undefined ? conv.team_id : d.teamId;
@@ -371,6 +397,7 @@ export class HumanRouting {
       p.workspaceId,
       "routing.assigned",
       {
+        ...origin,
         source: "manual",
         actorId: p.userId,
         teamId: teamId ?? null,
@@ -395,10 +422,27 @@ export class HumanRouting {
           q,
         ),
       );
-      const result = await this.applyManual(q, p, conv, raw);
-      await q.query(
-        "UPDATE conversations SET revision=revision+1 WHERE workspace_id=$1 AND id=$2",
-        [p.workspaceId, id],
+      await this.applyManual(q, p, conv, raw);
+      const result = requireValue(
+        await this.db.one(
+          "UPDATE conversations SET revision=revision+1 WHERE workspace_id=$1 AND id=$2 RETURNING *",
+          [p.workspaceId, id],
+          q,
+        ),
+      );
+      await this.db.event(
+        q,
+        p.workspaceId,
+        "conversation.updated",
+        {
+          actorType: "staff",
+          actor: p.userId,
+          previousStatus: conv.status,
+          status: result.status,
+          teamId: result.team_id,
+          assignedTo: result.assigned_to,
+        },
+        id,
       );
       return result;
     });
@@ -467,39 +511,65 @@ export class HumanRouting {
           q,
         ),
       );
-      if (!consumes(conv))
-        throw new HttpError(
-          409,
-          "Only unresolved tickets needing a person can enter the human queue",
-        );
-      await q.query(
-        "UPDATE conversations SET assigned_to=NULL,assignment_source=NULL,revision=revision+1 WHERE workspace_id=$1 AND id=$2",
-        [p.workspaceId, id],
-      );
-      await q.query(
-        "DELETE FROM human_queue WHERE workspace_id=$1 AND conversation_id=$2",
-        [p.workspaceId, id],
-      );
-      await this.enqueue(
-        q,
-        { ...conv, assigned_to: null, assignment_source: null },
-        null,
-        true,
-      );
+      const result = await this.requeueInTransaction(q, p, conv);
       await this.db.event(
         q,
         p.workspaceId,
-        "routing.requeued",
+        "conversation.updated",
         {
-          actorId: p.userId,
-          previousAgent: conv.assigned_to,
+          actorType: "staff",
+          actor: p.userId,
+          previousStatus: conv.status,
+          status: conv.status,
           teamId: conv.team_id,
+          assignedTo: null,
         },
         id,
       );
-      await this.wake(q, p.workspaceId);
-      return { queued: true };
+      return result;
     });
+  }
+  async requeueInTransaction(
+    q: PoolClient,
+    p: Principal,
+    conv: Row,
+    origin: Record<string, unknown> = {},
+  ) {
+    requireCapability(p, "tickets:assign");
+    const id = conv.id;
+    if (!consumes(conv))
+      throw new HttpError(
+        409,
+        "Only unresolved tickets needing a person can enter the human queue",
+      );
+    await q.query(
+      "UPDATE conversations SET assigned_to=NULL,assignment_source=NULL,revision=revision+1 WHERE workspace_id=$1 AND id=$2",
+      [p.workspaceId, id],
+    );
+    await q.query(
+      "DELETE FROM human_queue WHERE workspace_id=$1 AND conversation_id=$2",
+      [p.workspaceId, id],
+    );
+    await this.enqueue(
+      q,
+      { ...conv, assigned_to: null, assignment_source: null },
+      null,
+      true,
+    );
+    await this.db.event(
+      q,
+      p.workspaceId,
+      "routing.requeued",
+      {
+        ...origin,
+        actorId: p.userId,
+        previousAgent: conv.assigned_to,
+        teamId: conv.team_id,
+      },
+      id,
+    );
+    await this.wake(q, p.workspaceId);
+    return { queued: true };
   }
   private async enqueue(
     q: PoolClient,

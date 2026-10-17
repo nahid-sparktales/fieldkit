@@ -1,3 +1,13 @@
+import { ticketOperationsRoutes } from "./ticket-operations-routes.js";
+import { collaborationRoutes } from "./collaboration-routes.js";
+import { automationRoutes } from "./automation-routes.js";
+import { reportingRoutes } from "./reporting-routes.js";
+import {
+  customerTicketAccess,
+  customerConversationVisibility,
+  customerMessageVisibility,
+} from "../../packages/platform/src/customer-access.js";
+import { ticketGroup } from "../../packages/platform/src/ticket-canonical.js";
 import { authorizeWorkspaceRoute } from "./route-permissions.js";
 import { Identity } from "../../packages/platform/src/identity.js";
 import { StaffRoles } from "../../packages/platform/src/staff-roles.js";
@@ -619,8 +629,18 @@ export async function createApp(
           p = await principal(app.db, app.auth, req, ws);
         authorizeWorkspaceRoute(p, suffix, method);
         const scopedTicket = suffix.match(/^\/conversations\/([^/]+)(?:\/|$)/);
-        if (staff(p) && scopedTicket)
-          await conversation(app.db, p, scopedTicket[1]);
+        if (staff(p) && scopedTicket) {
+          const canonical = await conversation(app.db, p, scopedTicket[1]);
+          if (
+            canonical.id !== scopedTicket[1] &&
+            method !== "GET" &&
+            !/\/(messages|notes|read|status|presence|merge)$/.test(suffix)
+          )
+            throw new HttpError(
+              409,
+              "This ticket was merged. Open the current conversation.",
+            );
+        }
         if (method !== "GET")
           await app.rate(
             `${ws}:${p.userId ?? p.contactId ?? tokenHash(req.headers.authorization ?? "")}`,
@@ -639,6 +659,27 @@ export async function createApp(
             streams,
           )
         )
+          return;
+        if (
+          await ticketOperationsRoutes(
+            app,
+            p,
+            req,
+            res,
+            url,
+            suffix,
+            body,
+            json,
+          )
+        )
+          return;
+        if (
+          await collaborationRoutes(app, p, req, res, url, suffix, body, json)
+        )
+          return;
+        if (await automationRoutes(app, p, req, res, suffix, body, json))
+          return;
+        if (await reportingRoutes(app, p, req, res, url, suffix, body, json))
           return;
         if (await readinessRoutes(app, p, req, res, suffix, body, json)) return;
         if (await slaRoutes(app, p, req, res, suffix, body, json)) return;
@@ -1285,7 +1326,19 @@ export async function createApp(
           ];
           const visible = staff(p)
             ? conversationVisibility(p, "c", conversationArgs)
-            : "TRUE";
+            : customerConversationVisibility(p, "c", conversationArgs);
+          const messageVisible = staff(p)
+            ? "TRUE"
+            : customerMessageVisibility(p, "preview_c", "m", conversationArgs);
+          const scope = url.searchParams.get("scope");
+          const customerScope =
+            staff(p) || !scope
+              ? "TRUE"
+              : scope === "company"
+                ? "c.sharing='company' AND EXISTS(SELECT 1 FROM customer_organization_memberships om WHERE om.workspace_id=c.workspace_id AND om.organization_id=c.organization_id AND om.contact_id=$3 AND om.active AND om.role='manager')"
+                : scope === "mine"
+                  ? "(c.contact_id=$3 OR EXISTS(SELECT 1 FROM ticket_participants tp WHERE tp.workspace_id=c.workspace_id AND tp.conversation_id=c.id AND tp.portal_contact_id=$3 AND tp.active))"
+                  : "TRUE";
           json(res, {
             conversations: await app.db.rows(
               `SELECT c.*,ct.name customer_name,ch.kind channel_kind,
@@ -1298,9 +1351,9 @@ export async function createApp(
                JOIN contacts ct ON ct.id=c.contact_id AND ct.workspace_id=c.workspace_id
                LEFT JOIN channels ch ON ch.id=c.channel_id AND ch.workspace_id=c.workspace_id
                LEFT JOIN LATERAL (
-                 SELECT left(m.body,240) body,m.role FROM messages m
-                 WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id
-                   AND m.role IN ('customer','assistant','staff') AND ($2::boolean OR m.role='customer' OR m.delivered_at IS NOT NULL)
+                 SELECT left(m.body,240) body,m.role FROM messages m JOIN conversations preview_c ON preview_c.workspace_id=m.workspace_id AND preview_c.id=m.conversation_id
+                 WHERE m.workspace_id=c.workspace_id AND (preview_c.id=c.id OR preview_c.merged_into_id=c.id)
+                   AND m.role IN ('customer','assistant','staff') AND (${messageVisible}) AND ($2::boolean OR m.role='customer' OR m.delivered_at IS NOT NULL)
                  ORDER BY m.created_at DESC,m.id DESC LIMIT 1
                ) latest ON true
                LEFT JOIN LATERAL (
@@ -1308,7 +1361,7 @@ export async function createApp(
                  WHERE a.workspace_id=c.workspace_id AND r.conversation_id=c.id AND a.status='pending'
                  ORDER BY a.expires_at DESC LIMIT 1
                ) approval ON true
-               WHERE c.workspace_id=$1 AND (${visible}) AND ($2::boolean OR c.contact_id=$3) AND ($4::text IS NULL OR c.channel_id=$4)
+               WHERE c.workspace_id=$1 AND c.merged_into_id IS NULL AND (${visible}) AND (${customerScope}) AND ($3::text IS NULL OR TRUE) AND ($4::text IS NULL OR c.channel_id=$4)
                ORDER BY c.updated_at DESC,c.id DESC LIMIT 200`,
               conversationArgs,
             ),
@@ -1454,15 +1507,23 @@ export async function createApp(
             tail = m[2];
           if (!tail && method === "GET") {
             const conv = await conversation(app.db, p, id);
+            const group = await ticketGroup(app.db, ws, conv.id);
+            const access = staff(p)
+              ? null
+              : await customerTicketAccess(app.db, p, conv);
+            const messageArgs: unknown[] = [
+              ws,
+              group,
+              staff(p),
+              hasCapability(p, "tickets:note"),
+              hasCapability(p, "audit:read"),
+            ];
+            const visible = staff(p)
+              ? "TRUE"
+              : customerMessageVisibility(p, "c", "m", messageArgs);
             const messages = await app.db.rows(
-              `SELECT m.*,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m WHERE m.workspace_id=$1 AND m.conversation_id=$2 AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (m.role<>'note' OR $4::boolean) AND (m.role<>'system' OR $5::boolean) ORDER BY m.created_at,m.id`,
-              [
-                ws,
-                id,
-                staff(p),
-                hasCapability(p, "tickets:note"),
-                hasCapability(p, "audit:read"),
-              ],
+              `SELECT m.*,(SELECT name FROM contacts WHERE workspace_id=m.workspace_id AND id=m.actor_contact_id) actor_name,CASE WHEN c.id<>$${messageArgs.length + 1} THEN c.id END source_ticket_id,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m JOIN conversations c ON c.workspace_id=m.workspace_id AND c.id=m.conversation_id WHERE m.workspace_id=$1 AND m.conversation_id=ANY($2::text[]) AND (${visible}) AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (m.role<>'note' OR $4::boolean) AND (m.role<>'system' OR $5::boolean) ORDER BY m.created_at,m.id`,
+              [...messageArgs, conv.id],
             );
             const files =
               !staff(p) || hasCapability(p, "attachments:read")
@@ -1482,16 +1543,21 @@ export async function createApp(
                 )?.kind,
               },
               messages,
-              feedback: await app.db.rows(
-                "SELECT id,message_id,source,resolved,rating,comment,answered_at,updated_at FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR source='native') ORDER BY updated_at DESC",
-                [ws, id, staff(p)],
-              ),
+              access,
+              mergedFrom: id !== conv.id ? id : null,
+              feedback:
+                !staff(p) && !access?.requester
+                  ? []
+                  : await app.db.rows(
+                      "SELECT id,message_id,source,resolved,rating,comment,answered_at,updated_at FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR source='native') ORDER BY updated_at DESC",
+                      [ws, conv.id, staff(p)],
+                    ),
               ...(staff(p)
                 ? {
                     read_state: await inboxReadState(
                       app.db,
                       p,
-                      id,
+                      conv.id,
                       customerMessageCursor(messages),
                     ),
                     customer: await app.db.one(
@@ -1500,22 +1566,22 @@ export async function createApp(
                     ),
                     emailDeliveries: await app.db.rows(
                       "SELECT id,status,error,created_at,sent_at FROM ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
-                      [ws, id],
+                      [ws, conv.id],
                     ),
                     inboundEmails: await app.db.rows(
                       "SELECT provider_id,status,error,created_at FROM inbound_ticket_emails WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
-                      [ws, id],
+                      [ws, conv.id],
                     ),
                     runs: hasCapability(p, "workflow:read")
                       ? await app.db.rows(
                           "SELECT * FROM runs WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY created_at DESC",
-                          [ws, id],
+                          [ws, conv.id],
                         )
                       : [],
                     approvals: hasCapability(p, "actions:read")
                       ? await app.db.rows(
                           "SELECT a.*,d.name action_name,d.kind action_kind FROM approvals a JOIN runs r ON r.id=a.run_id LEFT JOIN actions d ON d.id=a.action_id AND d.workspace_id=a.workspace_id WHERE a.workspace_id=$1 AND r.conversation_id=$2",
-                          [ws, id],
+                          [ws, conv.id],
                         )
                       : [],
                   }
@@ -1548,6 +1614,9 @@ export async function createApp(
               .object({
                 mode: z.enum(["agent", "human"]).optional(),
                 status: z.enum(["open", "resolved"]).optional(),
+                priority: z
+                  .enum(["low", "normal", "high", "urgent"])
+                  .optional(),
                 assignedTo: z.string().nullable().optional(),
                 tags: z.array(z.string().max(60)).max(20).optional(),
                 externalAssigneeId: z.string().regex(/^\d+$/).optional(),
@@ -1562,12 +1631,36 @@ export async function createApp(
           }
           if (!tail && method === "DELETE") {
             requireAdmin(p);
-            await app.deleteConversation(ws, id);
+            await app.deleteConversation(ws, id, p);
             json(res, { deleted: true });
             return;
           }
           if (tail === "/events" && method === "GET") {
-            let current = p;
+            let current = p,
+              canonicalId = id;
+            const eventQuery = async (after?: string) => {
+              const args: unknown[] = [
+                ws,
+                await ticketGroup(app.db, ws, canonicalId),
+              ];
+              const internal =
+                staff(current) &&
+                hasCapability(current, "tickets:note") &&
+                hasCapability(current, "audit:read");
+              const visibility = staff(current)
+                ? "TRUE"
+                : customerMessageVisibility(current, "c", "e", args);
+              const afterClause =
+                after === undefined ? "" : `AND e.id>$${args.push(after)}`;
+              const selection =
+                after === undefined
+                  ? "coalesce(max(e.id),0) id"
+                  : `e.id,e.kind,${staff(current) ? "e.data" : "'{}'::jsonb"} data`;
+              return app.db.rows(
+                `SELECT ${selection} FROM events e JOIN conversations c ON c.workspace_id=e.workspace_id AND c.id=e.conversation_id WHERE e.workspace_id=$1 AND e.conversation_id=ANY($2::text[]) AND (${visibility}) AND (${internal ? "TRUE" : "e.public"}) ${afterClause} ${after === undefined ? "" : "ORDER BY e.id LIMIT 100"}`,
+                args,
+              );
+            };
             await streams.open(
               req,
               res,
@@ -1576,31 +1669,10 @@ export async function createApp(
               {
                 authorize: async () => {
                   current = await principal(app.db, app.auth, req, ws);
-                  await conversation(app.db, current, id);
+                  canonicalId = (await conversation(app.db, current, id)).id;
                 },
-                latest: async () =>
-                  (await app.db.one(
-                    "SELECT coalesce(max(id),0) id FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND ($3::boolean OR public)",
-                    [
-                      ws,
-                      id,
-                      staff(current) &&
-                        hasCapability(current, "tickets:note") &&
-                        hasCapability(current, "audit:read"),
-                    ],
-                  ))!.id,
-                read: (after) =>
-                  app.db.rows(
-                    "SELECT id,kind,data FROM events WHERE workspace_id=$1 AND conversation_id=$2 AND id>$3 AND ($4::boolean OR public) ORDER BY id LIMIT 100",
-                    [
-                      ws,
-                      id,
-                      after,
-                      staff(current) &&
-                        hasCapability(current, "tickets:note") &&
-                        hasCapability(current, "audit:read"),
-                    ],
-                  ),
+                latest: async () => (await eventQuery())[0].id,
+                read: (after) => eventQuery(String(after)),
               },
             );
             return;

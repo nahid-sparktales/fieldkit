@@ -1,3 +1,10 @@
+import { ticketGroup } from "./ticket-canonical.js";
+import {
+  customerTicketAccess,
+  requireCustomerTicketAction,
+} from "./customer-access.js";
+import { refreshPrincipal, requireCapability } from "./permissions.js";
+import { ticketMetricsSQL } from "./reporting-query.js";
 import { z } from "zod";
 import { Database, uid, type Queryable } from "./db.js";
 import {
@@ -655,6 +662,11 @@ export class Quality {
   }
   async feedback(p: Principal, id: string, raw?: unknown) {
     const conv = await conversation(this.db, p, id);
+    id = conv.id;
+    if (raw === undefined && ["customer", "visitor"].includes(p.role)) {
+      const access = await customerTicketAccess(this.db, p, conv);
+      if (!access.requester) return [];
+    }
     if (raw === undefined)
       return this.db.rows(
         "SELECT * FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 ORDER BY updated_at DESC",
@@ -667,11 +679,23 @@ export class Quality {
       throw new HttpError(403, "Only the customer can submit feedback");
     const d = FeedbackInput.parse(raw);
     return this.db.tx(async (q) => {
+      await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `human-routing:${p.workspaceId}`,
+      ]);
+      id = (await conversation(this.db, p, id, q)).id;
       const current = await this.db.one(
-        "SELECT status,external_id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
+        "SELECT * FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
         [p.workspaceId, id],
         q,
       );
+      await requireCustomerTicketAction(
+        this.db,
+        p,
+        current,
+        "submitFeedback",
+        q,
+      );
+      const group = await ticketGroup(this.db, p.workspaceId, id, q);
       const prior = await this.db.one(
         "SELECT * FROM customer_feedback WHERE workspace_id=$1 AND conversation_id=$2 AND source='native' ORDER BY updated_at DESC LIMIT 1",
         [p.workspaceId, id],
@@ -697,8 +721,8 @@ export class Quality {
         );
       requireValue(
         await this.db.one(
-          "SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND id=$3 AND role IN ('assistant','staff') AND delivered_at IS NOT NULL AND id=(SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=$2 AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1)",
-          [p.workspaceId, id, d.messageId],
+          "SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=ANY($2::text[]) AND id=$3 AND role IN ('assistant','staff') AND delivered_at IS NOT NULL AND id=(SELECT id FROM messages WHERE workspace_id=$1 AND conversation_id=ANY($2::text[]) AND role IN ('customer','assistant','staff') ORDER BY created_at DESC,id DESC LIMIT 1)",
+          [p.workspaceId, group, d.messageId],
           q,
         ),
         400,
@@ -1201,11 +1225,33 @@ export class Quality {
   }
   async analytics(p: Principal, raw: unknown) {
     requireStaff(p);
+    p = await refreshPrincipal(this.db, p);
+    requireCapability(p, "analytics:read");
+    requireCapability(p, "tickets:read");
+    if (p.ticketScope && p.ticketScope !== "all")
+      throw new HttpError(403, "Analytics requires access to all tickets");
     const d = z
       .object({
         from: z.iso.datetime().optional(),
         to: z.iso.datetime().optional(),
         channel: z.string().max(200).optional(),
+        page: z.coerce.number().int().min(1).max(500000).default(1),
+        limit: z.coerce.number().int().min(1).max(100).default(20),
+        q: z.string().trim().max(200).default(""),
+        status: z
+          .enum(["all", "open", "resolved", "needs_staff", "waiting_approval"])
+          .default("all"),
+        cohort: z
+          .enum([
+            "all",
+            "ai",
+            "confirmed",
+            "ai_only",
+            "staff_resolved",
+            "handoff",
+          ])
+          .default("all"),
+        order: z.enum(["newest", "oldest", "subject"]).default("newest"),
       })
       .strict()
       .parse(raw);
@@ -1214,18 +1260,9 @@ export class Quality {
     if (from >= to || Date.parse(to) - Date.parse(from) > 366 * 86400000)
       throw new HttpError(400, "Choose a date range of at most one year");
     const args = [p.workspaceId, from, to, d.channel ?? null];
-    const base = `WITH cohort AS(SELECT c.* FROM conversations c LEFT JOIN channels ch ON ch.id=c.channel_id WHERE c.workspace_id=$1 AND c.created_at>=$2 AND c.created_at<$3 AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4)), metrics AS(SELECT c.*,
-      EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='assistant' AND m.delivered_at IS NOT NULL) ai,
-      EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='staff' AND m.delivered_at IS NOT NULL) staff,
-      EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'handoffCategory' IS NOT NULL) handoff,
-      EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'previousStatus'='resolved' AND e.data->>'status'='open') reopened,
-      EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'actorType'='staff' AND e.data->>'status'='resolved') staff_resolved,
-      coalesce((SELECT f.resolved AND f.rating IS DISTINCT FROM 'bad' AND NOT EXISTS(SELECT 1 FROM messages later WHERE later.conversation_id=c.id AND later.role='customer' AND later.created_at>(SELECT created_at FROM messages WHERE id=f.message_id)) FROM customer_feedback f WHERE f.conversation_id=c.id AND f.source='native' ORDER BY f.updated_at DESC LIMIT 1),false) confirmed,
-      (SELECT min(m.created_at) FROM messages m WHERE m.conversation_id=c.id AND m.role='customer') first_customer,
-      (SELECT min(m.delivered_at) FROM messages m WHERE m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at>=(SELECT min(created_at) FROM messages WHERE conversation_id=c.id AND role='customer')) first_reply,
-      EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at IS NULL) unknown_delivery,
-      (c.created_at<(SELECT applied_at FROM app_migrations WHERE version=9) OR (c.external_id IS NOT NULL AND (SELECT min(created_at) FROM messages WHERE conversation_id=c.id)<(SELECT applied_at FROM app_migrations WHERE version=9))) unknown_history
-      FROM cohort c)`;
+    const base = ticketMetricsSQL(
+      `SELECT c.* FROM conversations c LEFT JOIN channels ch ON ch.id=c.channel_id WHERE c.workspace_id=$1 AND c.created_at>=$2 AND c.created_at<$3 AND c.merged_into_id IS NULL AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4)`,
+    );
     const totalsSQL = ` SELECT count(*)::int conversations,count(*) FILTER(WHERE ai)::int ai_conversations,count(*) FILTER(WHERE ai AND confirmed)::int confirmed_resolution,count(*) FILTER(WHERE ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_conversations,count(*) FILTER(WHERE ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history)::int ai_only_confirmed,count(*) FILTER(WHERE staff_resolved)::int staff_resolved,count(*) FILTER(WHERE handoff)::int handoffs,count(*) FILTER(WHERE reopened)::int reopened,count(*) FILTER(WHERE unknown_delivery)::int unknown_delivery,count(*) FILTER(WHERE unknown_history)::int unknown_history,count(first_reply)::int response_time_denominator,avg(extract(epoch FROM first_reply-first_customer)*1000)::float average_first_response_ms FROM metrics`;
     const comparisonFrom = new Date(
       Date.parse(from) - (Date.parse(to) - Date.parse(from)),
@@ -1249,10 +1286,42 @@ export class Quality {
         ` SELECT f.source,count(*)::int rated,count(*) FILTER(WHERE f.rating='good')::int good,count(*) FILTER(WHERE f.rating='bad')::int bad,count(*) FILTER(WHERE f.rating='neutral')::int neutral FROM(SELECT DISTINCT ON(f.conversation_id,f.source) f.* FROM customer_feedback f JOIN cohort c ON c.id=f.conversation_id WHERE f.rating IS NOT NULL ORDER BY f.conversation_id,f.source,CASE WHEN f.source='native' THEN f.updated_at ELSE f.answered_at END DESC,f.external_id)f GROUP BY f.source`,
       args,
     );
+    const detailArgs: unknown[] = [...args],
+      conditions: string[] = [];
+    const outcome = {
+      all: "TRUE",
+      ai: "ai",
+      confirmed: "ai AND confirmed",
+      ai_only:
+        "ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history",
+      staff_resolved: "staff_resolved",
+      handoff: "handoff",
+    }[d.cohort];
+    conditions.push(outcome);
+    if (d.status !== "all") {
+      detailArgs.push(d.status);
+      conditions.push(`status=$${detailArgs.length}`);
+    }
+    if (d.q) {
+      detailArgs.push(`%${d.q.replace(/[\\%_]/g, "\\$&")}%`);
+      conditions.push(`subject ILIKE $${detailArgs.length} ESCAPE '\\'`);
+    }
+    const detailWhere = conditions.join(" AND ");
+    const conversationTotal = (await this.db.one(
+      base + ` SELECT count(*)::int total FROM metrics WHERE ${detailWhere}`,
+      detailArgs,
+    ))!.total;
+    const detailOrder =
+      d.order === "subject"
+        ? "subject ASC,id ASC"
+        : d.order === "oldest"
+          ? "created_at ASC,id ASC"
+          : "created_at DESC,id DESC";
+    detailArgs.push(d.limit, (d.page - 1) * d.limit);
     const details = await this.db.rows(
       base +
-        " SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at,(ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history) ai_only FROM metrics ORDER BY created_at DESC,id DESC LIMIT 200",
-      args,
+        ` SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at,(ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history) ai_only FROM metrics WHERE ${detailWhere} ORDER BY ${detailOrder} LIMIT $${detailArgs.length - 1} OFFSET $${detailArgs.length}`,
+      detailArgs,
     );
     const handoffs = await this.db.rows(
       base +
@@ -1281,6 +1350,9 @@ export class Quality {
       usage,
       topics,
       conversations: details,
+      conversationTotal,
+      page: d.page,
+      limit: d.limit,
       feedbackSync: await this.settings(p),
       definitions: {
         cohort:

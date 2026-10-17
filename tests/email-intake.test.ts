@@ -16,6 +16,7 @@ import {
 } from "./helpers.js";
 import type { AttachmentScanner } from "../packages/platform/src/attachment-scanner.js";
 import { createApp } from "../apps/api/server.js";
+import { digest, seal } from "../packages/platform/src/security.js";
 const config = testConfig(4364);
 config.FIELDKIT_DATA = ".fieldkit/email-intake-tests";
 config.FIELDKIT_CLAM_HOST = "scanner-test-double";
@@ -170,6 +171,134 @@ test("actual concurrent duplicate deliveries create one ticket/message/event and
     /reused/,
   );
 });
+test("schema 23 receipts replay safely after CC support without replacing retained content or accepting changed bodies", async () => {
+  const w = await setup(),
+    payload = envelope(w);
+  // Exact pre-collaboration parser output: all then-supported defaults, no CcFull key.
+  const legacy = { ...payload, ToFull: [], HtmlBody: "", Attachments: [] };
+  const original = await accept(w, payload);
+  await app.db.pool.query(
+    "UPDATE email_intake_events SET payload_hash=$2,payload_ciphertext=NULL WHERE id=$1",
+    [original.event.id, digest(legacy)],
+  );
+  for (const replay of [
+    payload,
+    { ...payload, CcFull: [{ Email: "forged@example.test" }] },
+  ]) {
+    assert.equal((await accept(w, replay)).result.status, "received");
+  }
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM messages WHERE conversation_id=$1",
+      [original.event.conversation_id],
+    ))!.n,
+    1,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM email_cc_suggestions WHERE workspace_id=$1",
+      [w.ws.id],
+    ))!.n,
+    0,
+  );
+  for (const changed of [
+    { TextBody: "Changed body" },
+    { FromFull: { Email: "forged@example.test" } },
+    { OriginalRecipient: "other@example.test" },
+    { Attachments: [{ Name: "changed.txt", Content: "Y2hhbmdlZA==" }] },
+  ])
+    await assert.rejects(
+      app.ticketEmail.receive(w.ws.id, w.authorization, {
+        ...payload,
+        ...changed,
+      }),
+      /reused/,
+    );
+  assert.equal((await event(w, payload))!.payload_hash, digest(legacy));
+});
+
+test("queued schema 23 envelopes recover with empty CC defaults and never ingest CC supplied only on replay", async () => {
+  const w = await setup(),
+    payload = envelope(w);
+  const legacy = { ...payload, ToFull: [], HtmlBody: "", Attachments: [] };
+  const id = uid(),
+    integration = (await app.db.one(
+      "SELECT id FROM connections WHERE workspace_id=$1 AND provider='ticket_email'",
+      [w.ws.id],
+    ))!;
+  await app.db.pool.query(
+    "INSERT INTO email_intake_events(id,workspace_id,integration_id,provider_id,payload_hash,payload_ciphertext,sender,subject) VALUES($1,$2,$3,$4,$5,$6,$7,$8)",
+    [
+      id,
+      w.ws.id,
+      integration.id,
+      payload.MessageID,
+      digest(legacy),
+      seal(
+        config.FIELDKIT_ENCRYPTION_KEY,
+        `email-intake:${w.ws.id}:${id}`,
+        legacy,
+      ),
+      payload.FromFull.Email,
+      payload.Subject,
+    ],
+  );
+  const recovered = await accept(w, {
+    ...payload,
+    CcFull: [{ Email: "forged@example.test" }],
+  });
+  assert.equal(recovered.result.status, "received");
+  assert.equal(recovered.event.id, id);
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM messages WHERE conversation_id=$1",
+      [recovered.event.conversation_id],
+    ))!.n,
+    1,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM email_cc_suggestions WHERE workspace_id=$1",
+      [w.ws.id],
+    ))!.n,
+    0,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM ticket_participants WHERE workspace_id=$1",
+      [w.ws.id],
+    ))!.n,
+    0,
+  );
+  const currentPayload = envelope(w, {
+    CcFull: [{ Email: "approved-for-review@example.test" }],
+  });
+  await accept(w, currentPayload);
+  await assert.rejects(
+    app.ticketEmail.receive(w.ws.id, w.authorization, {
+      ...currentPayload,
+      CcFull: [{ Email: "forged@example.test" }],
+    }),
+    /reused/,
+  );
+  await assert.rejects(
+    app.ticketEmail.receive(w.ws.id, w.authorization, {
+      ...currentPayload,
+      CcFull: [],
+    }),
+    /reused/,
+  );
+  const noCC = envelope(w);
+  await accept(w, noCC);
+  await assert.rejects(
+    app.ticketEmail.receive(w.ws.id, w.authorization, {
+      ...noCC,
+      CcFull: [{ Email: "forged@example.test" }],
+    }),
+    /reused/,
+  );
+});
+
 test("multiple aliases map explicitly, default team is tenant validated, aliases in same workspace use envelope recipient", async () => {
   const w = await setup();
   const team = uid();

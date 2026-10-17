@@ -20,13 +20,6 @@ const cohorts = [
   ["staff_resolved", "Staff resolutions"],
   ["handoff", "Handoffs"],
 ];
-const matches = (row: Row, cohort: string) =>
-  cohort === "all" ||
-  (cohort === "confirmed"
-    ? row.ai && row.confirmed
-    : cohort === "ai_only"
-      ? row.ai_only && row.confirmed
-      : row[cohort]);
 const initial = (key: string, fallback: string) =>
   new URLSearchParams(location.search).get(key) ?? fallback;
 const initialChoice = (key: string, options: string[], fallback: string) => {
@@ -63,7 +56,10 @@ export function AnalyticsPage({ ws }: { ws: string }) {
       initialChoice("order", ["newest", "oldest", "subject"], "newest"),
     ),
     [page, setPage] = useState(() =>
-      Math.min(10, Math.max(1, Math.floor(Number(initial("page", "1"))) || 1)),
+      Math.min(
+        500000,
+        Math.max(1, Math.floor(Number(initial("page", "1"))) || 1),
+      ),
     );
   const detail = useRef<HTMLHeadingElement>(null);
   const rangeError =
@@ -103,9 +99,9 @@ export function AnalyticsPage({ ws }: { ws: string }) {
         ? Promise.resolve(null)
         : api(
             ws,
-            `/analytics?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(Date.parse(to) + day).toISOString())}${channel ? "&channel=" + encodeURIComponent(channel) : ""}`,
+            `/analytics?from=${encodeURIComponent(new Date(from).toISOString())}&to=${encodeURIComponent(new Date(Date.parse(to) + day).toISOString())}${channel ? "&channel=" + encodeURIComponent(channel) : ""}&page=${page}&limit=20&cohort=${encodeURIComponent(cohort)}&status=${encodeURIComponent(status)}&q=${encodeURIComponent(query)}&order=${order}`,
           ),
-    [ws, from, to, channel, rangeError],
+    [ws, from, to, channel, rangeError, page, cohort, status, query, order],
   );
   const d = l.data,
     t = d?.totals,
@@ -127,21 +123,13 @@ export function AnalyticsPage({ ws }: { ws: string }) {
       detail.current?.scrollIntoView({ block: "start" });
     });
   };
-  const rows: Row[] = (d?.conversations ?? [])
-    .filter(
-      (c: Row) =>
-        matches(c, cohort) &&
-        (status === "all" || status === c.status) &&
-        c.subject.toLowerCase().includes(query.toLowerCase()),
-    )
-    .sort((a: Row, b: Row) =>
-      order === "subject"
-        ? a.subject.localeCompare(b.subject)
-        : (order === "oldest" ? 1 : -1) *
-          (Date.parse(a.created_at) - Date.parse(b.created_at)),
-    );
-  const pages = Math.max(1, Math.ceil(rows.length / 20)),
+  const rows: Row[] = d?.conversations ?? [];
+  const rowTotal = d?.conversationTotal ?? rows.length;
+  const pages = Math.max(1, Math.ceil(rowTotal / 20)),
     activePage = Math.min(page, pages);
+  useEffect(() => {
+    if (d && page > pages) setPage(pages);
+  }, [d, page, pages]);
   const days = rangeError
     ? 0
     : Math.round((Date.parse(to) - Date.parse(from)) / day) + 1;
@@ -538,8 +526,8 @@ export function AnalyticsPage({ ws }: { ws: string }) {
                 Conversation drill-down
               </h2>
               <p>
-                Search and filter the most recent 200 conversations in this
-                period. Metrics above include the entire cohort.
+                Search and filter every conversation in this period. Results are
+                paginated on the server; metrics include the entire cohort.
               </p>
               <div className="quality-filters">
                 <Field label="Search conversation subjects">
@@ -598,7 +586,7 @@ export function AnalyticsPage({ ws }: { ws: string }) {
                 </Field>
               </div>
               <p role="status">
-                {rows.length} matching conversations in the loaded cohort.
+                {rowTotal} matching conversations in this period.
               </p>
               <div className="analytics-table">
                 <table>
@@ -619,43 +607,40 @@ export function AnalyticsPage({ ws }: { ws: string }) {
                         </td>
                       </tr>
                     )}
-                    {rows
-                      .slice((activePage - 1) * 20, activePage * 20)
-                      .map((c) => (
-                        <tr key={c.id}>
-                          <td>
-                            <a
-                              href={link(ws, "inbox", `&conversation=${c.id}`)}
-                              onClick={appLink}
-                            >
-                              {c.subject}
-                            </a>
-                          </td>
-                          <td>
-                            {new Date(c.created_at).toISOString().slice(0, 10)}
-                          </td>
-                          <td>
-                            {statuses[c.status] ??
-                              c.status.replaceAll("_", " ")}
-                          </td>
-                          <td>
-                            {c.ai
-                              ? "AI reply delivered"
-                              : "No recorded AI delivery"}{" "}
-                            ·{" "}
-                            {c.confirmed
-                              ? "Customer confirmed"
-                              : "No current confirmation"}
-                          </td>
-                        </tr>
-                      ))}
+                    {rows.map((c) => (
+                      <tr key={c.id}>
+                        <td>
+                          <a
+                            href={link(ws, "inbox", `&conversation=${c.id}`)}
+                            onClick={appLink}
+                          >
+                            {c.subject}
+                          </a>
+                        </td>
+                        <td>
+                          {new Date(c.created_at).toISOString().slice(0, 10)}
+                        </td>
+                        <td>
+                          {statuses[c.status] ?? c.status.replaceAll("_", " ")}
+                        </td>
+                        <td>
+                          {c.ai
+                            ? "AI reply delivered"
+                            : "No recorded AI delivery"}{" "}
+                          ·{" "}
+                          {c.confirmed
+                            ? "Customer confirmed"
+                            : "No current confirmation"}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               </div>
               <Pagination
                 page={activePage}
                 size={20}
-                total={rows.length}
+                total={rowTotal}
                 onChange={setPage}
                 label="Analytics conversations"
               />

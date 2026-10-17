@@ -1,3 +1,10 @@
+import { verifyReportingJourney } from "./reporting-journey.js";
+import { verifyTicketOperations } from "./ticket-operations-journey.js";
+import {
+  verifyCollaborationJourney,
+  verifyCollaborationPortal,
+} from "./collaboration-journey.js";
+import { automationJourney } from "../browser-automation.js";
 import { test, expect } from "@playwright/test";
 import { verifyCustomerSupport } from "./customer-support-journey.js";
 import { verifyCustomers } from "./customers-journey.js";
@@ -23,7 +30,7 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   page,
   browser,
 }) => {
-  test.setTimeout(420000);
+  test.setTimeout(600000);
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
   await page.exposeFunction("recordPolicyViolation", (directive: string) =>
@@ -1285,6 +1292,11 @@ test("real onboarding, knowledge review, portal conversation, and human takeover
   await customer.goto("/support/northstar-workshop");
   await verifyProductivityJourney(page, customer, auditWorkspace);
   await verifyEmailIntakeSettings(page);
+  await verifyTicketOperations(page, customer, auditWorkspace);
+  await verifyCollaborationJourney(page);
+  await verifyCollaborationPortal(page, customer, auditWorkspace);
+  await automationJourney(page, auditWorkspace);
+  await verifyReportingJourney(page, auditWorkspace);
   await verifySecurityJourney(page, auditWorkspace);
   await page.setViewportSize({ width: 390, height: 844 });
   expect(errors).toEqual([]);

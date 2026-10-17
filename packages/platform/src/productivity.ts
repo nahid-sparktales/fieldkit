@@ -25,6 +25,7 @@ import {
   type Values,
 } from "./productivity-contracts.js";
 import { z } from "zod";
+import { customerTicketAccess, requireCustomerTicketAction } from "./customer-access.js";
 type Row = Record<string, any>;
 type Assign = (
   q: PoolClient,
@@ -580,6 +581,9 @@ export class Productivity {
   async ticketFields(p: Principal, id: string, q: Queryable = this.db.pool) {
     p = await this.fresh(p, q);
     const conv = await conversation(this.db, p, id, q);
+    id=conv.id;
+    const customerAccess = staff(p) ? null : await customerTicketAccess(this.db,p,conv,q);
+    if (customerAccess?.visibleSince) return {fields:[],values:{},historical:[],form:null,missing:[],formFields:[],editable:false};
     const fields = await this.fieldRows(p.workspaceId, q),
       stored = await this.db.rows(
         "SELECT * FROM ticket_field_values WHERE workspace_id=$1 AND conversation_id=$2",
@@ -626,7 +630,7 @@ export class Productivity {
           writable: staff(p)
             ? hasCapability(p, "tickets:update") &&
               (f.customerVisible || hasCapability(p, "fields:internal:write"))
-            : f.customerEditable &&
+            : !!customerAccess?.updateFields && f.customerEditable &&
               Boolean(
                 form?.definition.fields.some(
                   (e: FormField) => e.fieldId === f.id,
@@ -644,7 +648,7 @@ export class Productivity {
         : null,
       missing,
       formFields:
-        !staff(p) && form
+        !staff(p) && customerAccess?.updateFields && form
           ? form.definition.fields
               .filter((e: FormField) =>
                 allowed.some(
@@ -659,7 +663,7 @@ export class Productivity {
           : [],
       editable: staff(p)
         ? hasCapability(p, "tickets:update")
-        : Boolean(
+        : !!customerAccess?.updateFields && Boolean(
             form?.definition.fields.some((e: FormField) =>
               allowed.some(
                 (f) => f.id === e.fieldId && f.customerEditable && !f.archived,
@@ -671,8 +675,11 @@ export class Productivity {
   async updateFields(p: Principal, id: string, raw: unknown) {
     const d = z.object({ values: FieldValues }).strict().parse(raw);
     return this.db.tx(async (q) => {
+      await q.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))',[`human-routing:${p.workspaceId}`]);
       p = await this.fresh(p, q);
       const conv = await conversation(this.db, p, id, q);
+      if(conv.id!==id)throw new HttpError(409,'This ticket was merged; edit the canonical ticket');
+      if (!staff(p)) await requireCustomerTicketAction(this.db,p,conv,'updateFields',q);
       await q.query(
         "SELECT id FROM conversations WHERE workspace_id=$1 AND id=$2 FOR UPDATE",
         [p.workspaceId, id],
@@ -1312,7 +1319,7 @@ export class Productivity {
         `strpos(lower(c.subject||' '||ct.name||' '||coalesce(ct.email,'')),lower($${args.length}))>0`,
       );
     }
-    const where = `c.workspace_id=$1 AND (${visibility})${clauses.length ? ` AND ${clauses.join(" AND ")}` : ""}`;
+    const where = `c.workspace_id=$1 AND c.merged_into_id IS NULL AND (${visibility})${clauses.length ? ` AND ${clauses.join(" AND ")}` : ""}`;
     const order: Row = {
       updated_desc: "updated_at DESC,id DESC",
       created_desc: "created_at DESC,id DESC",
