@@ -7,7 +7,7 @@ import { effectiveWorkflow } from "./channel-workflows.js";
 import { classifyHandoff } from "./quality.js";
 import { usageContext } from "./usage-context.js";
 import type { EvaluationContext } from "./evaluation-context.js";
-import { automaticPolicy } from "./actions.js";
+import { automaticPolicy, declaredOutput } from "./actions.js";
 import {
   Annotation,
   StateGraph,
@@ -1016,6 +1016,7 @@ export class Agent {
   }
   async execute(run: any) {
     if (!(await this.current(run))) return;
+    let definition: ActionDefinition | undefined;
     try {
       await this.db.tx(async (q) => {
         await new HumanRouting(this.db).lockWorkspace(q,run.workspace_id);
@@ -1050,6 +1051,7 @@ export class Agent {
           p,
           q,
         );
+        definition = action;
         if (connection)
           await q.query("SELECT id FROM connections WHERE id=$1 FOR SHARE", [
             connection.id,
@@ -1116,7 +1118,7 @@ export class Agent {
           ? `Your refund of ${(receipt.result.amountMinor / 100).toFixed(2)} ${String(receipt.result.currency).toUpperCase()} has been confirmed. Reference: ${receipt.providerId}.`
           : receipt.action === "stripe_cancel"
             ? `Your selected subscription is set to end at the end of its current billing period. Reference: ${receipt.providerId}.`
-            : `The ${receipt.action === "custom_read" ? "lookup" : "requested action"} completed.\n${JSON.stringify(receipt.result, null, 2)}`;
+            : `The ${receipt.action === "custom_read" ? "lookup" : "requested action"} completed.\n${JSON.stringify(declaredOutput(definition?.config.outputSchema, receipt.result), null, 2)}`;
       run.state.route = "respond";
     } catch (e) {
       this.handoff(
@@ -1322,11 +1324,22 @@ export class Agent {
                   : classifyHandoff(run.state.error ?? ""),
               }
             : {}),
-          handoffReason: run.state.error ?? (review ? "staff_review" : null),
         },
         conv.id,
         true,
       );
+      // Raw run errors can quote provider responses, so the reason stays in a staff-only event.
+      if (human)
+        await this.db.event(
+          q,
+          run.workspace_id,
+          "conversation.handoff",
+          {
+            runId: run.id,
+            handoffReason: run.state.error ?? (review ? "staff_review" : null),
+          },
+          conv.id,
+        );
     });
   }
   async advance(ws: string, id: string) {

@@ -129,7 +129,12 @@ export const MacroProposal = z
   .strict();
 export const ViewFilter = z
   .object({
-    field: z.string().min(1).max(100),
+    field: z
+      .string()
+      .regex(
+        /^(status|priority|assignee|team|channel|form|created|updated|sla|tags|field\.[A-Za-z0-9_-]{1,100})$/,
+        "Unknown saved-view filter field",
+      ),
     op: z.enum([
       "eq",
       "neq",

@@ -1,11 +1,14 @@
 import { test, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { Platform } from "../packages/platform/src/platform.js";
 import { TicketEmail } from "../packages/platform/src/ticket-email.js";
 import { uid } from "../packages/platform/src/db.js";
 import {
   EmailIntake,
+  INTAKE_LIMITS,
   emailText,
+  senderAuthentication,
 } from "../packages/platform/src/email-intake.js";
 import {
   testConfig,
@@ -16,7 +19,7 @@ import {
 } from "./helpers.js";
 import type { AttachmentScanner } from "../packages/platform/src/attachment-scanner.js";
 import { createApp } from "../apps/api/server.js";
-import { digest, seal } from "../packages/platform/src/security.js";
+import { digest, seal, unseal } from "../packages/platform/src/security.js";
 const config = testConfig(4364);
 config.FIELDKIT_DATA = ".fieldkit/email-intake-tests";
 config.FIELDKIT_CLAM_HOST = "scanner-test-double";
@@ -64,13 +67,22 @@ async function setup() {
     addressId: setup.addresses.find((a: any) => a.address === address)!.id,
   };
 }
+// Postmark writes its SPF verdict ahead of the message's own headers; the fixture
+// sender authenticates under example.test unless a test supplies its own headers.
+const spfPass = (from = "new-sender@example.test") => ({
+  Name: "Received-SPF",
+  Value: `pass (sender SPF authorized) identity=mailfrom; client-ip=192.0.2.10; helo=mail.example.test; envelope-from=${from}; receiver=inbound.postmarkapp.com`,
+});
 const envelope = (w: any, extra: any = {}) => ({
   MessageID: uid(),
   OriginalRecipient: w.address,
   FromFull: { Email: "new-sender@example.test", Name: "Renée お客様" },
   Subject: "Billing help",
   TextBody: "Please help with my invoice.",
-  Headers: [{ Name: "Message-ID", Value: `<${uid()}@sender.example.test>` }],
+  Headers: [
+    { Name: "Message-ID", Value: `<${uid()}@sender.example.test>` },
+    spfPass(),
+  ],
   ...extra,
 });
 async function event(w: any, payload: any) {
@@ -838,6 +850,359 @@ test("retention removes original source and sender metadata while durable receip
   assert.equal(
     (await app.db.one(
       "SELECT count(*)::int n FROM conversations WHERE workspace_id=$1",
+      [w.ws.id],
+    ))!.n,
+    1,
+  );
+});
+
+test("inbound attachment bytes never enter the database and a recheck without them records an explicit gap", async () => {
+  const w = await setup();
+  await app.attachments.settings(w.owner, { enabled: true, anonymous: false });
+  await addressOptions(w, { enabled: false });
+  const bytes = Buffer.from("Synthetic support log held for quarantine review");
+  const p = envelope(w, {
+    Attachments: [
+      {
+        Name: "support.log",
+        Content: bytes.toString("base64"),
+        ContentLength: bytes.length,
+        ContentType: "text/plain",
+      },
+    ],
+  });
+  const x = await accept(w, p);
+  assert.equal(x.result.status, "rejected");
+  assert.equal(x.event.status, "quarantined");
+  const stored = unseal<any>(
+    config.FIELDKIT_ENCRYPTION_KEY,
+    `email-intake:${w.ws.id}:${x.event.id}`,
+    x.event.payload_ciphertext,
+  );
+  assert.equal(stored.TextBody, p.TextBody);
+  assert.equal(stored.Attachments.length, 1);
+  assert.equal(stored.Attachments[0].Content, undefined);
+  assert.equal(stored.Attachments[0].Name, "support.log");
+  assert.equal(stored.Attachments[0].ContentLength, bytes.length);
+  assert.equal(
+    stored.Attachments[0].Sha256,
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+  assert.equal(
+    JSON.stringify(stored).includes(bytes.toString("base64")),
+    false,
+  );
+  assert.equal(
+    x.event.payload_bytes,
+    Buffer.byteLength(x.event.payload_ciphertext),
+  );
+  await addressOptions(w, { enabled: true });
+  await app.ticketEmail.intake.retry(w.owner, x.event.id);
+  await app.ticketEmail.intake.process(w.ws.id, x.event.id);
+  const e = (await event(w, p))!;
+  assert.equal(e.status, "received");
+  const files = await app.attachments.list(w.owner, e.conversation_id);
+  assert.equal(files.length, 1);
+  assert.equal(files[0].status, "blocked");
+  assert.match(files[0].error, /not retained/);
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM messages WHERE conversation_id=$1",
+      [e.conversation_id],
+    ))!.n,
+    1,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT payload_bytes FROM email_intake_events WHERE id=$1",
+      [e.id],
+    ))!.payload_bytes,
+    Buffer.byteLength(e.payload_ciphertext),
+  );
+});
+
+test("per-sender and per-address minute limits and the retained-source cap reject envelopes with 429 and one capacity event per hour", async () => {
+  const w = await setup();
+  const seed = (key: string, count: number) =>
+    app.db.pool.query(
+      "INSERT INTO rate_limits(key,count,expires_at) VALUES($1,$2,now()+interval '1 minute') ON CONFLICT(key) DO UPDATE SET count=EXCLUDED.count,expires_at=EXCLUDED.expires_at",
+      [key, count],
+    );
+  await seed(
+    `email-sender:${w.ws.id}:flooder@example.test`,
+    INTAKE_LIMITS.senderPerMinute,
+  );
+  await assert.rejects(
+    app.ticketEmail.receive(
+      w.ws.id,
+      w.authorization,
+      envelope(w, { FromFull: { Email: "flooder@example.test" } }),
+    ),
+    /sender/,
+  );
+  assert.equal((await accept(w, envelope(w))).result.status, "received");
+  await seed(
+    `email-recipient:${w.ws.id}:${w.address.toLowerCase()}`,
+    INTAKE_LIMITS.recipientPerMinute,
+  );
+  await assert.rejects(
+    app.ticketEmail.receive(w.ws.id, w.authorization, envelope(w)),
+    /support address/,
+  );
+  await app.db.pool.query("DELETE FROM rate_limits WHERE key=$1", [
+    `email-recipient:${w.ws.id}:${w.address.toLowerCase()}`,
+  ]);
+  const limit = config.FIELDKIT_ATTACHMENT_STORAGE_BYTES;
+  try {
+    config.FIELDKIT_ATTACHMENT_STORAGE_BYTES = 1;
+    for (let i = 0; i < 2; i++)
+      await assert.rejects(
+        app.ticketEmail.receive(w.ws.id, w.authorization, envelope(w)),
+        /retained inbound email source/i,
+      );
+  } finally {
+    config.FIELDKIT_ATTACHMENT_STORAGE_BYTES = limit;
+  }
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM events WHERE workspace_id=$1 AND kind='ticket_email.intake_capacity'",
+      [w.ws.id],
+    ))!.n,
+    1,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM email_intake_events WHERE workspace_id=$1",
+      [w.ws.id],
+    ))!.n,
+    1,
+  );
+  assert.equal((await accept(w, envelope(w))).result.status, "received");
+});
+
+test("quarantined source expires after seven days regardless of workspace retention while received source follows retention", async () => {
+  const w = await setup();
+  const quarantined = await accept(
+    w,
+    envelope(w, { OriginalRecipient: "unknown@example.test" }),
+  );
+  const received = await accept(w, envelope(w));
+  assert.equal(quarantined.event.status, "quarantined");
+  assert.equal(received.event.status, "received");
+  await app.db.pool.query(
+    "UPDATE email_intake_events SET created_at=now()-interval '8 days' WHERE id=ANY($1::text[])",
+    [[quarantined.event.id, received.event.id]],
+  );
+  await app.ticketEmail.intake.recover();
+  const expired = (await app.db.one(
+    "SELECT * FROM email_intake_events WHERE id=$1",
+    [quarantined.event.id],
+  ))!;
+  assert.equal(expired.payload_ciphertext, null);
+  assert.equal(expired.payload_bytes, 0);
+  assert.equal(expired.sender, "new-sender@example.test");
+  const kept = (await app.db.one(
+    "SELECT * FROM email_intake_events WHERE id=$1",
+    [received.event.id],
+  ))!;
+  assert.ok(kept.payload_ciphertext);
+  assert.ok(kept.payload_bytes > 0);
+  await assert.rejects(
+    app.ticketEmail.intake.retry(w.owner, quarantined.event.id),
+    /no retained source/,
+  );
+});
+
+test("sender authentication trusts only the receiving MTA's first verdict aligned with the From domain", () => {
+  const from = { FromFull: { Email: "person@example.test" } };
+  assert.deepEqual(senderAuthentication({ ...from, Headers: [] }), {
+    spf: false,
+    dkim: false,
+    authenticated: false,
+  });
+  assert.equal(
+    senderAuthentication({ ...from, Headers: [spfPass("person@example.test")] })
+      .spf,
+    true,
+  );
+  assert.equal(
+    senderAuthentication({
+      ...from,
+      Headers: [spfPass("bounce@mail.example.test")],
+    }).spf,
+    true,
+  );
+  assert.equal(
+    senderAuthentication({
+      ...from,
+      Headers: [spfPass("bounce@attacker.example")],
+    }).authenticated,
+    false,
+  );
+  // Only the first Received-SPF (the MTA's) counts; a forged later copy is ignored.
+  assert.equal(
+    senderAuthentication({
+      ...from,
+      Headers: [
+        {
+          Name: "Received-SPF",
+          Value:
+            "none (no SPF record) identity=mailfrom; envelope-from=person@example.test",
+        },
+        spfPass("person@example.test"),
+      ],
+    }).authenticated,
+    false,
+  );
+  const results = (value: string) =>
+    senderAuthentication({
+      ...from,
+      Headers: [{ Name: "Authentication-Results", Value: value }],
+    });
+  assert.equal(
+    results(
+      "inbound.postmarkapp.com; spf=fail smtp.mailfrom=example.test; dkim=pass header.d=example.test header.s=k1",
+    ).dkim,
+    true,
+  );
+  assert.equal(
+    results("inbound.postmarkapp.com; dkim=pass header.i=@news.example.test")
+      .dkim,
+    true,
+  );
+  assert.equal(
+    results(
+      "inbound.postmarkapp.com; dkim=pass header.d=attacker.example; spf=pass smtp.mailfrom=attacker.example",
+    ).authenticated,
+    false,
+  );
+  assert.equal(
+    results(
+      "inbound.postmarkapp.com; spf=pass smtp.mailfrom=person@example.test",
+    ).spf,
+    true,
+  );
+  assert.equal(
+    senderAuthentication({
+      ...from,
+      Headers: [
+        {
+          Name: "X-Spam-Tests",
+          Value: "DKIM_SIGNED,DKIM_VALID,DKIM_VALID_AU,SPF_PASS",
+        },
+      ],
+    }).dkim,
+    true,
+  );
+  assert.equal(
+    senderAuthentication({
+      ...from,
+      Headers: [
+        { Name: "X-Spam-Tests", Value: "DKIM_SIGNED,DKIM_VALID,SPF_PASS" },
+      ],
+    }).authenticated,
+    false,
+  );
+});
+
+test("acknowledgements and private reply tokens require SPF or DKIM aligned with the From domain, with a daily cap per sender", async () => {
+  const w = await setup();
+  await addressOptions(w, { acknowledge: true });
+  const forged = await accept(
+    w,
+    envelope(w, {
+      Headers: [
+        { Name: "Message-ID", Value: `<${uid()}@sender.example.test>` },
+        spfPass("bounce@attacker.example"),
+        {
+          Name: "Authentication-Results",
+          Value:
+            "inbound.postmarkapp.com; spf=pass smtp.mailfrom=attacker.example; dkim=pass header.d=attacker.example",
+        },
+      ],
+    }),
+  );
+  assert.equal(forged.result.status, "received");
+  assert.equal(forged.event.sender_authenticated, false);
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM ticket_emails WHERE conversation_id=$1",
+      [forged.event.conversation_id],
+    ))!.n,
+    0,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT data FROM events WHERE conversation_id=$1 AND kind='ticket_email.inbound_received'",
+      [forged.event.conversation_id],
+    ))!.data.acknowledgement,
+    "skipped_unauthenticated",
+  );
+  const reply = await app.message(w.owner, forged.event.conversation_id, {
+    body: "We are looking into it",
+    requestKey: uid(),
+  });
+  const mail = (await app.db.one(
+    "SELECT id FROM ticket_emails WHERE message_id=$1",
+    [reply.id],
+  ))!;
+  await app.ticketEmail.deliver(w.ws.id, mail.id);
+  const out = sent.find((args) => args[3]?.messageId?.includes(reply.id));
+  assert.ok(out);
+  assert.equal(out[3].replyTo, undefined);
+  assert.match(out[2], /could not be authenticated/);
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM ticket_email_routes WHERE conversation_id=$1",
+      [forged.event.conversation_id],
+    ))!.n,
+    0,
+  );
+  const dkim = await accept(
+    w,
+    envelope(w, {
+      FromFull: { Email: "dkim-only@example.test" },
+      Headers: [
+        { Name: "Message-ID", Value: `<${uid()}@sender.example.test>` },
+        {
+          Name: "Received-SPF",
+          Value:
+            "fail (sender IP is not authorized) identity=mailfrom; envelope-from=dkim-only@example.test",
+        },
+        {
+          Name: "Authentication-Results",
+          Value:
+            "inbound.postmarkapp.com; spf=fail smtp.mailfrom=example.test; dkim=pass header.d=example.test header.s=s1",
+        },
+      ],
+    }),
+  );
+  assert.equal(dkim.event.sender_authenticated, true);
+  const ack = (await app.db.one(
+    "SELECT id FROM ticket_emails WHERE conversation_id=$1 AND kind='acknowledgement'",
+    [dkim.event.conversation_id],
+  ))!;
+  await app.ticketEmail.deliver(w.ws.id, ack.id);
+  const acknowledged = sent.find((args) =>
+    args[3]?.messageId?.includes(dkim.event.message_id),
+  );
+  assert.ok(acknowledged[3].replyTo.includes("+"));
+  const sender = { Email: "frequent@example.test" };
+  for (let i = 0; i < INTAKE_LIMITS.acknowledgementsPerSenderPerDay + 1; i++)
+    assert.equal(
+      (await accept(w, envelope(w, { FromFull: sender }))).result.status,
+      "received",
+    );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM ticket_emails e JOIN conversations c ON c.id=e.conversation_id JOIN contacts ct ON ct.id=c.contact_id WHERE e.workspace_id=$1 AND e.kind='acknowledgement' AND ct.email=$2",
+      [w.ws.id, sender.Email],
+    ))!.n,
+    INTAKE_LIMITS.acknowledgementsPerSenderPerDay,
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT count(*)::int n FROM events WHERE workspace_id=$1 AND kind='ticket_email.inbound_received' AND data->>'acknowledgement'='skipped_sender_cap'",
       [w.ws.id],
     ))!.n,
     1,

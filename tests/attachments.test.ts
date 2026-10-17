@@ -519,6 +519,167 @@ test("inbound valid text survives bad individual files and retries do not duplic
   );
 });
 
+async function inbound(w: any) {
+  const address = `support-${w.ws.id.slice(0, 8)}@inbound.example.test`;
+  const setup = await app.ticketEmail.configure(w.owner, { address });
+  return {
+    address,
+    authorization: `Basic ${Buffer.from(`fieldkit:${setup.password}`).toString("base64")}`,
+  };
+}
+const mail = (
+  m: { address: string },
+  from: string,
+  files: { name: string; bytes: Buffer }[],
+) => ({
+  MessageID: uid(),
+  OriginalRecipient: m.address,
+  FromFull: { Email: from },
+  Subject: "Files attached",
+  TextBody: "Please see the attached files",
+  Headers: [
+    {
+      Name: "Received-SPF",
+      Value: `pass (sender SPF authorized) identity=mailfrom; envelope-from=${from}`,
+    },
+  ],
+  Attachments: files.map((f) => ({
+    Name: f.name,
+    Content: f.bytes.toString("base64"),
+    ContentLength: f.bytes.length,
+    ContentType: "text/plain",
+  })),
+});
+test("inbound email files use their own pool with a per-sender daily allowance and never consume the shared quota", async () => {
+  const w = await setup(),
+    m = await inbound(w),
+    text = (n: number) => Buffer.alloc(n, 0x61);
+  c.FIELDKIT_ATTACHMENT_STORAGE_BYTES = 1024 * 1024;
+  const limits = app.attachments.limits();
+  assert.equal(limits.emailPoolBytes, Math.floor((1024 * 1024) / 10));
+  assert.equal(limits.emailSenderDailyBytes, Math.ceil((1024 * 1024) / 40));
+  for (const [name, size] of [
+    ["a.log", 20 * 1024],
+    ["b.log", 10 * 1024],
+  ] as const)
+    assert.equal(
+      (
+        await app.ticketEmail.receive(
+          w.ws.id,
+          m.authorization,
+          mail(m, "sender-a@example.test", [{ name, bytes: text(size) }]),
+        )
+      ).status,
+      "received",
+    );
+  const rows = await app.db.rows(
+    "SELECT a.display_name,a.status,a.error FROM attachments a JOIN contacts ct ON ct.id=a.contact_id WHERE a.workspace_id=$1 AND ct.email='sender-a@example.test' ORDER BY a.created_at",
+    [w.ws.id],
+  );
+  assert.deepEqual(
+    rows.map((r) => [r.display_name, r.status]),
+    [
+      ["a.log", "quarantined"],
+      ["b.log", "blocked"],
+    ],
+  );
+  assert.match(rows[1].error, /Daily attachment allowance/);
+  assert.equal(
+    (
+      await app.ticketEmail.receive(
+        w.ws.id,
+        m.authorization,
+        mail(m, "sender-b@example.test", [
+          { name: "c.log", bytes: text(10 * 1024) },
+        ]),
+      )
+    ).status,
+    "received",
+  );
+  assert.equal(
+    (await app.db.one(
+      "SELECT status FROM attachments WHERE workspace_id=$1 AND display_name='c.log'",
+      [w.ws.id],
+    ))!.status,
+    "quarantined",
+  );
+  // 30 KiB of email files are staged; a pool of exactly that size is now full.
+  c.FIELDKIT_ATTACHMENT_STORAGE_BYTES = 300 * 1024;
+  await app.ticketEmail.receive(
+    w.ws.id,
+    m.authorization,
+    mail(m, "sender-c@example.test", [
+      { name: "d.log", bytes: text(5 * 1024) },
+    ]),
+  );
+  const full = (await app.db.one(
+    "SELECT status,error FROM attachments WHERE workspace_id=$1 AND display_name='d.log'",
+    [w.ws.id],
+  ))!;
+  assert.equal(full.status, "blocked");
+  assert.match(full.error, /pool is full/);
+  // The shared quota ignores email files: a portal customer still has the workspace budget.
+  const reserved = await app.attachments.reserve(w.customer, {
+    conversationId: w.conv.id,
+    name: "big.txt",
+    size: 280 * 1024,
+    requestKey: uid(),
+  });
+  assert.equal(reserved.status, "uploading");
+  await assert.rejects(
+    app.attachments.reserve(w.customer, {
+      conversationId: w.conv.id,
+      name: "more.txt",
+      size: 30 * 1024,
+      requestKey: uid(),
+    }),
+    /quota/,
+  );
+});
+test("files from email tickets that never received a reply are removed after seven days while answered tickets keep theirs", async () => {
+  const w = await setup(),
+    m = await inbound(w);
+  for (const [from, name] of [
+    ["quiet@example.test", "quiet.log"],
+    ["helped@example.test", "helped.log"],
+  ])
+    assert.equal(
+      (
+        await app.ticketEmail.receive(
+          w.ws.id,
+          m.authorization,
+          mail(m, from, [{ name, bytes: Buffer.from(`log for ${name}`) }]),
+        )
+      ).status,
+      "received",
+    );
+  const helped = (await app.db.one(
+    "SELECT c.id FROM conversations c JOIN contacts ct ON ct.id=c.contact_id WHERE c.workspace_id=$1 AND ct.email='helped@example.test'",
+    [w.ws.id],
+  ))!;
+  await app.message(w.owner, helped.id, {
+    body: "Thanks, we are on it",
+    requestKey: uid(),
+  });
+  await app.db.pool.query(
+    "UPDATE attachments SET created_at=now()-interval '8 days' WHERE workspace_id=$1",
+    [w.ws.id],
+  );
+  await app.attachments.reconcile();
+  const rows = await app.db.rows(
+    "SELECT display_name,status,error FROM attachments WHERE workspace_id=$1 ORDER BY display_name",
+    [w.ws.id],
+  );
+  assert.deepEqual(
+    rows.map((r) => [r.display_name, r.status]),
+    [
+      ["helped.log", "quarantined"],
+      ["quiet.log", "deleted"],
+    ],
+  );
+  assert.match(rows[1].error, /no reply within 7 days/);
+});
+
 test("retention invalidates downloads and removes bytes even while conversation evidence is retained", async () => {
   const w = await setup(),
     row = await upload(w);

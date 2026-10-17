@@ -52,7 +52,11 @@ export class FieldKitClient {
       input,
     );
   }
-  status(conversationId: string): Promise<{
+  /** Status is always read as the external customer who owns the conversation. */
+  async status(
+    conversationId: string,
+    externalCustomerId = this.options.customerId,
+  ): Promise<{
     id: string;
     status: string;
     mode: string;
@@ -64,12 +68,10 @@ export class FieldKitClient {
       created_at: string;
     }[];
   }> {
+    if (!externalCustomerId)
+      throw new Error("externalCustomerId is required to read a conversation");
     return this.call(
-      "/requests/" +
-        encodeURIComponent(conversationId) +
-        (this.options.customerId
-          ? "?externalCustomerId=" + encodeURIComponent(this.options.customerId)
-          : ""),
+      `/requests/${encodeURIComponent(conversationId)}?externalCustomerId=${encodeURIComponent(externalCustomerId)}`,
     );
   }
 }

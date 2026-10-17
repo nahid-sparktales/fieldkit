@@ -10,7 +10,7 @@ import {
   refreshPrincipal,
   type Capability,
 } from "./permissions.js";
-import type { Attachments } from "./attachments.js";
+import { decodeEmailAttachment, type Attachments } from "./attachments.js";
 import { HttpError, requireValue } from "./config.js";
 import { digest, seal, unseal, tokenHash } from "./security.js";
 
@@ -87,6 +87,67 @@ const header = (d: Envelope, name: string) =>
     .join(" ");
 const refs = (value: string) =>
   (value.match(/<[^<>\s\x00-\x1f]{1,240}>/g) ?? []).slice(-50);
+/** Inbound intake controls from the 2026-10-17 audit (S1, S9); the per-workspace minute limit predates it. */
+export const INTAKE_LIMITS = {
+  workspacePerMinute: 120,
+  senderPerMinute: 20,
+  recipientPerMinute: 60,
+  quarantineRetentionDays: 7,
+  acknowledgementsPerSenderPerDay: 5,
+} as const;
+/** Retained encrypted source per workspace shares the operator's storage budget, so quarantined floods are bounded like files. */
+export const retainedSourceLimit = (config: {
+  FIELDKIT_ATTACHMENT_STORAGE_BYTES: number;
+}) => config.FIELDKIT_ATTACHMENT_STORAGE_BYTES;
+const firstHeader = (d: Pick<Envelope, "Headers">, name: string) =>
+  d.Headers.find((h) => h.Name.toLowerCase() === name)?.Value ?? "";
+const domainOf = (identity: string) =>
+  identity
+    .trim()
+    .replace(/^<|>$/g, "")
+    .split("@")
+    .pop()!
+    .toLowerCase()
+    .replace(/[;,)\]>]+$/, "");
+const aligned = (domain: string, from: string) =>
+  !!domain &&
+  !!from &&
+  (domain === from ||
+    from.endsWith(`.${domain}`) ||
+    domain.endsWith(`.${from}`));
+/**
+ * Did the receiving MTA authenticate the message under the From domain? Only the
+ * first occurrence of each header counts: Postmark writes its own results ahead of
+ * the message's headers, so a sender cannot override them with a forged copy.
+ * This gates acknowledgements and reply tokens (audit S9); it never grants identity.
+ */
+export function senderAuthentication(
+  d: Pick<Envelope, "Headers" | "FromFull">,
+) {
+  const from = d.FromFull.Email.split("@")[1]?.toLowerCase() ?? "";
+  let spf = false,
+    dkim = false;
+  const received = firstHeader(d, "received-spf");
+  if (/^\s*pass\b/i.test(received)) {
+    const envelope = /envelope-from=([^;\s]+)/i.exec(received)?.[1];
+    spf = !envelope || aligned(domainOf(envelope), from);
+  }
+  for (const clause of firstHeader(d, "authentication-results").split(";")) {
+    if (/\bspf=pass\b/i.test(clause)) {
+      const mailfrom = /smtp\.mailfrom=([^\s;]+)/i.exec(clause)?.[1];
+      spf ||= !mailfrom || aligned(domainOf(mailfrom), from);
+    }
+    if (/\bdkim=pass\b/i.test(clause)) {
+      const signer =
+        /header\.d=([^\s;]+)/i.exec(clause)?.[1] ??
+        /header\.i=([^\s;]+)/i.exec(clause)?.[1];
+      dkim ||= !!signer && aligned(domainOf(signer), from);
+    }
+  }
+  // Postmark's SpamAssassin summary: a valid signature from the author's domain.
+  if (/\bDKIM_VALID_AU\b/.test(firstHeader(d, "x-spam-tests"))) dkim = true;
+  return { spf, dkim, authenticated: spf || dkim };
+}
 export function emailText(
   d: Pick<Envelope, "TextBody" | "HtmlBody" | "StrippedTextReply">,
 ) {
@@ -245,6 +306,21 @@ export class EmailIntake {
       );
     const id = uid(),
       hash = digest(d);
+    // Attachment bodies never reach the database (audit S1): decode once, hand the
+    // bytes to the inline attempt below and seal only name, type, length and digest.
+    const files = d.Attachments.map((file) =>
+      decodeEmailAttachment(file, this.db.config.FIELDKIT_ATTACHMENT_BYTES),
+    );
+    const sealed = seal(
+      this.db.config.FIELDKIT_ENCRYPTION_KEY,
+      `email-intake:${ws}:${id}`,
+      { ...d, Attachments: files.map((f) => f.meta) },
+    );
+    const payloadBytes = Buffer.byteLength(sealed),
+      retainedLimit = retainedSourceLimit(this.db.config);
+    const [recipientLocal, recipientDomain] =
+        d.OriginalRecipient.toLowerCase().split("@"),
+      recipient = `${recipientLocal.split("+")[0]}@${recipientDomain}`;
     const event = await this.db.tx(async (q) => {
       await q.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
         `email-rate:${ws}`,
@@ -299,22 +375,43 @@ export class EmailIntake {
         [ws],
         q,
       );
-      if (rate!.n >= 120)
+      if (rate!.n >= INTAKE_LIMITS.workspacePerMinute)
         throw new HttpError(429, "Inbound email rate limit reached");
+      const retained = Number(
+        (await this.db.one(
+          "SELECT coalesce(sum(payload_bytes),0) n FROM email_intake_events WHERE workspace_id=$1 AND payload_ciphertext IS NOT NULL",
+          [ws],
+          q,
+        ))!.n,
+      );
+      if (retained + payloadBytes > retainedLimit)
+        return { id: null, capacity: retained };
+      await this.throttle(
+        q,
+        `email-sender:${ws}:${d.FromFull.Email}`,
+        INTAKE_LIMITS.senderPerMinute,
+        "Inbound email rate limit reached for this sender",
+      );
+      await this.throttle(
+        q,
+        `email-recipient:${ws}:${recipient}`,
+        INTAKE_LIMITS.recipientPerMinute,
+        "Inbound email rate limit reached for this support address",
+      );
+      // Availability is deferred so neither the worker nor a duplicate webhook
+      // delivery can claim the envelope before the inline attempt that holds the
+      // decoded attachment bytes; the minute sweep requeues it if this process dies.
       const row = await this.db.one(
-        `INSERT INTO email_intake_events(id,workspace_id,integration_id,provider_id,payload_hash,payload_ciphertext,sender,subject,message_ref,reply_ref,references_list)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+        `INSERT INTO email_intake_events(id,workspace_id,integration_id,provider_id,payload_hash,payload_ciphertext,payload_bytes,sender,subject,message_ref,reply_ref,references_list,available_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,now()+interval '2 minutes') RETURNING *`,
         [
           id,
           ws,
           connection.id,
           providerId,
           hash,
-          seal(
-            this.db.config.FIELDKIT_ENCRYPTION_KEY,
-            `email-intake:${ws}:${id}`,
-            d,
-          ),
+          sealed,
+          payloadBytes,
           d.FromFull.Email,
           d.Subject.replace(/[\r\n\x00-\x1f]/g, " ").slice(0, 160),
           messageRef,
@@ -323,14 +420,23 @@ export class EmailIntake {
         ],
         q,
       );
-      await this.db.enqueue(q, "email-intake", {
-        workspaceId: ws,
-        eventId: id,
-      });
       return row!;
     });
+    if (event.capacity !== undefined) {
+      await this.capacityNotice(
+        ws,
+        event.capacity,
+        payloadBytes,
+        retainedLimit,
+      );
+      throw new HttpError(
+        429,
+        "Retained inbound email source has reached the workspace limit; the provider will retry later",
+      );
+    }
     if (!event.id) return { accepted: true, status: event.status };
-    if (event.status === "queued") await this.process(ws, event.id);
+    if (event.status === "queued")
+      await this.process(ws, event.id, { bodies: files.map((f) => f.bytes) });
     const current = await this.db.one(
       "SELECT status FROM email_intake_events WHERE workspace_id=$1 AND id=$2",
       [ws, event.id],
@@ -477,12 +583,21 @@ export class EmailIntake {
       return { reason: "New email tickets are disabled for this recipient" };
     return { address, body };
   }
-  async process(ws: string, id: string) {
+  /**
+   * `inline` is the accept() attempt that still holds the decoded attachment
+   * bytes; it may claim the envelope before its deferred availability. Any later
+   * attempt stages only files already stored under their deterministic keys.
+   */
+  async process(
+    ws: string,
+    id: string,
+    inline?: { bodies: (Buffer | undefined)[] },
+  ) {
     const lease = uid();
     const event = await this.db.one(
       `UPDATE email_intake_events SET status='processing',attempts=attempts+1,lease_token=$3,lease_until=now()+interval '5 minutes',updated_at=now()
-      WHERE workspace_id=$1 AND id=$2 AND attempts<5 AND ((status IN ('queued','retrying') AND available_at<=now()) OR (status='processing' AND lease_until<now())) RETURNING *`,
-      [ws, id, lease],
+      WHERE workspace_id=$1 AND id=$2 AND attempts<5 AND ((status IN ('queued','retrying') AND (available_at<=now() OR $4::boolean)) OR (status='processing' AND lease_until<now())) RETURNING *`,
+      [ws, id, lease, !!inline],
     );
     if (!event) return;
     try {
@@ -493,6 +608,7 @@ export class EmailIntake {
           event.payload_ciphertext,
         ),
       );
+      const auth = senderAuthentication(d);
       const decision = await this.resolve(ws, event, d);
       if (decision.reason) {
         await this.finish(event, lease, "quarantined", decision.reason);
@@ -606,6 +722,7 @@ export class EmailIntake {
         conv.id,
         `${event.integration_id}:${event.provider_id}`,
         d.Attachments,
+        inline?.bodies,
       );
       // Revalidate the recipient/token and sender after file staging; a disable/rotation cannot race into an append.
       const recheck = await this.resolve(ws, event, d);
@@ -623,8 +740,13 @@ export class EmailIntake {
         },
       );
       await this.db.tx(async (q) => {
+        const stripped = seal(
+          this.db.config.FIELDKIT_ENCRYPTION_KEY,
+          `email-intake:${ws}:${id}`,
+          { ...d, Attachments: [], Headers: [], ToFull: [], CcFull: [] },
+        );
         const current = await this.db.one(
-          "UPDATE email_intake_events SET status='received',error=NULL,conversation_id=$3,message_id=$4,address_id=$5,lease_until=NULL,lease_token=NULL,updated_at=now(),payload_ciphertext=$7 WHERE workspace_id=$1 AND id=$2 AND lease_token=$6 RETURNING id",
+          "UPDATE email_intake_events SET status='received',error=NULL,conversation_id=$3,message_id=$4,address_id=$5,lease_until=NULL,lease_token=NULL,updated_at=now(),payload_ciphertext=$7,payload_bytes=$8,sender_authenticated=$9 WHERE workspace_id=$1 AND id=$2 AND lease_token=$6 RETURNING id",
           [
             ws,
             id,
@@ -632,11 +754,9 @@ export class EmailIntake {
             message.id,
             decision.address?.id ?? null,
             lease,
-            seal(
-              this.db.config.FIELDKIT_ENCRYPTION_KEY,
-              `email-intake:${ws}:${id}`,
-              { ...d, Attachments: [], Headers: [], ToFull: [], CcFull: [] },
-            ),
+            stripped,
+            Buffer.byteLength(stripped),
+            auth.authenticated,
           ],
           q,
         );
@@ -666,6 +786,7 @@ export class EmailIntake {
             event.payload_hash,
           ],
         );
+        let acknowledgement = "not_configured";
         if (!decision.route) {
           await this.db.event(
             q,
@@ -674,29 +795,53 @@ export class EmailIntake {
             {
               origin: "email",
               senderVerified: false,
+              senderAuthenticated: auth.authenticated,
               addressId: decision.address.id,
             },
             conv.id,
             true,
           );
           if (decision.address.acknowledge) {
-            const email = await this.db.one(
-              "INSERT INTO ticket_emails(id,workspace_id,conversation_id,message_id,kind) VALUES($1,$2,$3,$4,'acknowledgement') ON CONFLICT(message_id) DO NOTHING RETURNING id",
-              [uid(), ws, conv.id, message.id],
-              q,
-            );
-            if (email)
-              await this.db.enqueue(q, "ticket-email", {
-                workspaceId: ws,
-                emailId: email.id,
-              });
+            // Audit S9: an acknowledgement (and the private reply token it carries)
+            // goes only to a sender whose mail authenticated under its From domain,
+            // and only a few times per sender and day.
+            acknowledgement = !auth.authenticated
+              ? "skipped_unauthenticated"
+              : (await this.acknowledgementsToday(
+                    ws,
+                    customer.contactId!,
+                    q,
+                  )) >= INTAKE_LIMITS.acknowledgementsPerSenderPerDay
+                ? "skipped_sender_cap"
+                : "queued";
+            if (acknowledgement === "queued") {
+              const email = await this.db.one(
+                "INSERT INTO ticket_emails(id,workspace_id,conversation_id,message_id,kind) VALUES($1,$2,$3,$4,'acknowledgement') ON CONFLICT(message_id) DO NOTHING RETURNING id",
+                [uid(), ws, conv.id, message.id],
+                q,
+              );
+              if (email)
+                await this.db.enqueue(q, "ticket-email", {
+                  workspaceId: ws,
+                  emailId: email.id,
+                });
+              else acknowledgement = "duplicate";
+            }
           }
         }
         await this.db.event(
           q,
           ws,
           "ticket_email.inbound_received",
-          { intakeId: id, origin: "email", senderVerified: false },
+          {
+            intakeId: id,
+            origin: "email",
+            senderVerified: false,
+            senderAuthenticated: auth.authenticated,
+            spf: auth.spf,
+            dkim: auth.dkim,
+            acknowledgement,
+          },
           conv.id,
         );
       });
@@ -746,6 +891,51 @@ export class EmailIntake {
       );
     });
   }
+  /** Fixed-window counter shared with the API's `rate_limits` table; rolled back with a rejected envelope. */
+  private async throttle(
+    q: PoolClient,
+    key: string,
+    max: number,
+    message: string,
+  ) {
+    const row = await this.db.one(
+      `INSERT INTO rate_limits(key,count,expires_at) VALUES($1,1,now()+interval '1 minute') ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<now() THEN 1 ELSE rate_limits.count+1 END, expires_at=CASE WHEN rate_limits.expires_at<now() THEN now()+interval '1 minute' ELSE rate_limits.expires_at END RETURNING count`,
+      [key],
+      q,
+    );
+    if (row!.count > max) throw new HttpError(429, message);
+  }
+  /** One operator-visible event per workspace and hour while retained source is at capacity. */
+  private async capacityNotice(
+    ws: string,
+    retained: number,
+    rejected: number,
+    limit: number,
+  ) {
+    const row = await this.db.one(
+      `INSERT INTO rate_limits(key,count,expires_at) VALUES($1,1,now()+interval '1 hour') ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<now() THEN 1 ELSE rate_limits.count+1 END, expires_at=CASE WHEN rate_limits.expires_at<now() THEN now()+interval '1 hour' ELSE rate_limits.expires_at END RETURNING count`,
+      [`email-capacity-notice:${ws}`],
+    );
+    if (row!.count === 1)
+      await this.db.event(this.db.pool, ws, "ticket_email.intake_capacity", {
+        retainedBytes: retained,
+        rejectedBytes: rejected,
+        limitBytes: limit,
+      });
+  }
+  private async acknowledgementsToday(
+    ws: string,
+    contactId: string,
+    q: PoolClient,
+  ) {
+    return Number(
+      (await this.db.one(
+        "SELECT count(*)::int n FROM ticket_emails e JOIN conversations c ON c.workspace_id=e.workspace_id AND c.id=e.conversation_id WHERE e.workspace_id=$1 AND e.kind='acknowledgement' AND c.contact_id=$2 AND e.created_at>now()-interval '24 hours'",
+        [ws, contactId],
+        q,
+      ))!.n,
+    );
+  }
   async retry(p: Principal, id: string) {
     requireCapability(p, "email:retry");
     await this.db.tx(async (q) => {
@@ -787,7 +977,7 @@ export class EmailIntake {
     p = await emailAuthority(this.db, p, "email:manage");
     const row = requireValue(
       await this.db.one(
-        "SELECT conversation_id,payload_ciphertext FROM email_intake_events WHERE workspace_id=$1 AND id=$2",
+        "SELECT conversation_id,payload_ciphertext,sender_authenticated FROM email_intake_events WHERE workspace_id=$1 AND id=$2",
         [p.workspaceId, id],
       ),
     );
@@ -809,6 +999,7 @@ export class EmailIntake {
       text: emailText({ ...d, StrippedTextReply: undefined }),
       strippedReplyUsed: !!d.StrippedTextReply?.trim(),
       senderVerified: false,
+      senderAuthenticated: !!row.sender_authenticated,
     };
   }
   async recover() {
@@ -827,9 +1018,16 @@ export class EmailIntake {
     await this.db.pool.query(
       "UPDATE email_intake_events SET status='failed',error='Processing interrupted at the retry limit; manual review required',lease_token=NULL,lease_until=NULL WHERE status='processing' AND attempts>=5 AND lease_until<now()",
     );
-    // Full text retained for quote review and failed envelopes follow workspace retention.
+    // Quarantined and failed envelopes came from senders nobody admitted: their
+    // source expires on a fixed window regardless of workspace retention (audit S1).
     await this.db.pool.query(
-      "UPDATE email_intake_events e SET payload_ciphertext=NULL,sender='',subject='' WHERE payload_ciphertext IS NOT NULL AND created_at<now()-(coalesce((SELECT (settings->>'retentionDays')::int FROM workspaces w WHERE w.id=e.workspace_id),90)*interval '1 day')",
+      "UPDATE email_intake_events SET payload_ciphertext=NULL,payload_bytes=0 WHERE payload_ciphertext IS NOT NULL AND status IN ('quarantined','failed') AND created_at<now()-($1::int*interval '1 day')",
+      [INTAKE_LIMITS.quarantineRetentionDays],
+    );
+    // Full text retained for quote review follows workspace retention, which also
+    // clears sender and subject metadata of envelopes whose source already expired.
+    await this.db.pool.query(
+      "UPDATE email_intake_events e SET payload_ciphertext=NULL,payload_bytes=0,sender='',subject='' WHERE (payload_ciphertext IS NOT NULL OR sender<>'' OR subject<>'') AND created_at<now()-(coalesce((SELECT (settings->>'retentionDays')::int FROM workspaces w WHERE w.id=e.workspace_id),90)*interval '1 day')",
     );
   }
 }

@@ -389,8 +389,23 @@ export class TicketEmail {
             q,
           )
         : null;
-      let replyTo: string | undefined;
-      if (k && d.kind !== "follower") {
+      let replyTo: string | undefined,
+        unauthenticated = false;
+      // Audit S9: an unverified email requester receives a private reply token only
+      // once one of their inbound messages authenticated (SPF or DKIM aligned with
+      // the From domain). Approved participants were admitted by staff explicitly.
+      if (
+        k &&
+        d.kind === "requester" &&
+        !c.verified &&
+        !(await this.db.one(
+          "SELECT 1 FROM email_intake_events WHERE workspace_id=$1 AND conversation_id=$2 AND sender=$3 AND status='received' AND sender_authenticated LIMIT 1",
+          [ws, c.id, d.recipient],
+          q,
+        ))
+      )
+        unauthenticated = true;
+      if (k && d.kind !== "follower" && !unauthenticated) {
         let route = await this.db.one(
           "SELECT * FROM ticket_email_routes WHERE workspace_id=$1 AND conversation_id=$2 AND participant_id IS NOT DISTINCT FROM $3",
           [ws, c.id, d.participant_id],
@@ -455,6 +470,8 @@ export class TicketEmail {
         d,
         files,
         replyTo,
+        unauthenticated,
+        supportAddress: a?.address ?? k?.metadata.address,
         prior: inbound?.message_ref ?? prior?.message_ref,
         body:
           e.kind === "acknowledgement"
@@ -473,7 +490,9 @@ export class TicketEmail {
           ? `Open the staff inbox to reply: ${this.db.config.FIELDKIT_URL}/?workspace=${encodeURIComponent(ws)}&view=inbox&conversation=${encodeURIComponent(c.id)}`
           : item.replyTo
             ? "Reply to this email to continue. This private reply address belongs only to you."
-            : `Incoming email is disconnected; contact the support team through its published address.`;
+            : item.unauthenticated
+              ? `Your email could not be authenticated (SPF/DKIM), so no private reply address was issued. To add information, send a new email to ${item.supportAddress}.`
+              : `Incoming email is disconnected; contact the support team through its published address.`;
       if (d.kind === "requester" && c.verified)
         continuation += `\nView your ticket: ${this.db.config.FIELDKIT_URL}/support/${encodeURIComponent(c.slug)}?ticket=${encodeURIComponent(c.id)}`;
       await this.send(

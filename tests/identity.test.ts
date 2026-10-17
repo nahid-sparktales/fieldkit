@@ -723,7 +723,15 @@ test("complete local help-desk path: billing email, safe attachment, compatible 
       },
       Subject: "Invoice assistance",
       TextBody: "Please check my invoice.",
-      Headers: [{ Name: "Message-ID", Value: `<${uid()}@fixture.test>` }],
+      // Postmark's own SPF verdict: reply tokens are issued only to authenticated senders.
+      Headers: [
+        { Name: "Message-ID", Value: `<${uid()}@fixture.test>` },
+        {
+          Name: "Received-SPF",
+          Value:
+            "pass (sender SPF authorized) identity=mailfrom; envelope-from=billing-customer@example.test; receiver=inbound.postmarkapp.com",
+        },
+      ],
       Attachments: [
         {
           Name: "invoice.txt",

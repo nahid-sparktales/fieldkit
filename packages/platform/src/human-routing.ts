@@ -51,7 +51,13 @@ export class HumanRouting {
     );
   }
   async wake(q: PoolClient, ws: string) {
-    await this.db.enqueue(q, "human-routing", { workspaceId: ws });
+    // A drain rescans the whole workspace, so bursts of wakes coalesce into one job per 5 s slot.
+    await this.db.enqueue(
+      q,
+      "human-routing",
+      { workspaceId: ws },
+      { singletonKey: ws, singletonSeconds: 5 },
+    );
   }
   private async authority(
     q: PoolClient,
@@ -860,7 +866,7 @@ export class HumanRouting {
       [p.workspaceId],
     );
     const members = await this.db.rows(
-      `SELECT m.user_id,u.name,u.email,coalesce(a.state,'offline') state,coalesce(a.capacity,5) capacity,a.heartbeat_at,(SELECT count(*)::int FROM conversations c WHERE c.workspace_id=m.workspace_id AND c.assigned_to=m.user_id AND ${capacitySQL}) workload FROM memberships m LEFT JOIN "user" u ON u.id=m.user_id LEFT JOIN agent_availability a ON a.workspace_id=m.workspace_id AND a.user_id=m.user_id WHERE m.workspace_id=$1 ORDER BY coalesce(u.name,m.user_id)`,
+      `SELECT m.user_id,u.name,${hasCapability(p, "members:manage") ? "u.email," : ""}coalesce(a.state,'offline') state,coalesce(a.capacity,5) capacity,a.heartbeat_at,(SELECT count(*)::int FROM conversations c WHERE c.workspace_id=m.workspace_id AND c.assigned_to=m.user_id AND ${capacitySQL}) workload FROM memberships m LEFT JOIN "user" u ON u.id=m.user_id LEFT JOIN agent_availability a ON a.workspace_id=m.workspace_id AND a.user_id=m.user_id WHERE m.workspace_id=$1 ORDER BY coalesce(u.name,m.user_id)`,
       [p.workspaceId],
     );
     const params: unknown[] = [p.workspaceId],

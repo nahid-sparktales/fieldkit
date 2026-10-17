@@ -635,12 +635,31 @@ export class Actions {
   }
 }
 
+/** Keeps only the fields an action's output schema declares, so undeclared provider fields never reach a customer reply. */
+export function declaredOutput(schema: any, value: unknown): unknown {
+  if (!schema || typeof schema !== "object") return {};
+  const type = Array.isArray(schema.type) ? schema.type : [schema.type];
+  if (type.includes("array"))
+    return Array.isArray(value)
+      ? value.map((v) => declaredOutput(schema.items, v))
+      : [];
+  if (type.includes("object") || schema.properties) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    return Object.fromEntries(
+      Object.entries(schema.properties ?? {})
+        .filter(([k]) => Object.hasOwn(value, k))
+        .map(([k, s]) => [k, declaredOutput(s, (value as any)[k])]),
+    );
+  }
+  return schema.type ? value : {};
+}
+
+/** Every kind, reads included, honours the configured approval mode and daily limit. */
 export function automaticPolicy(
   action: ActionDefinition,
   parameters: Record<string, unknown>,
   used: number,
 ) {
-  if (action.kind === "custom_read") return true;
   if (action.policy.mode !== "automatic") return false;
   if (
     action.kind === "stripe_refund" &&

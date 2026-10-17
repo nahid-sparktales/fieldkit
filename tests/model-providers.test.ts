@@ -2,7 +2,11 @@ import { before, after, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { Platform } from "../packages/platform/src/platform.js";
-import { LiveModel, type ModelInput } from "../packages/platform/src/model.js";
+import {
+  LiveModel,
+  MODEL_LIMITS,
+  type ModelInput,
+} from "../packages/platform/src/model.js";
 import { Connections } from "../packages/platform/src/connections.js";
 import {
   MODEL_PROVIDERS,
@@ -29,7 +33,8 @@ let invalid = false,
   invalidShape = false,
   truncated = false,
   missingUsage = false,
-  wrongDimensions = false;
+  wrongDimensions = false,
+  serverError = false;
 const fetcher: Fetcher = async (url, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : null;
   requests.push({ url, body, headers: init.headers });
@@ -50,6 +55,11 @@ const fetcher: Fetcher = async (url, init = {}) => {
       })),
       usage: { prompt_tokens: 11, total_tokens: 11 },
     });
+  if (serverError)
+    return Response.json(
+      { error: { type: "overloaded_error", message: "Overloaded" } },
+      { status: 503 },
+    );
   const native = url.endsWith("/messages");
   const schema = native
     ? body.output_config.format.schema
@@ -133,6 +143,7 @@ beforeEach(() => {
   truncated = false;
   missingUsage = false;
   wrongDimensions = false;
+  serverError = false;
 });
 const input = (ws: string): ModelInput => ({
   workspaceId: ws,
@@ -311,6 +322,68 @@ test("invalid and truncated output records reported usage; absent usage keeps a 
   await assert.rejects(live.answer(input(w.ws.id)), /budget/);
   assert.equal(requests.length, before);
   assert.ok(requests.every((r) => !r.url.includes("api.openai.com")));
+});
+
+test("definite provider failures release their reservation while turn-rate and per-contact daily limits refuse turns with 429", async () => {
+  const w = await workspace(app);
+  await connect(w.ws.id, "anthropic");
+  await select(w.ws.id, "anthropic");
+  serverError = true;
+  await assert.rejects(live.answer(input(w.ws.id)), /rejected the request/);
+  serverError = false;
+  invalid = true;
+  missingUsage = true;
+  await assert.rejects(live.answer(input(w.ws.id)), /invalid JSON/);
+  invalid = false;
+  missingUsage = false;
+  const failed = await app.db.rows(
+    "SELECT reserved,input_tokens,output_tokens FROM usage WHERE workspace_id=$1",
+    [w.ws.id],
+  );
+  assert.equal(failed.length, 2);
+  assert.ok(
+    failed.every(
+      (u) => u.reserved === 0 && u.input_tokens === 0 && u.output_tokens === 0,
+    ),
+  );
+  const budget = Settings.parse({}).monthlyTokenBudget,
+    perMinute = MODEL_LIMITS.turnsPerMinute(budget);
+  await app.db.pool.query(
+    "INSERT INTO usage(id,workspace_id,kind,model,reserved,purpose) SELECT gen_random_uuid()::text,$1,'response','test-chat',0,'production' FROM generate_series(1,$2::int)",
+    [w.ws.id, perMinute],
+  );
+  const before = requests.length;
+  await assert.rejects(live.answer(input(w.ws.id)), /turns per minute/);
+  assert.equal(requests.length, before);
+  await app.db.pool.query("DELETE FROM usage WHERE workspace_id=$1", [w.ws.id]);
+  const conv = await app.newConversation(w.customer, {
+    body: "Help with my order",
+    requestKey: uid(),
+    channelId: w.channelId,
+  });
+  const run = uid();
+  await app.db.pool.query(
+    "INSERT INTO runs(id,workspace_id,conversation_id,revision) VALUES($1,$2,$3,99)",
+    [run, w.ws.id, conv.id],
+  );
+  const unverifiedCap = MODEL_LIMITS.contactDailyTokens(budget, false),
+    verifiedCap = MODEL_LIMITS.contactDailyTokens(budget, true);
+  assert.ok(unverifiedCap < verifiedCap);
+  await app.db.pool.query(
+    "INSERT INTO usage(id,workspace_id,run_id,kind,model,input_tokens,output_tokens,purpose) VALUES($1,$2,$3,'response','test-chat',$4,0,'production')",
+    [uid(), w.ws.id, run, unverifiedCap],
+  );
+  assert.equal(
+    (await live.answer({ ...input(w.ws.id), runId: run })).intent,
+    "clarify",
+  );
+  await app.db.pool.query("UPDATE contacts SET verified=false WHERE id=$1", [
+    w.contactId,
+  ]);
+  await assert.rejects(
+    live.answer({ ...input(w.ws.id), runId: run }),
+    /unverified visitor/,
+  );
 });
 
 test("embedding providers return exact dimensions and never mix incompatible vectors; settings changes rebuild unchanged documents", async () => {

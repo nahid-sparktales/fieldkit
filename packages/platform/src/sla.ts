@@ -1111,8 +1111,10 @@ export class Sla {
     }
   }
   async reconcile() {
+    // Only due work is re-advanced: pending observations, obligations at a threshold, and waits past due (sla_obligations_next index).
     const rows = await this.db.rows(
-      `SELECT pending.workspace_id,pending.conversation_id FROM (SELECT workspace_id,conversation_id,min(at) due FROM sla_observations WHERE processed_at IS NULL GROUP BY workspace_id,conversation_id UNION ALL SELECT workspace_id,conversation_id,min(due_at) FROM sla_obligations WHERE ended_at IS NULL GROUP BY workspace_id,conversation_id UNION ALL SELECT workspace_id,conversation_id,min(due_at) FROM sla_waits WHERE status='waiting' GROUP BY workspace_id,conversation_id) pending JOIN conversations c ON c.workspace_id=pending.workspace_id AND c.id=pending.conversation_id GROUP BY pending.workspace_id,pending.conversation_id,c.sla_checked_at ORDER BY c.sla_checked_at NULLS FIRST,min(due) LIMIT 200`,
+      `SELECT pending.workspace_id,pending.conversation_id FROM (SELECT workspace_id,conversation_id,min(at) due FROM sla_observations WHERE processed_at IS NULL GROUP BY workspace_id,conversation_id UNION ALL SELECT workspace_id,conversation_id,min(due_at) FROM sla_obligations WHERE ended_at IS NULL AND least(warning_at,due_at,escalate_at)<=$1 GROUP BY workspace_id,conversation_id UNION ALL SELECT workspace_id,conversation_id,min(due_at) FROM sla_waits WHERE status='waiting' AND due_at<=$1 GROUP BY workspace_id,conversation_id) pending JOIN conversations c ON c.workspace_id=pending.workspace_id AND c.id=pending.conversation_id GROUP BY pending.workspace_id,pending.conversation_id,c.sla_checked_at ORDER BY c.sla_checked_at NULLS FIRST,min(due) LIMIT 200`,
+      [this.clock()],
     );
     for (const row of rows)
       await this.advance(row.workspace_id, row.conversation_id);

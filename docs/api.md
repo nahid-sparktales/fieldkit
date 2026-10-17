@@ -56,7 +56,7 @@ The base for authenticated resources is `/v2/workspaces/:workspaceId`. These are
 | `/identity-key`                                        | POST               | Owner widget identity-key rotation                                                       |
 | `/credentials`, `/credentials/:id`                     | GET, POST / DELETE | Owner scoped service-token issue/list/revoke                                             |
 | `/identities`                                          | POST               | Trusted service establishes existing website customer identity                           |
-| `/requests`, `/requests/:id`, `/requests/:id/messages` | POST / GET / POST  | Scoped service support request/status                                                    |
+| `/requests`, `/requests/:id`, `/requests/:id/messages` | POST / GET / POST  | Scoped service support request/status; status requires `?externalCustomerId=`            |
 
 Public routes under `/v2/public/:slug` expose only published configuration and articles. `/join` binds a verified portal account. `/widget/session` creates an anonymous or server-signed customer token for a published widget. Exact allowed origins are checked. `/v2/webhooks/zendesk/:workspaceId` accepts only provider-signed events. OAuth callbacks are `/v2/oauth/:provider/callback`.
 
@@ -134,7 +134,7 @@ const ticket = await client.request({
 const state = await client.status(ticket.id);
 ```
 
-Use stable request keys when retrying the same submission. Reusing a key with different content returns a conflict. A request creates a persisted conversation and queues the agent; it does not return a completed action. Poll status or consume the authorized conversation event stream. A customer-bound SDK instance filters status to that fixed external identity.
+Use stable request keys when retrying the same submission. Reusing a key with different content returns a conflict. A request creates a persisted conversation and queues the agent; it does not return a completed action. Poll status or consume the authorized conversation event stream. Status is always read as the owning external customer: `GET /requests/:id` requires `?externalCustomerId=` (400 when absent) and returns 404 unless that host identity owns the conversation, so a `requests:create` token cannot read other customers' conversations. `client.status(conversationId, externalCustomerId?)` uses the instance's `customerId` when the second argument is omitted and rejects when neither is set.
 
 ## CLI and MCP
 
@@ -143,7 +143,7 @@ Set `FIELDKIT_URL`, `FIELDKIT_WORKSPACE`, and `FIELDKIT_TOKEN`, then:
 ```sh
 npm run fieldkit -- identify YOUR_CUSTOMER_ID 'Customer name'
 npm run fieldkit -- request YOUR_CUSTOMER_ID 'My support question'
-npm run fieldkit -- status CONVERSATION_ID
+npm run fieldkit -- status YOUR_CUSTOMER_ID CONVERSATION_ID
 ```
 
 Run `npm run mcp` as a stdio server with those variables plus `FIELDKIT_CUSTOMER` fixed by the trusted MCP host. It exposes exactly `request_support` and `support_status`. The model cannot choose a different customer, create mappings, approve actions, or directly execute tools. Approvals stay in the authenticated staff interface/API. Do not give a customer-facing model the installation `.env`, database credentials, a staff session, or an unrestricted CLI environment.
@@ -306,3 +306,14 @@ All routes remain below `/v2/workspaces/:workspaceId` and require the existing a
 - `/conversations?scope=mine|company`: the existing customer list under centralized current grants. Direct ticket details return action-specific `access` and canonical `mergedFrom` metadata.
 - `/automations`, `/preview`, `/history`, `/:id/activation`, `/:id/history`: disabled rule drafts, dry runs, version activation and execution outcomes. `/notifications` exposes only currently authorized staff notifications.
 - `/reports/catalog`, `/query`, `/queries`, `/drilldown`, `/exports`, `/jobs`, `/jobs/:id/download`, `/schedules`; `/dashboards/:id` and `/:id/duplicate`: allowlisted reports and saved definitions. No raw SQL, executable formulas or public artifact URLs are accepted.
+
+## Audit hardening (schema 29)
+
+Schema 29 is additive and index-only apart from a generated `documents.search` tsvector column: it adds the indexes from the [2026-10-17 audit appendix](security-performance-audit-2026-10-17.md) and a partial `sla_obligations_next` index so SLA reconcile only re-advances due work. Response shapes narrowed at the same time:
+
+- Customers, invited participants and company managers receive an explicit conversation column list (`id, subject, status, mode, created_at, updated_at, sharing, organization_id, form_id, form_version, channel_id, contact_id, external_id` plus `customer_name`, `channel_kind` and the list preview) and message list (`id, conversation_id, role, body, citations, created_at, delivered_at, actor_contact_id, actor_name, source_ticket_id, attachments`). Staff still receive full rows.
+- The workspace root returns `workspace.settings`, full channel settings and `usage` only with `settings:manage` (usage additionally needs `analytics:read`); other staff get `id, slug, name`, `role`, `capabilities` and `id, kind, published` per channel. `/members` and the routing snapshot include staff email addresses only with `members:manage`.
+- `GET /ticket-forms` (non-admin) requires `tickets:read` for staff or a customer/visitor principal, and omits `defaultTeamId`/`emailDefault` for non-staff.
+- `custom_read` actions honour `policy.mode` and `dailyLimit` like every other kind, and customer replies for custom actions render only fields declared in the action's `outputSchema`.
+- Handoff reasons move from the public `conversation.updated` payload to a staff-only `conversation.handoff` event (`handoffCategory` stays public).
+- Anonymous `/widget/session` calls are additionally limited to 60 per client address per hour.

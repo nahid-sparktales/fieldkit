@@ -1269,6 +1269,53 @@ test("period-end cancellation and schema-bound custom writes use the approved id
     /idempotency/,
   );
 });
+test("custom reads need an automatic policy within the daily limit, and replies carry only declared fields", async () => {
+  const w = await workspace(app);
+  const read = {
+    name: "custom_action",
+    description: "Look up an owned customer order",
+    kind: "custom_read",
+    enabled: true,
+    config: {
+      endpoint: "https://backend.example.com/read",
+      mappingKey: "customer_id",
+      inputSchema: {
+        type: "object",
+        properties: { orderId: { type: "string" } },
+        required: ["orderId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: { status: { type: "string" } },
+        required: ["status"],
+      },
+    },
+    policy: { mode: "approval", dailyLimit: 1 },
+  };
+  const saved = await app.actions.save(w.ws.id, read);
+  let result = await runText(w, "custom order lookup");
+  assert.equal(result.run.status, "waiting_approval");
+  assert.ok(
+    await app.db.one("SELECT id FROM approvals WHERE run_id=$1", [
+      result.run.id,
+    ]),
+  );
+  await app.actions.save(
+    w.ws.id,
+    { ...read, policy: { mode: "automatic", dailyLimit: 1 } },
+    saved.id,
+  );
+  result = await runText(w, "custom order lookup");
+  assert.equal(result.run.state.receipt.result.status, "updated");
+  assert.ok(result.run.state.response.includes('"status": "updated"'));
+  assert.ok(
+    !result.run.state.response.includes("orderId"),
+    "undeclared provider fields stay out of the customer reply",
+  );
+  result = await runText(w, "custom order lookup once more");
+  assert.equal(result.run.status, "waiting_approval", "daily limit reached");
+});
 test("tenant and customer isolation plus duplicate-message protection hold at shared boundaries", async () => {
   const a = await workspace(app),
     b = await workspace(app);
@@ -1422,6 +1469,26 @@ test("v2 SDK authenticates service calls and customer-bound status cannot read a
     customerId: "someone-else",
   });
   await assert.rejects(wrong.status(conv.id), /not found/);
+  const unscoped = new FieldKitClient({
+    url: c.FIELDKIT_URL,
+    workspaceId: w.ws.id,
+    token: secret,
+  });
+  await assert.rejects(unscoped.status(conv.id), /externalCustomerId/);
+  assert.equal(
+    (await unscoped.status(conv.id, "sdk-customer")).messages[0].body,
+    "Hello, I need help",
+  );
+  assert.equal(
+    (
+      await fetch(
+        `${c.FIELDKIT_URL}/v2/workspaces/${w.ws.id}/requests/${conv.id}`,
+        { headers: { Authorization: `Bearer ${secret}` } },
+      )
+    ).status,
+    400,
+    "status without externalCustomerId is rejected",
+  );
   await sdk.reply(conv.id, {
     externalCustomerId: "sdk-customer",
     body: "A follow-up question",

@@ -33,19 +33,20 @@ export function reportWindow(filters: ReportFilter, now = new Date()) {
 
 /** The same delivered-reply and confirmation definitions are used by legacy Analytics. */
 export function ticketMetricsSQL(cohort: string) {
+  // Every correlated subquery carries workspace_id so the (workspace_id,conversation_id,…) indexes apply.
   return `WITH cohort AS (${cohort}), metrics AS(SELECT c.*,
-    EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='assistant' AND m.delivered_at IS NOT NULL) ai,
-    EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role='staff' AND m.delivered_at IS NOT NULL) staff,
-    EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'handoffCategory' IS NOT NULL) handoff,
-    EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'previousStatus'='resolved' AND e.data->>'status'='open' AND e.kind<>'conversation.merged') reopened,
-    EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'actorType'='staff' AND e.data->>'status'='resolved' AND e.kind<>'conversation.merged') staff_resolved,
-    EXISTS(SELECT 1 FROM events e WHERE e.conversation_id=c.id AND e.data->>'actorType'='automation' AND e.data->>'status'='resolved') automation_resolved,
-    coalesce((SELECT f.resolved AND f.rating IS DISTINCT FROM 'bad' AND NOT EXISTS(SELECT 1 FROM messages later WHERE later.conversation_id=c.id AND later.role='customer' AND later.created_at>(SELECT created_at FROM messages WHERE id=f.message_id)) FROM customer_feedback f WHERE f.conversation_id=c.id AND f.source='native' ORDER BY f.updated_at DESC,f.id DESC LIMIT 1),false) confirmed,
-    (SELECT min(m.created_at) FROM messages m WHERE m.conversation_id=c.id AND m.role='customer') first_customer,
-    (SELECT min(m.delivered_at) FROM messages m WHERE m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at>=(SELECT min(created_at) FROM messages WHERE conversation_id=c.id AND role='customer')) first_reply,
-    (SELECT min(e.created_at) FROM events e WHERE e.conversation_id=c.id AND e.data->>'status'='resolved' AND e.kind<>'conversation.merged' AND e.created_at>=c.created_at) first_resolution,
-    EXISTS(SELECT 1 FROM messages m WHERE m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at IS NULL) unknown_delivery,
-    (c.created_at<(SELECT applied_at FROM app_migrations WHERE version=9) OR (c.external_id IS NOT NULL AND (SELECT min(created_at) FROM messages WHERE conversation_id=c.id)<(SELECT applied_at FROM app_migrations WHERE version=9))) unknown_history
+    EXISTS(SELECT 1 FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='assistant' AND m.delivered_at IS NOT NULL) ai,
+    EXISTS(SELECT 1 FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='staff' AND m.delivered_at IS NOT NULL) staff,
+    EXISTS(SELECT 1 FROM events e WHERE e.workspace_id=c.workspace_id AND e.conversation_id=c.id AND e.data->>'handoffCategory' IS NOT NULL) handoff,
+    EXISTS(SELECT 1 FROM events e WHERE e.workspace_id=c.workspace_id AND e.conversation_id=c.id AND e.data->>'previousStatus'='resolved' AND e.data->>'status'='open' AND e.kind<>'conversation.merged') reopened,
+    EXISTS(SELECT 1 FROM events e WHERE e.workspace_id=c.workspace_id AND e.conversation_id=c.id AND e.data->>'actorType'='staff' AND e.data->>'status'='resolved' AND e.kind<>'conversation.merged') staff_resolved,
+    EXISTS(SELECT 1 FROM events e WHERE e.workspace_id=c.workspace_id AND e.conversation_id=c.id AND e.data->>'actorType'='automation' AND e.data->>'status'='resolved') automation_resolved,
+    coalesce((SELECT f.resolved AND f.rating IS DISTINCT FROM 'bad' AND NOT EXISTS(SELECT 1 FROM messages later WHERE later.workspace_id=c.workspace_id AND later.conversation_id=c.id AND later.role='customer' AND later.created_at>(SELECT created_at FROM messages WHERE workspace_id=c.workspace_id AND id=f.message_id)) FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id AND f.source='native' ORDER BY f.updated_at DESC,f.id DESC LIMIT 1),false) confirmed,
+    (SELECT min(m.created_at) FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role='customer') first_customer,
+    (SELECT min(m.delivered_at) FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at>=(SELECT min(created_at) FROM messages WHERE workspace_id=c.workspace_id AND conversation_id=c.id AND role='customer')) first_reply,
+    (SELECT min(e.created_at) FROM events e WHERE e.workspace_id=c.workspace_id AND e.conversation_id=c.id AND e.data->>'status'='resolved' AND e.kind<>'conversation.merged' AND e.created_at>=c.created_at) first_resolution,
+    EXISTS(SELECT 1 FROM messages m WHERE m.workspace_id=c.workspace_id AND m.conversation_id=c.id AND m.role IN ('assistant','staff') AND m.delivered_at IS NULL) unknown_delivery,
+    (c.created_at<(SELECT applied_at FROM app_migrations WHERE version=9) OR (c.external_id IS NOT NULL AND (SELECT min(created_at) FROM messages WHERE workspace_id=c.workspace_id AND conversation_id=c.id)<(SELECT applied_at FROM app_migrations WHERE version=9))) unknown_history
     FROM cohort c)`;
 }
 

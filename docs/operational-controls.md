@@ -33,7 +33,14 @@ OAuth scopes are shown when the provider returned them; existing connections may
 have unknown declared scopes, so successful reads establish only actual access.
 
 Paid response/embedding probes require an explicit token cap within the workspace
-budget. Reported tokens and unresolved reservations remain separate. SMTP and
+budget. Reported tokens and unresolved reservations remain separate. A provider
+call that fails outright (timeout, connection error, HTTP 4xx/5xx, unreadable or
+non-JSON body) releases its reservation; only a response that arrives without a
+usage report keeps the reserved upper bound. Production turns are limited per
+workspace to max(60, monthly budget ÷ 20 000) per minute and per contact to 15 %
+of the monthly budget per rolling 24 hours, 5 % for unverified contacts such as
+widget visitors and email senders (floor 30 000 tokens); a refused turn returns
+429 and the conversation is handed to staff with that reason. SMTP and
 Postmark tests require a dedicated mailbox. Reply to the Postmark challenge from
 that same mailbox within 30 minutes through the configured authenticated inbound
 handler. This creates diagnostic evidence, not a customer ticket.
@@ -89,6 +96,9 @@ message goes to staff and still creates an eligible SLA response obligation.
 | Decoded bytes per message  | 20 MiB                                       | 40 MiB                          |
 | Workspace reserved storage | 1 GiB                                        | 100 GiB                         |
 | Anonymous upload           | 2 files, 2 MiB each, 4 MiB total             | Also bounded by operator limits |
+| Email attachment pool      | 10 % of workspace storage (100 MiB)          | Scales with workspace storage   |
+| Email files per sender     | min(message limit, storage ÷ 40) per 24 h    | Scales with workspace storage   |
+| Unanswered email files     | Deleted 7 days after upload                  | Fixed                           |
 | Concurrent scans           | 2                                            | 4                               |
 | Scanner deadline           | 30 seconds                                   | 120 seconds                     |
 | Signature age              | 48 hours                                     | 168 hours                       |
@@ -138,9 +148,15 @@ accept `ceil(decoded message limit × 4/3) + 256 KiB` for inbound email; with de
 use at least **29 MiB**. Direct upload requests remain limited to per-file bytes.
 Server streaming limits still apply when Content-Length is absent or forged.
 
-Inbound email is authenticated before parsing. Files are staged durably before a
-successful webhook acknowledgement. Invalid individual files create blocked cards
-while valid text survives. Oversized whole envelopes get an explicit failure;
+Inbound email is authenticated before parsing. Attachment bodies are decoded in
+memory and staged during the inline webhook attempt; the retained envelope keeps
+only name, type, length and SHA-256, so the database never stores file bytes.
+Email files draw from their own pool and per-sender allowance (table above) and
+never from the quota shared with portal and staff uploads. Per-sender and
+per-address minute limits, a per-workspace cap on retained source and the fixed
+7-day expiry of quarantined envelopes are listed in
+[helpdesk-email.md](helpdesk-email.md#limits). Invalid individual files create
+blocked cards while valid text survives. Oversized whole envelopes get an explicit failure;
 reused message IDs cannot change content. Outbound email links to the authenticated
 portal instead of sending binary copies. Zendesk binary forwarding is unsupported
 and explicitly blocked; use native channels for files in this release.
@@ -150,6 +166,11 @@ rotates through bounded orphan batches, and removes terminal bytes after a grace
 period. Workspace retention removes originals and previews even when an unresolved
 business operation prevents deleting the conversation. Minimal operation/hash
 records may remain; they grant no download access. Apply retention to backups too.
+Hourly maintenance also purges unverified contacts without a portal user that
+have had no conversation, file, participant grant, credential, note or
+organization membership for 7 days (widget visitors and one-off email senders;
+`contacts.purged` event per workspace), and removes files of email tickets that
+received no reply within 7 days.
 
 ## Needs attention and SLA policy
 

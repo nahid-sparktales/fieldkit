@@ -36,4 +36,14 @@ INSERT INTO support_email_addresses(id,workspace_id,integration_id,address,reply
  SELECT 'legacy-'||id,workspace_id,id,lower(metadata->>'address'),lower(metadata->>'address'),false
  FROM connections WHERE provider='ticket_email' AND metadata->>'address' IS NOT NULL
  ON CONFLICT DO NOTHING;
+-- 2026-10-17 audit, S1/S9 (additive, idempotent). Retained source is bounded per workspace and sender
+-- authentication is recorded per envelope so acknowledgements and reply tokens can depend on it.
+ALTER TABLE email_intake_events ADD COLUMN IF NOT EXISTS payload_bytes integer NOT NULL DEFAULT 0;
+ALTER TABLE email_intake_events ADD COLUMN IF NOT EXISTS sender_authenticated boolean NOT NULL DEFAULT false;
+UPDATE email_intake_events SET payload_bytes=octet_length(payload_ciphertext) WHERE payload_ciphertext IS NOT NULL AND payload_bytes=0;
+CREATE INDEX IF NOT EXISTS email_intake_retained ON email_intake_events(workspace_id,payload_bytes) WHERE payload_ciphertext IS NOT NULL;
+CREATE INDEX IF NOT EXISTS email_intake_recent ON email_intake_events(workspace_id,created_at);
+CREATE INDEX IF NOT EXISTS email_intake_events_conversation ON email_intake_events(workspace_id,conversation_id);
+-- 2026-10-17 audit, S2: maintenance purges idle unverified contacts (widget visitors, email senders) by age.
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
 `;

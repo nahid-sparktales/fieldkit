@@ -13,6 +13,7 @@ import { Identity } from "../../packages/platform/src/identity.js";
 import { StaffRoles } from "../../packages/platform/src/staff-roles.js";
 import { staffSessionPolicy } from "../../packages/platform/src/identity-auth.js";
 import {
+  BUILTIN_CAPABILITIES,
   conversationVisibility,
   hasCapability,
   resolveStaffPrincipal,
@@ -98,6 +99,32 @@ function json(res: ServerResponse, value: unknown, status = 200) {
   res.end(JSON.stringify(value));
 }
 const Id = z.string().min(1).max(200);
+/** Customers, participants and company managers receive these columns only; triage fields stay staff-internal. */
+const CUSTOMER_CONVERSATION_COLUMNS = [
+  "id",
+  "subject",
+  "status",
+  "mode",
+  "created_at",
+  "updated_at",
+  "sharing",
+  "organization_id",
+  "form_id",
+  "form_version",
+  "channel_id",
+  "contact_id",
+  "external_id",
+];
+const CUSTOMER_MESSAGE_COLUMNS = [
+  "id",
+  "conversation_id",
+  "role",
+  "body",
+  "citations",
+  "created_at",
+  "delivered_at",
+  "actor_contact_id",
+];
 export async function createApp(
   c: Config,
   options: ConstructorParameters<typeof Platform>[1] & {
@@ -337,6 +364,13 @@ export async function createApp(
             })
             .strict()
             .parse(await body(req));
+          // Anonymous sessions mint a fresh visitor contact each time, so they also get an hourly cap.
+          if (!data.signedIdentity)
+            await app.rate(
+              `widget-hour:${ws.id}:${req.socket.remoteAddress}`,
+              60,
+              3600,
+            );
           const channel = requireValue(
             await app.db.one(
               "SELECT * FROM channels WHERE workspace_id=$1 AND kind=$2 AND published",
@@ -480,7 +514,7 @@ export async function createApp(
           const query = (url.searchParams.get("q") ?? "").slice(0, 200);
           json(res, {
             articles: await app.db.rows(
-              "SELECT d.id,d.title,d.slug,left(d.body,240) excerpt FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.workspace_id=$1 AND d.active AND d.published AND s.active AND s.status='ready' AND s.visibility='customer' AND ($2='' OR to_tsvector('english',d.title||' '||d.body)@@websearch_to_tsquery('english',$2)) ORDER BY d.title LIMIT 100",
+              "SELECT d.id,d.title,d.slug,left(d.body,240) excerpt FROM documents d JOIN sources s ON s.id=d.source_id WHERE d.workspace_id=$1 AND d.active AND d.published AND s.active AND s.status='ready' AND s.visibility='customer' AND ($2='' OR d.search@@websearch_to_tsquery('english',$2)) ORDER BY d.title LIMIT 100",
               [ws.id, query],
             ),
           });
@@ -688,19 +722,31 @@ export async function createApp(
           return;
         if (!suffix && method === "GET") {
           requireStaff(p);
+          // Settings, channel configuration and usage are configuration disclosure; other staff get identity only.
+          const manage = hasCapability(p, "settings:manage");
           json(res, {
             workspace: requireValue(
-              await app.db.one("SELECT * FROM workspaces WHERE id=$1", [ws]),
+              await app.db.one(
+                manage
+                  ? "SELECT * FROM workspaces WHERE id=$1"
+                  : "SELECT id,slug,name FROM workspaces WHERE id=$1",
+                [ws],
+              ),
             ),
             role: p.role,
+            capabilities: p.capabilities ?? BUILTIN_CAPABILITIES[p.role] ?? [],
             channels: await app.db.rows(
-              "SELECT * FROM channels WHERE workspace_id=$1 ORDER BY kind",
+              manage
+                ? "SELECT * FROM channels WHERE workspace_id=$1 ORDER BY kind"
+                : "SELECT id,kind,published FROM channels WHERE workspace_id=$1 ORDER BY kind",
               [ws],
             ),
-            usage: await app.db.one(
-              "SELECT COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(reserved),0) reserved FROM usage WHERE workspace_id=$1 AND created_at>=date_trunc('month',now())",
-              [ws],
-            ),
+            usage: hasCapability(p, "analytics:read")
+              ? await app.db.one(
+                  "SELECT COALESCE(sum(input_tokens),0) input_tokens,COALESCE(sum(output_tokens),0) output_tokens,COALESCE(sum(reserved),0) reserved FROM usage WHERE workspace_id=$1 AND created_at>=date_trunc('month',now())",
+                  [ws],
+                )
+              : null,
           });
           return;
         }
@@ -1132,7 +1178,7 @@ export async function createApp(
           requireStaff(p);
           json(res, {
             members: await app.db.rows(
-              'SELECT m.user_id,m.role,u.name,u.email FROM memberships m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND NOT m.disabled',
+              `SELECT m.user_id,m.role,u.name${hasCapability(p, "members:manage") ? ",u.email" : ""} FROM memberships m JOIN "user" u ON u.id=m.user_id WHERE m.workspace_id=$1 AND NOT m.disabled`,
               [ws],
             ),
           });
@@ -1341,7 +1387,7 @@ export async function createApp(
                   : "TRUE";
           json(res, {
             conversations: await app.db.rows(
-              `SELECT c.*,ct.name customer_name,ch.kind channel_kind,
+              `SELECT ${staff(p) ? "c.*" : CUSTOMER_CONVERSATION_COLUMNS.map((k) => "c." + k).join(",")},ct.name customer_name,ch.kind channel_kind,
                  latest.body last_message,latest.role last_message_role,
                  CASE WHEN $2::boolean THEN approval.expires_at END approval_expires_at,
                  CASE WHEN $2::boolean THEN (SELECT count(*)::int FROM customer_feedback f WHERE f.workspace_id=c.workspace_id AND f.conversation_id=c.id) END feedback_count,
@@ -1472,24 +1518,18 @@ export async function createApp(
         if (m && method === "GET") {
           if (p.role !== "service" || !p.scopes?.includes("requests:create"))
             throw new HttpError(403, "Scoped service credential required");
+          const customer = url.searchParams.get("externalCustomerId");
+          if (!customer)
+            throw new HttpError(400, "externalCustomerId is required");
+          // Status is readable only through the host identity that owns the conversation.
           const conv = requireValue(
             await app.db.one(
-              "SELECT id,status,mode,contact_id FROM conversations WHERE workspace_id=$1 AND id=$2",
-              [ws, m[1]],
+              "SELECT c.id,c.status,c.mode FROM conversations c JOIN contacts ct ON ct.workspace_id=c.workspace_id AND ct.id=c.contact_id WHERE c.workspace_id=$1 AND c.id=$2 AND ct.external_id=$3",
+              [ws, m[1], `host:${customer}`],
             ),
+            404,
+            "Conversation not found for this customer",
           );
-          const customer = url.searchParams.get("externalCustomerId");
-          if (
-            customer &&
-            !(await app.db.one(
-              "SELECT id FROM contacts WHERE workspace_id=$1 AND id=$2 AND external_id=$3",
-              [ws, conv.contact_id, `host:${customer}`],
-            ))
-          )
-            throw new HttpError(
-              404,
-              "Conversation not found for this customer",
-            );
           json(res, {
             id: conv.id,
             status: conv.status,
@@ -1522,7 +1562,7 @@ export async function createApp(
               ? "TRUE"
               : customerMessageVisibility(p, "c", "m", messageArgs);
             const messages = await app.db.rows(
-              `SELECT m.*,(SELECT name FROM contacts WHERE workspace_id=m.workspace_id AND id=m.actor_contact_id) actor_name,CASE WHEN c.id<>$${messageArgs.length + 1} THEN c.id END source_ticket_id,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m JOIN conversations c ON c.workspace_id=m.workspace_id AND c.id=m.conversation_id WHERE m.workspace_id=$1 AND m.conversation_id=ANY($2::text[]) AND (${visible}) AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (m.role<>'note' OR $4::boolean) AND (m.role<>'system' OR $5::boolean) ORDER BY m.created_at,m.id`,
+              `SELECT ${staff(p) ? "m.*" : CUSTOMER_MESSAGE_COLUMNS.map((k) => "m." + k).join(",")},(SELECT name FROM contacts WHERE workspace_id=m.workspace_id AND id=m.actor_contact_id) actor_name,CASE WHEN c.id<>$${messageArgs.length + 1} THEN c.id END source_ticket_id,CASE WHEN $3::boolean AND m.role IN ('note','staff') THEN (SELECT name FROM "user" WHERE id=m.author_id) END author_name FROM messages m JOIN conversations c ON c.workspace_id=m.workspace_id AND c.id=m.conversation_id WHERE m.workspace_id=$1 AND m.conversation_id=ANY($2::text[]) AND (${visible}) AND ($3::boolean OR (m.role NOT IN ('note','system') AND (m.role='customer' OR m.delivered_at IS NOT NULL))) AND (m.role<>'note' OR $4::boolean) AND (m.role<>'system' OR $5::boolean) ORDER BY m.created_at,m.id`,
               [...messageArgs, conv.id],
             );
             const files =
@@ -1535,7 +1575,11 @@ export async function createApp(
               );
             json(res, {
               conversation: {
-                ...conv,
+                ...(staff(p)
+                  ? conv
+                  : Object.fromEntries(
+                      CUSTOMER_CONVERSATION_COLUMNS.map((k) => [k, conv[k]]),
+                    )),
                 channel_kind: (
                   await app.db.one("SELECT kind FROM channels WHERE id=$1", [
                     conv.channel_id,

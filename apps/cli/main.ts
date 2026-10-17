@@ -4,7 +4,7 @@ if (existsSync(".env")) process.loadEnvFile(".env");
 const [command, ...args] = process.argv.slice(2);
 if (command === "help" || !command) {
   console.log(
-    "Navigated Support v2\n\nSet FIELDKIT_URL, FIELDKIT_WORKSPACE, and FIELDKIT_TOKEN (a scoped service token).\n\nidentify CUSTOMER_ID NAME [EMAIL]\nrequest CUSTOMER_ID MESSAGE\nstatus CONVERSATION_ID\nreadiness (requires diagnostics:read)\n\nAdministrative setup, knowledge review, and approvals are available in the authenticated web app.",
+    "Navigated Support v2\n\nSet FIELDKIT_URL, FIELDKIT_WORKSPACE, and FIELDKIT_TOKEN (a scoped service token).\n\nidentify CUSTOMER_ID NAME [EMAIL]\nrequest CUSTOMER_ID MESSAGE\nstatus CUSTOMER_ID CONVERSATION_ID\nreadiness (requires diagnostics:read)\n\nAdministrative setup, knowledge review, and approvals are available in the authenticated web app.",
   );
   process.exit(0);
 }
@@ -31,7 +31,8 @@ else if (command === "request" && args.length >= 2)
     body: args.slice(1).join(" "),
     requestKey: crypto.randomUUID(),
   });
-else if (command === "status" && args[0]) result = await client.status(args[0]);
+else if (command === "status" && args.length >= 2)
+  result = await client.status(args[1], args[0]);
 else if (command === "readiness") result = await client.readiness();
 else throw new Error("Unknown command or missing arguments; run fieldkit help");
 console.log(JSON.stringify(result, null, 2));

@@ -126,6 +126,33 @@ test("earliest unanswered anchor survives extra messages, notes and duplicate jo
     1,
   );
 });
+test("reconcile re-advances only conversations whose SLA work is due", async () => {
+  const x = await setup();
+  const checkedAt = async () =>
+    +new Date(
+      (await app.db.one(
+        "SELECT sla_checked_at FROM conversations WHERE id=$1",
+        [x.c.id],
+      ))!.sla_checked_at,
+    );
+  const initial = await checkedAt();
+  assert.ok(initial);
+  now = new Date(now.getTime() + 60000);
+  await app.sla.reconcile();
+  assert.equal(await checkedAt(), initial, "nothing is due yet");
+  now = new Date(now.getTime() + 51 * 60000);
+  await app.sla.reconcile();
+  assert.ok(
+    (await checkedAt()) > initial,
+    "the warning threshold makes the conversation due",
+  );
+  assert.ok(
+    await app.db.one(
+      "SELECT 1 FROM events WHERE conversation_id=$1 AND kind='sla.warning'",
+      [x.c.id],
+    ),
+  );
+});
 test("warnings and downtime escalation are bounded; takeover adds human target and retains response", async () => {
   const x = await setup();
   let o = (await app.sla.conversation(x.owner, x.c.id)).obligations[0];

@@ -31,6 +31,67 @@ import { AttachmentInput, AttachmentSettings } from "./attachment-contracts.js";
 import { ClamScanner, type AttachmentScanner } from "./attachment-scanner.js";
 
 const terminal = ["blocked", "canceled", "deleted"];
+/** An attachment as kept inside a retained inbound-email envelope: provider metadata and a digest, never the bytes. */
+export type EmailAttachmentMeta = {
+  Name: string;
+  ContentType: string;
+  ContentLength: number | null;
+  ContentID: string | null;
+  Sha256: string | null;
+  Rejected: string | null;
+};
+const base64Body =
+  /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+/**
+ * Decode one provider attachment exactly once. The bytes stay in process memory
+ * for the inline intake attempt; only `meta` is sealed into the database (audit S1).
+ */
+export function decodeEmailAttachment(
+  raw: unknown,
+  fileBytes: number,
+): { meta: EmailAttachmentMeta; bytes?: Buffer } {
+  const r = (raw && typeof raw === "object" ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const meta: EmailAttachmentMeta = {
+    Name: typeof r.Name === "string" ? r.Name : "rejected-file.txt",
+    ContentType:
+      typeof r.ContentType === "string"
+        ? r.ContentType
+        : "application/octet-stream",
+    ContentLength:
+      typeof r.ContentLength === "number" &&
+      Number.isSafeInteger(r.ContentLength)
+        ? r.ContentLength
+        : null,
+    ContentID:
+      typeof r.ContentID === "string" ? r.ContentID.slice(0, 200) : null,
+    Sha256: null,
+    Rejected: null,
+  };
+  if (
+    typeof r.Content !== "string" ||
+    r.Content.length > Math.ceil(fileBytes / 3) * 4 ||
+    !base64Body.test(r.Content)
+  ) {
+    meta.Rejected =
+      "Attachment encoding is malformed or exceeds the file limit";
+    return { meta };
+  }
+  const bytes = Buffer.from(r.Content, "base64");
+  if (
+    !bytes.length ||
+    bytes.length > fileBytes ||
+    r.ContentLength !== bytes.length
+  ) {
+    meta.Rejected =
+      "Attachment byte count is invalid or does not match provider metadata";
+    return { meta };
+  }
+  meta.Sha256 = createHash("sha256").update(bytes).digest("hex");
+  return { meta, bytes };
+}
 export const attachmentName = (name: string) =>
   basename(name.replaceAll("\\", "/"))
     .normalize("NFC")
@@ -77,6 +138,14 @@ export class Attachments {
         ? Math.min(2, c.FIELDKIT_ATTACHMENT_COUNT)
         : c.FIELDKIT_ATTACHMENT_COUNT,
       storageBytes: c.FIELDKIT_ATTACHMENT_STORAGE_BYTES,
+      // Inbound-email files arrive from unauthenticated senders (audit S8): they draw
+      // from their own pool, never from the quota shared with portal and staff uploads.
+      emailPoolBytes: Math.floor(c.FIELDKIT_ATTACHMENT_STORAGE_BYTES / 10),
+      emailSenderDailyBytes: Math.min(
+        c.FIELDKIT_ATTACHMENT_MESSAGE_BYTES,
+        Math.ceil(c.FIELDKIT_ATTACHMENT_STORAGE_BYTES / 40),
+      ),
+      emailUnansweredDays: 7,
       orphanHours: 24,
       previewBytes: 65536,
     };
@@ -395,11 +464,22 @@ export class Attachments {
         return this.publicRow(prior);
       }
       const totals = await this.db.one(
-        "SELECT coalesce(sum(bytes) FILTER(WHERE status NOT IN ('deleted','canceled','blocked')),0) stored,count(*) FILTER(WHERE uploader=$2 AND message_id IS NULL AND status NOT IN ('deleted','canceled','blocked')) pending,coalesce(sum(bytes) FILTER(WHERE uploader=$2 AND message_id IS NULL AND status NOT IN ('deleted','canceled','blocked')),0) pending_bytes FROM attachments WHERE workspace_id=$1",
-        [p.workspaceId, who],
+        "SELECT coalesce(sum(bytes) FILTER(WHERE status NOT IN ('deleted','canceled','blocked') AND uploader_role<>'email'),0) stored,coalesce(sum(bytes) FILTER(WHERE status NOT IN ('deleted','canceled','blocked') AND uploader_role='email'),0) email_pool,coalesce(sum(bytes) FILTER(WHERE status NOT IN ('deleted','canceled','blocked') AND uploader_role='email' AND contact_id=$3 AND created_at>now()-interval '24 hours'),0) sender_day,count(*) FILTER(WHERE uploader=$2 AND message_id IS NULL AND status NOT IN ('deleted','canceled','blocked')) pending,coalesce(sum(bytes) FILTER(WHERE uploader=$2 AND message_id IS NULL AND status NOT IN ('deleted','canceled','blocked')),0) pending_bytes FROM attachments WHERE workspace_id=$1",
+        [p.workspaceId, who, p.contactId ?? null],
         q,
       );
-      if (Number(totals!.stored) + d.size > limits.storageBytes)
+      if (p.emailIntake) {
+        if (Number(totals!.email_pool) + d.size > limits.emailPoolBytes)
+          throw new HttpError(
+            413,
+            "Email attachment storage pool is full; files from email senders wait until older email files expire",
+          );
+        if (Number(totals!.sender_day) + d.size > limits.emailSenderDailyBytes)
+          throw new HttpError(
+            413,
+            "Daily attachment allowance for this email sender reached",
+          );
+      } else if (Number(totals!.stored) + d.size > limits.storageBytes)
         throw new HttpError(413, "Workspace attachment storage quota reached");
       if (
         Number(totals!.pending) >= limits.count ||
@@ -671,11 +751,18 @@ export class Attachments {
       );
     }
   }
+  /**
+   * Stage inbound-email files. `bodies` carries the decoded bytes of the inline
+   * attempt; a later reprocessing (worker, recheck) has none and can only reuse
+   * files already staged under the same deterministic key. Envelopes sealed before
+   * bodies left the database still carry `Content` and decode as before.
+   */
   async stageEmail(
     p: Principal,
     conversationId: string,
     providerId: string,
     rawFiles: unknown[],
+    bodies?: (Buffer | undefined)[],
   ) {
     const ids: string[] = [],
       limits = this.limits(p);
@@ -689,30 +776,32 @@ export class Attachments {
         ),
         key = `email:${digest(providerId)}:${index}`;
       let reason = "",
-        bytes: Buffer | undefined;
+        bytes: Buffer | undefined = bodies?.[index];
       if (rawFiles.length > limits.count && index === limits.count - 1)
         reason =
           "Additional files exceed the per-message count limit; use the portal to submit them separately";
-      else if (
-        typeof raw?.Content !== "string" ||
-        raw.Content.length > Math.ceil(limits.fileBytes / 3) * 4 ||
-        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-          raw.Content,
-        )
-      )
-        reason = "Attachment encoding is malformed or exceeds the file limit";
-      else {
-        bytes = Buffer.from(raw.Content, "base64");
-        if (
-          !bytes.length ||
-          bytes.length > limits.fileBytes ||
-          raw.ContentLength !== bytes.length
-        )
+      else if (!bytes) {
+        if (typeof raw?.Content === "string") {
+          const decoded = decodeEmailAttachment(raw, limits.fileBytes);
+          bytes = decoded.bytes;
+          reason = decoded.meta.Rejected ?? "";
+        } else if (typeof raw?.Rejected === "string" && raw.Rejected)
+          reason = raw.Rejected;
+        else {
+          const staged = await this.db.one(
+            "SELECT id,status FROM attachments WHERE workspace_id=$1 AND uploader=$2 AND request_key=$3",
+            [p.workspaceId, identity(p), key],
+          );
+          if (staged && staged.status !== "uploading") {
+            ids.push(staged.id);
+            continue;
+          }
           reason =
-            "Attachment byte count is invalid or does not match provider metadata";
-        else if (total + bytes.length > limits.messageBytes)
-          reason = "Decoded attachments exceed the per-message byte limit";
+            "Attachment content was not retained for reprocessing; ask the sender to resend the file";
+        }
       }
+      if (!reason && bytes && total + bytes.length > limits.messageBytes)
+        reason = "Decoded attachments exceed the per-message byte limit";
       if (!reason) {
         try {
           const row = await this.reserve(p, {
@@ -1189,6 +1278,18 @@ export class Attachments {
     await this.db.pool.query(
       "UPDATE attachments SET status='deleted',generation=generation+1,updated_at=now() WHERE message_id IS NULL AND created_at<now()-interval '24 hours' AND status<>'deleted'",
     );
+    // Audit S8: files mailed in by senders whose ticket never received a delivered
+    // staff or assistant reply (including quarantined intake) do not outlive a week.
+    const unanswered = await this.db.rows(
+      `UPDATE attachments a SET status='deleted',generation=generation+1,error='File removed: the email ticket received no reply within 7 days',updated_at=now()
+      WHERE a.uploader_role='email' AND a.status<>'deleted' AND a.created_at<now()-($1::int*interval '1 day')
+      AND NOT EXISTS(SELECT 1 FROM conversations c JOIN messages m ON m.workspace_id=c.workspace_id AND m.conversation_id IN (c.id,c.merged_into_id) WHERE c.workspace_id=a.workspace_id AND c.id=a.conversation_id AND m.role IN ('staff','assistant') AND m.delivered_at IS NOT NULL)
+      RETURNING storage_key`,
+      [this.limits().emailUnansweredDays],
+    );
+    for (const row of unanswered)
+      for (const preview of [false, true])
+        await unlink(this.path(row.storage_key, preview)).catch(() => {});
     const pending = await this.db.rows(
       "SELECT workspace_id,id FROM attachments WHERE status IN ('quarantined','scanning') AND updated_at<now()-interval '5 minutes' LIMIT 100",
     );

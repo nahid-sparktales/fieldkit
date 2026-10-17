@@ -1267,106 +1267,115 @@ export class Quality {
     const comparisonFrom = new Date(
       Date.parse(from) - (Date.parse(to) - Date.parse(from)),
     ).toISOString();
-    const [totals, previousTotals, trend] = await Promise.all([
-      this.db.one(base + totalsSQL, args),
-      this.db.one(base + totalsSQL, [
-        p.workspaceId,
-        comparisonFrom,
-        from,
-        d.channel ?? null,
-      ]),
-      this.db.rows(
+    return this.db.tx(async (q) => {
+      await q.query("SET LOCAL statement_timeout='15s'");
+      const [totals, previousTotals, trend] = await Promise.all([
+        this.db.one(base + totalsSQL, args, q),
+        this.db.one(
+          base + totalsSQL,
+          [p.workspaceId, comparisonFrom, from, d.channel ?? null],
+          q,
+        ),
+        this.db.rows(
+          base +
+            ` SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS "day",count(*)::int conversations FROM cohort GROUP BY 1 ORDER BY 1`,
+          args,
+          q,
+        ),
+      ]);
+      const satisfaction = await this.db.rows(
         base +
-          ` SELECT to_char(created_at AT TIME ZONE 'UTC','YYYY-MM-DD') AS "day",count(*)::int conversations FROM cohort GROUP BY 1 ORDER BY 1`,
+          ` SELECT f.source,count(*)::int rated,count(*) FILTER(WHERE f.rating='good')::int good,count(*) FILTER(WHERE f.rating='bad')::int bad,count(*) FILTER(WHERE f.rating='neutral')::int neutral FROM(SELECT DISTINCT ON(f.conversation_id,f.source) f.* FROM customer_feedback f JOIN cohort c ON c.workspace_id=f.workspace_id AND c.id=f.conversation_id WHERE f.rating IS NOT NULL ORDER BY f.conversation_id,f.source,CASE WHEN f.source='native' THEN f.updated_at ELSE f.answered_at END DESC,f.external_id)f GROUP BY f.source`,
         args,
-      ),
-    ]);
-    const satisfaction = await this.db.rows(
-      base +
-        ` SELECT f.source,count(*)::int rated,count(*) FILTER(WHERE f.rating='good')::int good,count(*) FILTER(WHERE f.rating='bad')::int bad,count(*) FILTER(WHERE f.rating='neutral')::int neutral FROM(SELECT DISTINCT ON(f.conversation_id,f.source) f.* FROM customer_feedback f JOIN cohort c ON c.id=f.conversation_id WHERE f.rating IS NOT NULL ORDER BY f.conversation_id,f.source,CASE WHEN f.source='native' THEN f.updated_at ELSE f.answered_at END DESC,f.external_id)f GROUP BY f.source`,
-      args,
-    );
-    const detailArgs: unknown[] = [...args],
-      conditions: string[] = [];
-    const outcome = {
-      all: "TRUE",
-      ai: "ai",
-      confirmed: "ai AND confirmed",
-      ai_only:
-        "ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history",
-      staff_resolved: "staff_resolved",
-      handoff: "handoff",
-    }[d.cohort];
-    conditions.push(outcome);
-    if (d.status !== "all") {
-      detailArgs.push(d.status);
-      conditions.push(`status=$${detailArgs.length}`);
-    }
-    if (d.q) {
-      detailArgs.push(`%${d.q.replace(/[\\%_]/g, "\\$&")}%`);
-      conditions.push(`subject ILIKE $${detailArgs.length} ESCAPE '\\'`);
-    }
-    const detailWhere = conditions.join(" AND ");
-    const conversationTotal = (await this.db.one(
-      base + ` SELECT count(*)::int total FROM metrics WHERE ${detailWhere}`,
-      detailArgs,
-    ))!.total;
-    const detailOrder =
-      d.order === "subject"
-        ? "subject ASC,id ASC"
-        : d.order === "oldest"
-          ? "created_at ASC,id ASC"
-          : "created_at DESC,id DESC";
-    detailArgs.push(d.limit, (d.page - 1) * d.limit);
-    const details = await this.db.rows(
-      base +
-        ` SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at,(ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history) ai_only FROM metrics WHERE ${detailWhere} ORDER BY ${detailOrder} LIMIT $${detailArgs.length - 1} OFFSET $${detailArgs.length}`,
-      detailArgs,
-    );
-    const handoffs = await this.db.rows(
-      base +
-        ` SELECT coalesce(e.data->>'handoffCategory','unknown') reason,count(DISTINCT c.id)::int conversations FROM cohort c JOIN events e ON e.conversation_id=c.id WHERE e.data->>'handoffCategory' IS NOT NULL GROUP BY reason`,
-      args,
-    );
-    const usage = await this.db.rows(
-      "SELECT coalesce(u.purpose,'unknown') purpose,u.model,u.provider,sum(u.input_tokens)::bigint input_tokens,sum(u.output_tokens)::bigint output_tokens,sum(u.reserved)::bigint reserved,sum(u.duration_ms)::bigint duration_ms FROM usage u LEFT JOIN runs r ON r.id=u.run_id LEFT JOIN conversations c ON c.id=r.conversation_id LEFT JOIN channels ch ON ch.id=c.channel_id WHERE u.workspace_id=$1 AND u.created_at>=$2 AND u.created_at<$3 AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4) GROUP BY u.purpose,u.model,u.provider",
-      args,
-    );
-    const topics = await this.db.rows(
-      "SELECT g.id,g.title,count(o.id)::int occurrences FROM knowledge_gaps g JOIN gap_occurrences o ON o.gap_id=g.id JOIN conversations c ON c.id=o.conversation_id LEFT JOIN channels ch ON ch.id=c.channel_id WHERE g.workspace_id=$1 AND o.created_at>=$2 AND o.created_at<$3 AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4) GROUP BY g.id ORDER BY occurrences DESC LIMIT 20",
-      args,
-    );
-    return {
-      from,
-      to,
-      totals,
-      comparison: { from: comparisonFrom, to: from, totals: previousTotals },
-      trend,
-      satisfaction: satisfaction.map((s) => ({
-        ...s,
-        unrated: totals!.conversations - s.rated,
-      })),
-      handoffs,
-      usage,
-      topics,
-      conversations: details,
-      conversationTotal,
-      page: d.page,
-      limit: d.limit,
-      feedbackSync: await this.settings(p),
-      definitions: {
-        cohort:
-          "Conversations created in the selected window. Outcomes reflect retained history through now.",
-        resolution:
-          "Current customer confirmation among conversations with a delivered AI answer. A later customer message or negative feedback invalidates confirmation.",
-        satisfaction:
-          "Latest submitted rating per conversation and source. Unrated conversations are excluded from rating percentages.",
-        history:
-          "Missing historical timestamps and transitions remain unknown. Response time uses delivered replies only.",
-        usage:
-          "Actual usage in the selected window. Channel filters exclude unattributed calls.",
-      },
-    };
+        q,
+      );
+      const detailArgs: unknown[] = [...args],
+        conditions: string[] = [];
+      const outcome = {
+        all: "TRUE",
+        ai: "ai",
+        confirmed: "ai AND confirmed",
+        ai_only:
+          "ai AND confirmed AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history",
+        staff_resolved: "staff_resolved",
+        handoff: "handoff",
+      }[d.cohort];
+      conditions.push(outcome);
+      if (d.status !== "all") {
+        detailArgs.push(d.status);
+        conditions.push(`status=$${detailArgs.length}`);
+      }
+      if (d.q) {
+        detailArgs.push(`%${d.q.replace(/[\\%_]/g, "\\$&")}%`);
+        conditions.push(`subject ILIKE $${detailArgs.length} ESCAPE '\\'`);
+      }
+      const detailWhere = conditions.join(" AND ");
+      const conversationTotal = (await this.db.one(
+        base + ` SELECT count(*)::int total FROM metrics WHERE ${detailWhere}`,
+        detailArgs,
+        q,
+      ))!.total;
+      const detailOrder =
+        d.order === "subject"
+          ? "subject ASC,id ASC"
+          : d.order === "oldest"
+            ? "created_at ASC,id ASC"
+            : "created_at DESC,id DESC";
+      detailArgs.push(d.limit, (d.page - 1) * d.limit);
+      const details = await this.db.rows(
+        base +
+          ` SELECT id,subject,status,ai,confirmed,staff_resolved,handoff,reopened,first_reply,created_at,(ai AND NOT staff AND NOT handoff AND NOT unknown_delivery AND NOT unknown_history) ai_only FROM metrics WHERE ${detailWhere} ORDER BY ${detailOrder} LIMIT $${detailArgs.length - 1} OFFSET $${detailArgs.length}`,
+        detailArgs,
+        q,
+      );
+      const handoffs = await this.db.rows(
+        base +
+          ` SELECT coalesce(e.data->>'handoffCategory','unknown') reason,count(DISTINCT c.id)::int conversations FROM cohort c JOIN events e ON e.workspace_id=c.workspace_id AND e.conversation_id=c.id WHERE e.data->>'handoffCategory' IS NOT NULL GROUP BY reason`,
+        args,
+        q,
+      );
+      const usage = await this.db.rows(
+        "SELECT coalesce(u.purpose,'unknown') purpose,u.model,u.provider,sum(u.input_tokens)::bigint input_tokens,sum(u.output_tokens)::bigint output_tokens,sum(u.reserved)::bigint reserved,sum(u.duration_ms)::bigint duration_ms FROM usage u LEFT JOIN runs r ON r.id=u.run_id LEFT JOIN conversations c ON c.id=r.conversation_id LEFT JOIN channels ch ON ch.id=c.channel_id WHERE u.workspace_id=$1 AND u.created_at>=$2 AND u.created_at<$3 AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4) GROUP BY u.purpose,u.model,u.provider",
+        args,
+        q,
+      );
+      const topics = await this.db.rows(
+        "SELECT g.id,g.title,count(o.id)::int occurrences FROM knowledge_gaps g JOIN gap_occurrences o ON o.gap_id=g.id JOIN conversations c ON c.id=o.conversation_id LEFT JOIN channels ch ON ch.id=c.channel_id WHERE g.workspace_id=$1 AND o.created_at>=$2 AND o.created_at<$3 AND ($4::text IS NULL OR ch.kind=$4 OR ch.id=$4) GROUP BY g.id ORDER BY occurrences DESC LIMIT 20",
+        args,
+        q,
+      );
+      return {
+        from,
+        to,
+        totals,
+        comparison: { from: comparisonFrom, to: from, totals: previousTotals },
+        trend,
+        satisfaction: satisfaction.map((s) => ({
+          ...s,
+          unrated: totals!.conversations - s.rated,
+        })),
+        handoffs,
+        usage,
+        topics,
+        conversations: details,
+        conversationTotal,
+        page: d.page,
+        limit: d.limit,
+        feedbackSync: await this.settings(p),
+        definitions: {
+          cohort:
+            "Conversations created in the selected window. Outcomes reflect retained history through now.",
+          resolution:
+            "Current customer confirmation among conversations with a delivered AI answer. A later customer message or negative feedback invalidates confirmation.",
+          satisfaction:
+            "Latest submitted rating per conversation and source. Unrated conversations are excluded from rating percentages.",
+          history:
+            "Missing historical timestamps and transitions remain unknown. Response time uses delivered replies only.",
+          usage:
+            "Actual usage in the selected window. Channel filters exclude unattributed calls.",
+        },
+      };
+    });
   }
 }
 export function classifyHandoff(reason: string) {

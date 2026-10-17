@@ -511,15 +511,44 @@ export class Platform {
         [ws.id, days],
       );
       for (const c of old) await this.deleteConversation(ws.id, c.id);
+      // Audit S2: widget visitors and email senders that never produced a
+      // conversation, file, grant or note are purged after 7 idle days, in batches.
+      let purged = 0;
+      for (let batch = 0; batch < 20; batch++) {
+        const rows = await this.db.rows(
+          `DELETE FROM contacts c WHERE c.workspace_id=$1 AND c.id IN (
+            SELECT x.id FROM contacts x WHERE x.workspace_id=$1 AND NOT x.verified AND x.user_id IS NULL AND x.created_at<now()-interval '7 days'
+            AND NOT EXISTS(SELECT 1 FROM conversations v WHERE v.workspace_id=x.workspace_id AND v.contact_id=x.id)
+            AND NOT EXISTS(SELECT 1 FROM attachments a WHERE a.workspace_id=x.workspace_id AND a.contact_id=x.id)
+            AND NOT EXISTS(SELECT 1 FROM ticket_participants tp WHERE tp.workspace_id=x.workspace_id AND (tp.contact_id=x.id OR tp.portal_contact_id=x.id))
+            AND NOT EXISTS(SELECT 1 FROM credentials k WHERE k.workspace_id=x.workspace_id AND k.contact_id=x.id)
+            AND NOT EXISTS(SELECT 1 FROM contact_notes n WHERE n.workspace_id=x.workspace_id AND n.contact_id=x.id)
+            AND NOT EXISTS(SELECT 1 FROM customer_organization_memberships m WHERE m.workspace_id=x.workspace_id AND m.contact_id=x.id)
+            LIMIT 500) RETURNING c.id`,
+          [ws.id],
+        );
+        purged += rows.length;
+        if (rows.length < 500) break;
+      }
+      if (purged)
+        await this.db.event(this.db.pool, ws.id, "contacts.purged", {
+          count: purged,
+          idleDays: 7,
+        });
     }
   }
-  async rate(key: string, max = 60) {
+  async rate(key: string, max = 60, seconds = 60) {
     const row = await this.db.one(
-      `INSERT INTO rate_limits(key,count,expires_at) VALUES($1,1,now()+interval '1 minute') ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<now() THEN 1 ELSE rate_limits.count+1 END, expires_at=CASE WHEN rate_limits.expires_at<now() THEN now()+interval '1 minute' ELSE rate_limits.expires_at END RETURNING count`,
-      [key],
+      `INSERT INTO rate_limits(key,count,expires_at) VALUES($1,1,now()+($2::int*interval '1 second')) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<now() THEN 1 ELSE rate_limits.count+1 END, expires_at=CASE WHEN rate_limits.expires_at<now() THEN now()+($2::int*interval '1 second') ELSE rate_limits.expires_at END RETURNING count`,
+      [key, seconds],
     );
     if (row!.count > max)
-      throw new HttpError(429, "Too many requests. Try again in a minute.");
+      throw new HttpError(
+        429,
+        seconds > 60
+          ? "Too many requests. Try again later."
+          : "Too many requests. Try again in a minute.",
+      );
   }
   async createWorkspace(userId: string, input: unknown, setupToken?: string) {
     const data = WorkspaceInput.parse(input);

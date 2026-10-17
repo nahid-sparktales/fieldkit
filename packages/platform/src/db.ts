@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { type Config, HttpError, log } from "./config.js";
 
 export const uid = randomUUID;
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 29;
 export type Queryable = Pick<Pool, "query"> | PoolClient;
 export class Database {
   selectWorkflow?: (q: PoolClient, conv: any) => Promise<any>;
@@ -77,13 +77,19 @@ export class Database {
       q.release();
     }
   }
-  async enqueue(q: PoolClient, name: string, data: object) {
+  async enqueue(
+    q: PoolClient,
+    name: string,
+    data: object,
+    options: { singletonKey?: string; singletonSeconds?: number } = {},
+  ) {
     return this.boss.send(name, data, {
       db: { executeSql: (sql, values) => q.query(sql, values) },
       retryLimit: 4,
       retryDelay: 5,
       retryBackoff: true,
       expireInSeconds: name === "ingest" ? 1800 : 300,
+      ...options,
     });
   }
   async event(
@@ -137,8 +143,9 @@ export class Database {
       CREATE INDEX IF NOT EXISTS events_workspace_cursor ON events(workspace_id,id);
       CREATE INDEX IF NOT EXISTS messages_conversation_time ON messages(workspace_id,conversation_id,created_at,id);
     `);
+    await this.pool.query(PERFORMANCE_SCHEMA);
     await this.pool.query(
-      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24),(25),(26),(27),(28) ON CONFLICT DO NOTHING",
+      "INSERT INTO app_migrations(version) VALUES(14),(15),(16),(17),(18),(19),(20),(21),(22),(23),(24),(25),(26),(27),(28),(29) ON CONFLICT DO NOTHING",
     );
     await this.saver.setup();
     await this.boss.start();
@@ -255,4 +262,28 @@ CREATE TABLE IF NOT EXISTS workflow_component_versions(workspace_id text NOT NUL
 ALTER TABLE workflow_versions ADD COLUMN IF NOT EXISTS compiled_definition jsonb;
 CREATE TABLE IF NOT EXISTS workflow_step_results(workspace_id text NOT NULL REFERENCES workspaces ON DELETE CASCADE,run_id text NOT NULL,node_id text NOT NULL,input_hash text NOT NULL,status text NOT NULL,output jsonb,logs text,error text,created_at timestamptz NOT NULL DEFAULT now(),finished_at timestamptz,PRIMARY KEY(workspace_id,run_id,node_id),FOREIGN KEY(workspace_id,run_id) REFERENCES runs(workspace_id,id) ON DELETE CASCADE);
 INSERT INTO app_migrations(version) VALUES(8) ON CONFLICT DO NOTHING;
+`;
+
+// Additive migration 29: indexes for predicates the 2026-10-17 audit found unindexed, due-only SLA reconcile, and indexed public article search.
+const PERFORMANCE_SCHEMA = `
+CREATE INDEX IF NOT EXISTS customer_feedback_conversation ON customer_feedback(workspace_id,conversation_id,updated_at DESC);
+CREATE INDEX IF NOT EXISTS ticket_emails_conversation ON ticket_emails(workspace_id,conversation_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS inbound_ticket_emails_conversation ON inbound_ticket_emails(workspace_id,conversation_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS email_intake_events_conversation ON email_intake_events(workspace_id,conversation_id);
+CREATE INDEX IF NOT EXISTS ticket_email_deliveries_recipient ON ticket_email_deliveries(workspace_id,recipient_key);
+CREATE INDEX IF NOT EXISTS messages_run ON messages(workspace_id,run_id) WHERE run_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS shadow_results_source_run ON shadow_results(workspace_id,source_run_id);
+CREATE INDEX IF NOT EXISTS runs_rollout ON runs(workspace_id,rollout_id) WHERE rollout_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS approvals_workspace_status ON approvals(workspace_id,status,expires_at DESC);
+CREATE INDEX IF NOT EXISTS operations_workspace_time ON operations(workspace_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS deliveries_workspace_status ON deliveries(workspace_id,status,created_at DESC);
+CREATE INDEX IF NOT EXISTS sla_notifications_recipient ON sla_notifications(workspace_id,recipient_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS ticket_automation_executions_conversation ON ticket_automation_executions(workspace_id,conversation_id,status);
+CREATE INDEX IF NOT EXISTS customer_org_memberships_contact ON customer_organization_memberships(workspace_id,contact_id);
+CREATE INDEX IF NOT EXISTS ticket_participants_portal_contact ON ticket_participants(workspace_id,portal_contact_id) WHERE active;
+CREATE INDEX IF NOT EXISTS chunks_document ON chunks(document_id);
+CREATE INDEX IF NOT EXISTS sla_obligations_next ON sla_obligations(workspace_id,least(warning_at,due_at,escalate_at)) WHERE ended_at IS NULL;
+ALTER TABLE documents ADD COLUMN IF NOT EXISTS search tsvector GENERATED ALWAYS AS (to_tsvector('english',title||' '||body)) STORED;
+CREATE INDEX IF NOT EXISTS documents_search ON documents USING gin(search);
+INSERT INTO app_migrations(version) VALUES(29) ON CONFLICT DO NOTHING;
 `;

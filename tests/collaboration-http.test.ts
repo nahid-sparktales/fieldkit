@@ -205,8 +205,35 @@ test("participant HTTP list, detail, and event replay reveal only future public 
   );
   assert.equal(detail.access.requester, false);
   assert.equal(detail.access.changeStatus, false);
+  // Customer-facing rows carry no staff triage or message bookkeeping columns.
+  assert.equal(detail.conversation.id, c.id);
+  for (const key of [
+    "tags",
+    "priority",
+    "assigned_to",
+    "team_id",
+    "edit_version",
+  ])
+    assert.ok(!(key in detail.conversation), `conversation.${key}`);
+  for (const m of detail.messages)
+    for (const key of [
+      "author_id",
+      "request_key",
+      "sla_wait_id",
+      "automation_execution_id",
+    ])
+      assert.ok(!(key in m), `message.${key}`);
+  const staffDetail = await (
+    await fetch(base + `${w.path}/conversations/${c.id}`, {
+      headers: { Origin: config.FIELDKIT_URL, Cookie: ownerAccount.cookie },
+    })
+  ).json();
+  assert.ok("priority" in staffDetail.conversation);
+  assert.ok(staffDetail.messages.every((m: any) => "request_key" in m));
   list = (await json(`${w.path}/conversations?scope=mine`, p)).conversations;
   assert.equal(list[0].last_message, "Visible future reply");
+  assert.equal(list[0].id, c.id);
+  assert.ok(!("priority" in list[0]) && !("tags" in list[0]));
   const replay = await events(
     `${w.path}/conversations/${c.id}/events`,
     p,

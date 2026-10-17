@@ -345,6 +345,12 @@ export class Productivity {
   async forms(p: Principal, admin = false) {
     p = await this.fresh(p);
     if (admin) requireCapability(p, "fields:manage");
+    else if (
+      staff(p)
+        ? !hasCapability(p, "tickets:read")
+        : !["customer", "visitor"].includes(p.role)
+    )
+      throw new HttpError(403, "Ticket form access required");
     const rows = await this.db.rows(
       "SELECT * FROM ticket_forms WHERE workspace_id=$1 ORDER BY (definition->>'position')::int,id",
       [p.workspaceId],
@@ -367,7 +373,13 @@ export class Productivity {
               ),
           ),
         }))
-        .filter((f) => admin || (f.active && !f.archived && !f.needsReview)),
+        .filter((f) => admin || (f.active && !f.archived && !f.needsReview))
+        .map((f) => {
+          if (staff(p)) return f;
+          // Routing defaults are staff configuration, not part of the customer form.
+          const { defaultTeamId, emailDefault, ...customerForm } = f;
+          return customerForm;
+        }),
     };
   }
 
@@ -1149,7 +1161,7 @@ export class Productivity {
     };
     for (const f of d.filters) {
       let value = f.value,
-        expr = builtin[f.field];
+        expr = Object.hasOwn(builtin, f.field) ? builtin[f.field] : undefined;
       if (f.field === "assignee" && value === "me") value = p.userId;
       if (f.field === "team" && value === "my_teams") {
         if (f.op !== "eq") fail("My teams requires equals");
@@ -1255,7 +1267,7 @@ export class Productivity {
         channel: ["portal", "widget", "zendesk", "email"],
       };
       if (
-        choices[f.field] &&
+        Object.hasOwn(choices, f.field) &&
         list.some((v: any) => !choices[f.field].includes(v))
       )
         fail("Unknown filter option");

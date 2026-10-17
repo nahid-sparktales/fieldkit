@@ -4,7 +4,7 @@ import {
   GapSuggestion,
   type QualityModelInput,
 } from "./quality-contracts.js";
-import OpenAI from "openai";
+import OpenAI, { APIError } from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import { z } from "zod";
 import type { Database } from "./db.js";
@@ -35,6 +35,25 @@ const Output = z.object({
   parametersJson: z.string(),
   reason: z.string(),
 });
+/**
+ * Audit S2 controls. Both scale with the workspace's monthly budget so larger
+ * plans keep proportional headroom; the floors keep a single turn possible.
+ */
+export const MODEL_LIMITS = {
+  turnsPerMinute: (monthlyTokenBudget: number) =>
+    Math.max(60, Math.floor(monthlyTokenBudget / 20000)),
+  contactDailyTokens: (monthlyTokenBudget: number, verified: boolean) =>
+    Math.max(30000, Math.floor(monthlyTokenBudget * (verified ? 0.15 : 0.05))),
+};
+// A provider call that fails outright never produced output we could be billed
+// for beyond the provider's own accounting; its reservation must not hold budget.
+const definiteFailure = (e: unknown) =>
+  e instanceof HttpError ||
+  e instanceof APIError ||
+  (e instanceof Error &&
+    ["AbortError", "TimeoutError", "TypeError", "SyntaxError"].includes(
+      e.name,
+    ));
 export type ModelInput = {
   workspaceId: string;
   runId: string;
@@ -113,9 +132,55 @@ export class LiveModel implements ModelPort {
           q,
         ))!.n,
       );
-      if (used + amount > Settings.parse(workspace.settings).monthlyTokenBudget)
+      const budget = Settings.parse(workspace.settings).monthlyTokenBudget;
+      if (used + amount > budget)
         throw new HttpError(429, "Workspace model usage budget reached");
       const scope = usageContext.getStore();
+      if (
+        kind === "response" &&
+        (scope?.purpose ?? "production") === "production"
+      ) {
+        // Audit S2: production turns are rate limited per workspace and capped per
+        // contact and day, lower for contacts nobody has verified.
+        const perMinute = MODEL_LIMITS.turnsPerMinute(budget);
+        const recent = Number(
+          (await this.db.one(
+            "SELECT count(*)::int n FROM usage WHERE workspace_id=$1 AND kind='response' AND coalesce(purpose,'production')='production' AND created_at>now()-interval '1 minute'",
+            [ws],
+            q,
+          ))!.n,
+        );
+        if (recent >= perMinute)
+          throw new HttpError(
+            429,
+            `This workspace has reached its limit of ${perMinute} AI turns per minute; the conversation continues with staff`,
+          );
+        if (runId) {
+          const contact = await this.db.one(
+            "SELECT ct.id,ct.verified FROM runs r JOIN conversations c ON c.workspace_id=r.workspace_id AND c.id=r.conversation_id JOIN contacts ct ON ct.workspace_id=c.workspace_id AND ct.id=c.contact_id WHERE r.workspace_id=$1 AND r.id=$2",
+            [ws, runId],
+            q,
+          );
+          if (contact) {
+            const cap = MODEL_LIMITS.contactDailyTokens(
+              budget,
+              !!contact.verified,
+            );
+            const spent = Number(
+              (await this.db.one(
+                "SELECT coalesce(sum(u.input_tokens+u.output_tokens+u.reserved),0) n FROM usage u JOIN runs r ON r.workspace_id=u.workspace_id AND r.id=u.run_id JOIN conversations c ON c.workspace_id=r.workspace_id AND c.id=r.conversation_id WHERE u.workspace_id=$1 AND c.contact_id=$2 AND u.created_at>now()-interval '24 hours'",
+                [ws, contact.id],
+                q,
+              ))!.n,
+            );
+            if (spent + amount > cap)
+              throw new HttpError(
+                429,
+                `Daily AI usage limit of ${cap} tokens reached for this ${contact.verified ? "customer" : "unverified visitor"}; a staff member can continue the conversation`,
+              );
+          }
+        }
+      }
       if (scope?.shadowId) {
         const result = requireValue(
           await this.db.one(
@@ -319,137 +384,148 @@ export class LiveModel implements ModelPort {
       let parsed: unknown,
         inputTokens: number | undefined,
         outputTokens: number | undefined;
-      if (provider === "openai") {
-        const response = await (
-          await this.client(ws)
-        ).responses.parse({
-          model,
-          store: false,
-          max_output_tokens: maxOutput,
-          instructions,
-          input: payload,
-          text: { format },
-        });
-        parsed = response.output_parsed;
-        inputTokens = response.usage?.input_tokens;
-        outputTokens = response.usage?.output_tokens;
-      } else {
-        const connection = await this.db.connection(ws, provider);
-        const key = this.connections.secret(connection).apiKey ?? "";
-        if (provider === "anthropic") {
-          // Claude rejects some validation keywords; application Zod validation below
-          // keeps enforcing the original limits after usage has been recorded.
-          const simplify = (value: any): any =>
-            Array.isArray(value)
-              ? value.map(simplify)
-              : value && typeof value === "object"
-                ? Object.fromEntries(
-                    Object.entries(value)
-                      .filter(
-                        ([k]) =>
-                          ![
-                            "minimum",
-                            "maximum",
-                            "minLength",
-                            "maxLength",
-                            "minItems",
-                            "maxItems",
-                            "$schema",
-                          ].includes(k),
-                      )
-                      .map(([k, v]) => [k, simplify(v)]),
-                  )
-                : value;
-          const response = await this.connections.modelRequest(
-            provider,
-            key,
-            connection.metadata,
-            "/messages",
-            {
-              model,
-              max_tokens: maxOutput,
-              system: instructions,
-              messages: [{ role: "user", content: payload }],
-              output_config: {
-                format: {
-                  type: "json_schema",
-                  schema: simplify(format.schema),
+      try {
+        if (provider === "openai") {
+          const response = await (
+            await this.client(ws)
+          ).responses.parse({
+            model,
+            store: false,
+            max_output_tokens: maxOutput,
+            instructions,
+            input: payload,
+            text: { format },
+          });
+          parsed = response.output_parsed;
+          inputTokens = response.usage?.input_tokens;
+          outputTokens = response.usage?.output_tokens;
+        } else {
+          const connection = await this.db.connection(ws, provider);
+          const key = this.connections.secret(connection).apiKey ?? "";
+          if (provider === "anthropic") {
+            // Claude rejects some validation keywords; application Zod validation below
+            // keeps enforcing the original limits after usage has been recorded.
+            const simplify = (value: any): any =>
+              Array.isArray(value)
+                ? value.map(simplify)
+                : value && typeof value === "object"
+                  ? Object.fromEntries(
+                      Object.entries(value)
+                        .filter(
+                          ([k]) =>
+                            ![
+                              "minimum",
+                              "maximum",
+                              "minLength",
+                              "maxLength",
+                              "minItems",
+                              "maxItems",
+                              "$schema",
+                            ].includes(k),
+                        )
+                        .map(([k, v]) => [k, simplify(v)]),
+                    )
+                  : value;
+            const response = await this.connections.modelRequest(
+              provider,
+              key,
+              connection.metadata,
+              "/messages",
+              {
+                model,
+                max_tokens: maxOutput,
+                system: instructions,
+                messages: [{ role: "user", content: payload }],
+                output_config: {
+                  format: {
+                    type: "json_schema",
+                    schema: simplify(format.schema),
+                  },
                 },
               },
-            },
-          );
-          inputTokens =
-            typeof response.usage?.input_tokens === "number"
-              ? response.usage.input_tokens +
-                (response.usage.cache_creation_input_tokens ?? 0) +
-                (response.usage.cache_read_input_tokens ?? 0)
-              : undefined;
-          outputTokens = response.usage?.output_tokens;
-          parsed =
-            response.stop_reason === "end_turn"
-              ? response.content
-                  ?.filter((c: any) => c.type === "text")
-                  .map((c: any) => c.text)
-                  .join("")
-              : null;
-        } else {
-          const jsonMode =
-            connection.metadata.jsonMode ?? MODEL_PROVIDERS[provider].format;
-          const response = await this.connections.modelRequest(
-            provider,
-            key,
-            connection.metadata,
-            "/chat/completions",
-            {
-              model,
-              max_tokens: maxOutput,
-              stream: false,
-              messages: [
-                {
-                  role: "system",
-                  content:
-                    instructions +
-                    "\nReturn only a JSON object matching this schema: " +
-                    schemaText,
-                },
-                { role: "user", content: payload },
-              ],
-              response_format:
-                jsonMode === "json"
-                  ? { type: "json_object" }
-                  : {
-                      type: "json_schema",
-                      json_schema: {
-                        name,
-                        strict: true,
-                        schema: format.schema,
+            );
+            inputTokens =
+              typeof response.usage?.input_tokens === "number"
+                ? response.usage.input_tokens +
+                  (response.usage.cache_creation_input_tokens ?? 0) +
+                  (response.usage.cache_read_input_tokens ?? 0)
+                : undefined;
+            outputTokens = response.usage?.output_tokens;
+            parsed =
+              response.stop_reason === "end_turn"
+                ? response.content
+                    ?.filter((c: any) => c.type === "text")
+                    .map((c: any) => c.text)
+                    .join("")
+                : null;
+          } else {
+            const jsonMode =
+              connection.metadata.jsonMode ?? MODEL_PROVIDERS[provider].format;
+            const response = await this.connections.modelRequest(
+              provider,
+              key,
+              connection.metadata,
+              "/chat/completions",
+              {
+                model,
+                max_tokens: maxOutput,
+                stream: false,
+                messages: [
+                  {
+                    role: "system",
+                    content:
+                      instructions +
+                      "\nReturn only a JSON object matching this schema: " +
+                      schemaText,
+                  },
+                  { role: "user", content: payload },
+                ],
+                response_format:
+                  jsonMode === "json"
+                    ? { type: "json_object" }
+                    : {
+                        type: "json_schema",
+                        json_schema: {
+                          name,
+                          strict: true,
+                          schema: format.schema,
+                        },
                       },
-                    },
-              ...(provider === "openrouter"
-                ? { provider: { require_parameters: true } }
-                : {}),
-            },
-          );
-          inputTokens = response.usage?.prompt_tokens;
-          outputTokens = response.usage?.completion_tokens;
-          const choice = response.choices?.[0];
-          parsed =
-            choice?.finish_reason === "stop" && !choice.message?.refusal
-              ? choice.message?.content
-              : null;
+                ...(provider === "openrouter"
+                  ? { provider: { require_parameters: true } }
+                  : {}),
+              },
+            );
+            inputTokens = response.usage?.prompt_tokens;
+            outputTokens = response.usage?.completion_tokens;
+            const choice = response.choices?.[0];
+            parsed =
+              choice?.finish_reason === "stop" && !choice.message?.refusal
+                ? choice.message?.content
+                : null;
+          }
         }
+      } catch (e) {
+        // Timeouts, connection errors and HTTP 4xx/5xx release the reservation
+        // (audit S2). Errors raised after a response arrived keep it: tokens may
+        // have been consumed without a usable usage report.
+        if (definiteFailure(e)) await this.release(usage);
+        throw e;
       }
       await this.recordUsage(usage, inputTokens, outputTokens);
       if (typeof parsed === "string") {
         try {
           parsed = JSON.parse(parsed);
         } catch {
+          await this.release(usage);
           throw new HttpError(
             502,
             "Model returned invalid JSON. Check its structured-output support.",
           );
         }
       }
+      // An incomplete or refused result without a usage report is the one
+      // genuinely uncertain outcome: the reservation stays as the upper bound.
       if (!parsed)
         throw new HttpError(
           502,
@@ -462,6 +538,13 @@ export class LiveModel implements ModelPort {
         [usage],
       );
     }
+  }
+  /** Drop a reservation whose call definitely failed; reported usage, once recorded, is never overwritten. */
+  private async release(id: string) {
+    await this.db.pool.query(
+      "UPDATE usage SET reserved=0 WHERE id=$1 AND input_tokens=0 AND output_tokens=0",
+      [id],
+    );
   }
   private async recordUsage(id: string, input: unknown, output: unknown) {
     if (
@@ -485,7 +568,8 @@ export class LiveModel implements ModelPort {
       availableActions: input.actions,
       verifiedAccountData: input.account,
     });
-    // Bytes upper-bound tokens; the reservation remains on uncertain model failures.
+    // Bytes upper-bound tokens; definite provider failures release the reservation,
+    // only a response without a usage report keeps it.
     const parsedOutput = await this.structured(
       input.workspaceId,
       input.model,
